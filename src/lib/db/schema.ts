@@ -12,6 +12,8 @@ export const weightEntries = sqliteTable("weight_entries", {
   weightKg: real("weight_kg").notNull(),
   source: text("source", { enum: weightSources }).notNull().default("manual"),
   notes: text("notes"),
+  cheatDay: integer("cheat_day", { mode: "boolean" }).notNull().default(false),
+  alcohol: integer("alcohol", { mode: "boolean" }).notNull().default(false),
   createdAt: text("created_at")
     .notNull()
     .default(sql`(CURRENT_TIMESTAMP)`),
@@ -19,3 +21,28 @@ export const weightEntries = sqliteTable("weight_entries", {
 
 export type WeightEntry = typeof weightEntries.$inferSelect;
 export type NewWeightEntry = typeof weightEntries.$inferInsert;
+
+// Phasen: zusammenhängende Zeiträume mit Trainings-/Ernährungs-Intention.
+// `bulk` = Aufbau, `cut` = Defizit, `maintenance` = Erhalt.
+// Phasen sind nicht-überlappend; eine offene Phase hat endDate = null.
+export const phaseKinds = ["bulk", "cut", "maintenance"] as const;
+export type PhaseKind = (typeof phaseKinds)[number];
+
+export const phaseSources = ["manual", "sheets"] as const;
+export type PhaseSource = (typeof phaseSources)[number];
+
+export const weightPhases = sqliteTable("weight_phases", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  kind: text("kind", { enum: phaseKinds }).notNull(),
+  // ISO-Date YYYY-MM-DD
+  startDate: text("start_date").notNull().unique(),
+  endDate: text("end_date"),
+  label: text("label"),
+  source: text("source", { enum: phaseSources }).notNull().default("manual"),
+  createdAt: text("created_at")
+    .notNull()
+    .default(sql`(CURRENT_TIMESTAMP)`),
+});
+
+export type WeightPhase = typeof weightPhases.$inferSelect;
+export type NewWeightPhase = typeof weightPhases.$inferInsert;

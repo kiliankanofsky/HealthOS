@@ -8,6 +8,13 @@
       "when": 1778145930846,
       "tag": "0000_gray_shinko_yamashiro",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1778232091298,
+      "tag": "0001_youthful_red_wolf",
+      "breakpoints": true
     }
   ]
 }

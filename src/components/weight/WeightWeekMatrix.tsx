@@ -1,6 +1,7 @@
 "use client";
 
-import { EditableWeightCell } from "@/components/weight/EditableWeightCell";
+import { Cookie, Wine } from "lucide-react";
+
 import type { WeightEntry } from "@/lib/db/schema";
 import { isoWeekMonday, isoWeeksInYear } from "@/lib/utils/iso-week";
 import { cn } from "@/lib/utils";
@@ -8,6 +9,7 @@ import { cn } from "@/lib/utils";
 type Props = {
   entries: WeightEntry[];
   year: number;
+  onOpenDay: (date: string) => void;
 };
 
 const DAY_LABELS = ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"];
@@ -30,20 +32,27 @@ function formatLocalISO(d: Date): string {
   return `${y}-${m}-${day}`;
 }
 
-export function WeightWeekMatrix({ entries, year }: Props) {
-  // Index alle Einträge des ISO-Jahres nach Woche und Wochentag.
-  // Schlüssel: `${week}-${dayIdx}` mit dayIdx 0 (Mo) ... 6 (So).
-  // Hinweis: Ein Datum wie 2024-12-30 kann ISO-mäßig zu KW 1 / 2025 gehören.
-  const byKey = new Map<string, number>();
+type CellValue = {
+  weight: number;
+  cheatDay: boolean;
+  alcohol: boolean;
+};
+
+export function WeightWeekMatrix({ entries, year, onOpenDay }: Props) {
+  // Index alle Einträge nach Woche und Wochentag.
+  const byKey = new Map<string, CellValue>();
   for (const e of entries) {
     const d = new Date(e.date);
     const { year: isoY, week } = isoWeekOf(d);
     if (isoY !== year) continue;
     const dayIdx = (d.getDay() + 6) % 7;
-    byKey.set(`${week}-${dayIdx}`, e.weightKg);
+    byKey.set(`${week}-${dayIdx}`, {
+      weight: e.weightKg,
+      cheatDay: e.cheatDay,
+      alcohol: e.alcohol,
+    });
   }
 
-  // Bis zur aktuellen ISO-Woche rendern, sonst leere zukünftige Wochen.
   const today = new Date();
   const todayIsoYear = isoWeekOf(today).year;
   const todayIsoWeek = isoWeekOf(today).week;
@@ -80,7 +89,7 @@ export function WeightWeekMatrix({ entries, year }: Props) {
               const weights: number[] = [];
               for (let d = 0; d < 7; d++) {
                 const v = byKey.get(`${w}-${d}`);
-                if (v !== undefined) weights.push(v);
+                if (v !== undefined) weights.push(v.weight);
               }
               const avg =
                 weights.length > 0
@@ -98,15 +107,28 @@ export function WeightWeekMatrix({ entries, year }: Props) {
                     cellDate.setUTCDate(monday.getUTCDate() + dayIdx);
                     const dateStr = formatLocalISO(cellDate);
                     const value = byKey.get(`${w}-${dayIdx}`) ?? null;
+                    const future =
+                      cellDate.getTime() >
+                      Date.UTC(today.getFullYear(), today.getMonth(), today.getDate());
                     return (
                       <Td key={dayIdx} className="p-0">
-                        <div className="flex justify-end">
-                          <EditableWeightCell
-                            date={dateStr}
-                            weightKg={value}
-                            variant="cell"
-                          />
-                        </div>
+                        <button
+                          type="button"
+                          onClick={() => onOpenDay(dateStr)}
+                          disabled={future}
+                          aria-label={`Tag ${dateStr} öffnen`}
+                          className={cn(
+                            "relative flex h-10 w-full items-center justify-end rounded-md px-3 text-right tabular-nums",
+                            "transition-colors",
+                            value
+                              ? "text-foreground hover:bg-muted/60"
+                              : "text-muted-foreground/40 hover:bg-muted/40",
+                            future && "cursor-not-allowed hover:bg-transparent",
+                          )}
+                        >
+                          {value ? value.weight.toFixed(1) : "–"}
+                          {value && renderTagIcons(value)}
+                        </button>
                       </Td>
                     );
                   })}
@@ -127,6 +149,29 @@ export function WeightWeekMatrix({ entries, year }: Props) {
   );
 }
 
+// Tag-Icons (Cheat/Alkohol) am rechten Rand der Zelle. Bei einem einzelnen
+// Marker oben rechts; bei zweien stapeln wir oben rechts + Mitte rechts.
+function renderTagIcons(value: CellValue) {
+  type TagIcon = { key: "cheat" | "alcohol"; label: string; Icon: typeof Cookie };
+  const icons: TagIcon[] = [];
+  if (value.cheatDay) icons.push({ key: "cheat", label: "Cheat Day", Icon: Cookie });
+  if (value.alcohol) icons.push({ key: "alcohol", label: "Alkohol", Icon: Wine });
+
+  return icons.map((it, idx) => {
+    const position =
+      idx === 0
+        ? "top-0.5 right-0.5"
+        : "top-1/2 right-0.5 -translate-y-1/2";
+    return (
+      <it.Icon
+        key={it.key}
+        aria-label={it.label}
+        className={cn("absolute size-2.5 text-rose-600", position)}
+      />
+    );
+  });
+}
+
 function Th({ children, className }: { children: React.ReactNode; className?: string }) {
   return <th className={cn("px-3 py-3 font-medium", className)}>{children}</th>;
 }
@@ -144,4 +189,3 @@ function formatRange(monday: Date, sunday: Date): string {
   ).padStart(2, "0")}.`;
   return `${m} – ${s}`;
 }
-

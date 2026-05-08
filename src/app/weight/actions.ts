@@ -1,7 +1,20 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { deleteWeightEntry, upsertWeightEntry } from "@/lib/db/queries";
+import {
+  deletePhase,
+  deleteWeightEntry,
+  deleteWeightEntryByDate,
+  updateWeightMetadata,
+  upsertPhase,
+  upsertWeightEntry,
+} from "@/lib/db/queries";
+import {
+  type PhaseKind,
+  phaseKinds,
+  weightSources,
+  type WeightSource,
+} from "@/lib/db/schema";
 
 const DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -59,18 +72,7 @@ export async function setWeightForDate(
   }
 
   if (weightKg === null) {
-    // Eintrag dieses Tages löschen, falls einer existiert.
-    // Wir nutzen upsert nicht zum Löschen — stattdessen direkter Lookup + delete-by-id.
-    const { db, schema } = await import("@/lib/db");
-    const { eq } = await import("drizzle-orm");
-    const existing = db
-      .select()
-      .from(schema.weightEntries)
-      .where(eq(schema.weightEntries.date, date))
-      .get();
-    if (existing) {
-      deleteWeightEntry(existing.id);
-    }
+    deleteWeightEntryByDate(date);
   } else {
     if (!Number.isFinite(weightKg) || weightKg <= 0 || weightKg > 500) {
       return { ok: false, error: "Gewicht außerhalb des gültigen Bereichs." };
@@ -85,5 +87,110 @@ export async function setWeightForDate(
 
   revalidatePath("/weight");
   revalidatePath("/weight/entries");
+  return { ok: true };
+}
+
+// Aktualisiert Tagesdetails (Quelle, Cheat-Day, Alkohol, Notizen).
+// Wenn der Eintrag noch nicht existiert, wird er angelegt — Gewicht muss
+// dann mitgegeben werden.
+export type DayDetailsInput = {
+  date: string;
+  weightKg?: number | null;
+  source?: WeightSource;
+  cheatDay?: boolean;
+  alcohol?: boolean;
+  notes?: string | null;
+};
+
+export async function updateDayDetails(
+  input: DayDetailsInput,
+): Promise<{ ok: boolean; error?: string }> {
+  if (!DATE_REGEX.test(input.date)) {
+    return { ok: false, error: "Ungültiges Datum." };
+  }
+  if (input.source && !weightSources.includes(input.source)) {
+    return { ok: false, error: "Ungültige Quelle." };
+  }
+
+  const cleanNotes =
+    input.notes === undefined
+      ? undefined
+      : input.notes === null
+        ? null
+        : input.notes.trim().length > 0
+          ? input.notes.trim()
+          : null;
+
+  if (input.weightKg !== undefined && input.weightKg !== null) {
+    if (!Number.isFinite(input.weightKg) || input.weightKg <= 0 || input.weightKg > 500) {
+      return { ok: false, error: "Gewicht außerhalb des gültigen Bereichs." };
+    }
+    upsertWeightEntry({
+      date: input.date,
+      weightKg: Math.round(input.weightKg * 100) / 100,
+      source: input.source ?? "manual",
+      notes: cleanNotes ?? null,
+      cheatDay: input.cheatDay ?? false,
+      alcohol: input.alcohol ?? false,
+    });
+  } else {
+    const updated = updateWeightMetadata(input.date, {
+      ...(input.source !== undefined && { source: input.source }),
+      ...(input.cheatDay !== undefined && { cheatDay: input.cheatDay }),
+      ...(input.alcohol !== undefined && { alcohol: input.alcohol }),
+      ...(cleanNotes !== undefined && { notes: cleanNotes }),
+    });
+    if (!updated) {
+      return { ok: false, error: "Kein Eintrag für dieses Datum vorhanden." };
+    }
+  }
+
+  revalidatePath("/weight");
+  revalidatePath("/weight/entries");
+  return { ok: true };
+}
+
+// ---- Phasen ----
+
+export type PhaseInput = {
+  id?: number;
+  kind: PhaseKind;
+  startDate: string;
+  endDate?: string | null;
+  label?: string | null;
+};
+
+export async function savePhase(
+  input: PhaseInput,
+): Promise<{ ok: boolean; error?: string }> {
+  if (!phaseKinds.includes(input.kind)) {
+    return { ok: false, error: "Ungültige Phasen-Art." };
+  }
+  if (!DATE_REGEX.test(input.startDate)) {
+    return { ok: false, error: "Startdatum ungültig." };
+  }
+  if (input.endDate && !DATE_REGEX.test(input.endDate)) {
+    return { ok: false, error: "Enddatum ungültig." };
+  }
+  if (input.endDate && input.endDate < input.startDate) {
+    return { ok: false, error: "Enddatum liegt vor dem Startdatum." };
+  }
+
+  upsertPhase({
+    kind: input.kind,
+    startDate: input.startDate,
+    endDate: input.endDate ?? null,
+    label: input.label?.trim() && input.label.trim().length > 0 ? input.label.trim() : null,
+    source: "manual",
+  });
+
+  revalidatePath("/weight");
+  return { ok: true };
+}
+
+export async function removePhase(id: number): Promise<{ ok: boolean }> {
+  if (!Number.isFinite(id)) return { ok: false };
+  deletePhase(id);
+  revalidatePath("/weight");
   return { ok: true };
 }

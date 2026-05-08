@@ -2,7 +2,7 @@ import Link from "next/link";
 import { WeightChartSection } from "@/components/weight/WeightChartSection";
 import { WeightEntryForm } from "@/components/weight/WeightEntryForm";
 import { WeightStatCards } from "@/components/weight/WeightStats";
-import { getAllWeightEntries } from "@/lib/db/queries";
+import { getAllPhases, getAllWeightEntries } from "@/lib/db/queries";
 import { toLocalISODate } from "@/lib/utils/date";
 import { computeWeightStats } from "@/lib/utils/weight-stats";
 
@@ -10,8 +10,8 @@ export const dynamic = "force-dynamic";
 
 export default function WeightPage() {
   const all = getAllWeightEntries();
+  const phases = getAllPhases();
   const stats = computeWeightStats(all);
-  const chartData = all.map((e) => ({ date: e.date, weight: e.weightKg }));
 
   return (
     <main className="mx-auto w-full max-w-6xl space-y-10 px-6 py-10 lg:px-10 lg:py-14">
@@ -35,7 +35,7 @@ export default function WeightPage() {
       <WeightStatCards stats={stats} />
 
       <Section>
-        <WeightChartSection data={chartData} />
+        <WeightChartSection entries={all} phases={phases} />
       </Section>
 
       <Section
