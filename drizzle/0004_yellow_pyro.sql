@@ -1,0 +1,1 @@
+ALTER TABLE `workout_sets` ADD `weight_mode` text DEFAULT 'per-side' NOT NULL;

@@ -15,6 +15,27 @@
       "when": 1778232091298,
       "tag": "0001_youthful_red_wolf",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1778237340292,
+      "tag": "0002_slimy_umar",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1778252372462,
+      "tag": "0003_uneven_luke_cage",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1778282438960,
+      "tag": "0004_yellow_pyro",
+      "breakpoints": true
     }
   ]
 }
