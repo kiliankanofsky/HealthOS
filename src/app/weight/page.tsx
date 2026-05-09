@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { AppShell } from "@/components/site/AppShell";
 import { WeightChartSection } from "@/components/weight/WeightChartSection";
 import { WeightEntryForm } from "@/components/weight/WeightEntryForm";
 import { WeightStatCards } from "@/components/weight/WeightStats";
@@ -14,22 +15,18 @@ export default function WeightPage() {
   const stats = computeWeightStats(all);
 
   return (
-    <main className="mx-auto w-full max-w-6xl space-y-10 px-6 py-10 lg:px-10 lg:py-14">
-      <header className="space-y-3">
-        <Link
-          href="/"
-          className="inline-flex items-center gap-1 text-xs tracking-wide uppercase text-muted-foreground hover:text-foreground"
-        >
-          ← Übersicht
-        </Link>
-        <div className="flex flex-col gap-1">
-          <p className="text-xs font-medium tracking-[0.2em] text-primary uppercase">
-            Weight
-          </p>
-          <h1 className="font-heading text-4xl font-semibold tracking-tight lg:text-5xl">
-            Gewicht
-          </h1>
-        </div>
+    <AppShell>
+      <main className="mx-auto w-full max-w-[1280px] space-y-10 px-5 py-10 sm:px-8 lg:px-10 lg:py-14">
+      <header className="space-y-2">
+        <p className="text-[11px] font-medium tracking-[0.22em] text-primary uppercase">
+          Weight
+        </p>
+        <h1 className="font-heading text-4xl font-semibold tracking-tight lg:text-5xl">
+          Gewicht
+        </h1>
+        <p className="max-w-xl text-sm text-muted-foreground">
+          Tägliche Messungen, Phasen, Cheat- und Alkohol-Tags.
+        </p>
       </header>
 
       <WeightStatCards stats={stats} />
@@ -69,7 +66,8 @@ export default function WeightPage() {
           </span>
         </div>
       </Link>
-    </main>
+      </main>
+    </AppShell>
   );
 }
 
