@@ -1,13 +1,21 @@
-import { SectionHeroes } from "@/components/home/SectionHero";
-import { Topbar } from "@/components/home/Topbar";
+import { HeroGrid } from "@/components/home/HeroGrid";
+import { PromoBar } from "@/components/home/PromoBar";
+import { PulseSection } from "@/components/home/PulseSection";
+import { SiteFooter } from "@/components/site/SiteFooter";
+import { SiteHeader } from "@/components/site/SiteHeader";
+
+export const dynamic = "force-dynamic";
 
 export default function HomePage() {
   return (
-    <div className="relative flex h-screen w-full flex-col overflow-hidden bg-black">
-      <Topbar />
-      <main className="h-full w-full">
-        <SectionHeroes />
+    <>
+      <PromoBar />
+      <SiteHeader />
+      <main className="flex-1">
+        <HeroGrid />
+        <PulseSection />
       </main>
-    </div>
+      <SiteFooter />
+    </>
   );
 }

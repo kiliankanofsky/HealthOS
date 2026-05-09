@@ -36,7 +36,7 @@ const sections: Section[] = [
     image: "/heroes/hypertrophy.jpg",
     gradientFrom: "#3b0f0f",
     gradientTo: "#dc2626",
-    available: false,
+    available: true,
   },
   {
     id: "weight",

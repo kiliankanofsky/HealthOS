@@ -49,11 +49,12 @@
 }
 
 :root {
-  /* Apple HIG inspired font stack — SF Pro on macOS/iOS, sensible fallbacks elsewhere. */
+  /* Apple HIG inspired font stack: SF Pro on macOS/iOS first, Inter (geladen via
+     next/font in app/layout.tsx) als hochwertiger Fallback, dann System-Stack. */
   --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display",
-    "Helvetica Neue", "Inter", system-ui, sans-serif;
+    var(--font-inter), "Helvetica Neue", system-ui, sans-serif;
   --font-heading: -apple-system, BlinkMacSystemFont, "SF Pro Display",
-    "Helvetica Neue", "Inter", system-ui, sans-serif;
+    var(--font-inter), "Helvetica Neue", system-ui, sans-serif;
   --font-mono: ui-monospace, "SF Mono", Menlo, Monaco, "Cascadia Mono",
     "Liberation Mono", monospace;
 
@@ -142,11 +143,24 @@
   }
   body {
     @apply bg-background text-foreground antialiased;
-    font-feature-settings: "ss01", "cv11";
+    /* Inter+SF Pro: typografische Tweaks für Lesbarkeit auf allen Devices. */
+    font-feature-settings: "ss01", "cv11", "case", "calt";
+    font-variant-ligatures: common-ligatures;
+    text-rendering: optimizeLegibility;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
   }
   html {
     @apply font-sans;
   }
+  /* Heading-Tightening — Apple-typisch leicht enger Buchstabenabstand
+     auf größeren Schriftgrößen. */
+  h1, h2, h3 {
+    letter-spacing: -0.02em;
+  }
+  /* Abgerundete Selektion in Apple-Blau. */
+  ::selection {
+    background-color: oklch(0.598 0.181 256.6 / 25%);
+  }
 }
+
