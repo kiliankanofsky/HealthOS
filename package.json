@@ -10,11 +10,16 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx src/lib/db/migrate.ts",
     "db:seed": "tsx scripts/seed.ts",
+    "db:seed:hypertrophy": "tsx scripts/seed-hypertrophy.ts",
     "db:studio": "drizzle-kit studio",
-    "db:sync:sheets": "tsx scripts/sync-sheets.ts"
+    "db:sync:sheets": "tsx scripts/sync-sheets.ts",
+    "garmin:login-check": "tsx scripts/garmin-login-check.ts",
+    "garmin:strength-list": "tsx scripts/garmin-strength-list.ts",
+    "db:sync:garmin": "tsx scripts/sync-garmin-strength.ts"
   },
   "dependencies": {
     "@base-ui/react": "^1.4.1",
+    "@gooin/garmin-connect": "^1.7.6",
     "better-sqlite3": "^12.9.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
