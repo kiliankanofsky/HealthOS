@@ -99,6 +99,8 @@ export type DayDetailsInput = {
   source?: WeightSource;
   cheatDay?: boolean;
   alcohol?: boolean;
+  cheatMeal?: boolean;
+  kcalTarget?: number | null;
   notes?: string | null;
 };
 
@@ -132,12 +134,16 @@ export async function updateDayDetails(
       notes: cleanNotes ?? null,
       cheatDay: input.cheatDay ?? false,
       alcohol: input.alcohol ?? false,
+      cheatMeal: input.cheatMeal ?? false,
+      kcalTarget: input.kcalTarget ?? null,
     });
   } else {
     const updated = updateWeightMetadata(input.date, {
       ...(input.source !== undefined && { source: input.source }),
       ...(input.cheatDay !== undefined && { cheatDay: input.cheatDay }),
       ...(input.alcohol !== undefined && { alcohol: input.alcohol }),
+      ...(input.cheatMeal !== undefined && { cheatMeal: input.cheatMeal }),
+      ...(input.kcalTarget !== undefined && { kcalTarget: input.kcalTarget }),
       ...(cleanNotes !== undefined && { notes: cleanNotes }),
     });
     if (!updated) {

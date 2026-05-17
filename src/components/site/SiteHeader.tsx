@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
@@ -90,11 +91,16 @@ function Logo() {
   return (
     <span
       aria-hidden
-      className="inline-flex size-8 items-center justify-center rounded-lg bg-foreground text-background transition-transform group-hover:scale-105"
+      className="relative inline-flex size-8 items-center justify-center overflow-hidden rounded-lg bg-white ring-1 ring-foreground/10 transition-transform group-hover:scale-105"
     >
-      <svg viewBox="0 0 24 24" className="size-4" fill="none" stroke="currentColor" strokeWidth={2.4}>
-        <path d="M5 12h2.5l2-5 4 10 2-5H19" strokeLinecap="round" strokeLinejoin="round" />
-      </svg>
+      <Image
+        src="/logo.png"
+        alt=""
+        width={32}
+        height={32}
+        priority
+        className="size-full object-contain"
+      />
     </span>
   );
 }

@@ -1,16 +1,15 @@
 "use client";
 
-import { ChevronLeft, ChevronRight, Layers, Plus, Spline, Tag } from "lucide-react";
+import { ChevronLeft, ChevronRight, Spline, Tag } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { SegmentedControl } from "@/components/ui/segmented-control";
-import { type WeightEntry, type WeightPhase } from "@/lib/db/schema";
+import type { DailyActivity, NutritionEntry, WeightEntry } from "@/lib/db/schema";
 import { loessSmooth, recommendedSpan } from "@/lib/utils/loess";
 import { cn } from "@/lib/utils";
 
-import { PhaseEditDialog } from "./PhaseEditDialog";
-import { WeightChart, type ChartPoint } from "./WeightChart";
-import { WeightDayDetailDialog } from "./WeightDayDetailDialog";
+import { NutritionChart, type NutritionChartPoint } from "./NutritionChart";
+import { NutritionDayDetailDialog } from "./NutritionDayDetailDialog";
 
 type Range = "1w" | "4w" | "8w" | "3m" | "max";
 
@@ -31,47 +30,83 @@ const DAYS_BY_RANGE: Record<Range, number | null> = {
 };
 
 type Props = {
-  entries: WeightEntry[];
-  phases: WeightPhase[];
+  entries: NutritionEntry[];
+  weightEntries: WeightEntry[];
+  activity: DailyActivity[];
 };
 
-export function WeightChartSection({ entries, phases }: Props) {
+export function NutritionChartSection({ entries, weightEntries, activity }: Props) {
   const [range, setRange] = useState<Range>("4w");
-  // windowOffset in Tagen — verschiebt das sichtbare Fenster in die Vergangenheit.
-  // 0 = aktuellster Zeitraum. Wird beim Range-Wechsel auf 0 resettet.
   const [windowOffset, setWindowOffset] = useState(0);
   const [showSmoothing, setShowSmoothing] = useState(true);
-  const [showPhases, setShowPhases] = useState(true);
   const [showTags, setShowTags] = useState(true);
-  const [editingPhase, setEditingPhase] = useState<WeightPhase | null>(null);
-  const [phaseDialogOpen, setPhaseDialogOpen] = useState(false);
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
 
-  const data = useMemo<ChartPoint[]>(
-    () =>
-      entries.map((e) => ({
-        date: e.date,
-        weight: e.weightKg,
-        cheatDay: e.cheatDay,
-        alcohol: e.alcohol,
-        cheatMeal: e.cheatMeal,
-      })),
-    [entries],
-  );
-
-  const entryByDate = useMemo(() => {
+  // Lookups
+  const weightByDate = useMemo(() => {
     const m = new Map<string, WeightEntry>();
+    for (const w of weightEntries) m.set(w.date, w);
+    return m;
+  }, [weightEntries]);
+
+  const activityByDate = useMemo(() => {
+    const m = new Map<string, DailyActivity>();
+    for (const a of activity) m.set(a.date, a);
+    return m;
+  }, [activity]);
+
+  const nutritionByDate = useMemo(() => {
+    const m = new Map<string, NutritionEntry>();
     for (const e of entries) m.set(e.date, e);
     return m;
   }, [entries]);
 
-  // Range-Wechsel → Offset auf 0 zurück, damit man immer am aktuellen Ende startet.
+  // Chart-Daten: Kalorien-Wert je nach Tag-Logik anpassen.
+  // - Cheat Meal + kcalTarget: Ziel statt fddb-Wert (Meal getauscht aber im Ziel).
+  // - Cheat Day: Wert auf null (Linie wird unterbrochen), Punkt wird im Chart
+  //   gesondert oberhalb der Linie als Indikator gerendert.
+  // Wir reichern jeden Datums-Schlüssel mit Tags an, auch wenn kein Nutrition-
+  // Eintrag existiert — Cheat-Day soll auch dann sichtbar sein.
+  const data = useMemo<NutritionChartPoint[]>(() => {
+    const allDates = new Set<string>();
+    for (const e of entries) allDates.add(e.date);
+    for (const w of weightEntries) {
+      if (w.cheatDay || w.cheatMeal || w.alcohol) allDates.add(w.date);
+    }
+    const sorted = Array.from(allDates).sort();
+    return sorted.map((date) => {
+      const e = nutritionByDate.get(date);
+      const w = weightByDate.get(date);
+      const cheatDay = w?.cheatDay ?? false;
+      const cheatMeal = w?.cheatMeal ?? false;
+      const alcohol = w?.alcohol ?? false;
+      const rawKcal = e?.caloriesKcal ?? null;
+      const target = w?.kcalTarget ?? null;
+      let value: number | null;
+      if (cheatDay) {
+        value = null;
+      } else if (cheatMeal && target != null) {
+        value = target;
+      } else {
+        value = rawKcal;
+      }
+      return {
+        date,
+        caloriesKcal: value,
+        rawCaloriesKcal: rawKcal,
+        kcalTarget: target,
+        cheatDay,
+        cheatMeal,
+        alcohol,
+      };
+    });
+  }, [entries, weightEntries, nutritionByDate, weightByDate]);
+
   useEffect(() => {
     setWindowOffset(0);
   }, [range]);
 
   const days = DAYS_BY_RANGE[range];
-  // Maximaler Offset: so weit, dass der älteste Eintrag im Fenster liegt.
   const maxOffset = useMemo(() => {
     if (days === null || data.length === 0) return 0;
     const lastDate = new Date(data[data.length - 1].date);
@@ -96,34 +131,26 @@ export function WeightChartSection({ entries, phases }: Props) {
   }, [data, days, windowOffset]);
 
   const smoothed = useMemo(() => {
-    if (!showSmoothing || filtered.length < 3) return null;
-    const span = recommendedSpan(filtered.length);
+    if (!showSmoothing) return null;
+    const valid = filtered.filter(
+      (p): p is NutritionChartPoint & { caloriesKcal: number } =>
+        p.caloriesKcal !== null,
+    );
+    if (valid.length < 3) return null;
+    const span = recommendedSpan(valid.length);
     return loessSmooth(
-      filtered.map((p) => ({ date: p.date, weight: p.weight })),
+      valid.map((p) => ({ date: p.date, weight: p.caloriesKcal })),
       span,
     );
   }, [filtered, showSmoothing]);
 
-  const visiblePhases = useMemo(() => {
-    if (!showPhases || filtered.length === 0) return [];
-    const firstDate = filtered[0].date;
-    const lastDate = filtered[filtered.length - 1].date;
-    return phases.filter((p) => {
-      const phaseEnd = p.endDate ?? lastDate;
-      // Überlappung [firstDate, lastDate] ∩ [p.start, phaseEnd]
-      return phaseEnd >= firstDate && p.startDate <= lastDate;
-    });
-  }, [phases, filtered, showPhases]);
-
-  // Swipe-Navigation: horizontaler Wheel/Trackpad-Swipe shiftet das Fenster
-  // um eine volle Range-Breite. Debounced, damit ein Schwung nicht 3 Fenster
-  // weiterspringt.
+  // Swipe-Navigation (gleich wie Weight).
   const swipeRef = useRef<HTMLDivElement | null>(null);
   const accumDeltaRef = useRef(0);
   const lastShiftRef = useRef(0);
 
   const shiftWindow = (direction: 1 | -1) => {
-    if (days === null) return; // Max-Range hat kein Fenster.
+    if (days === null) return;
     setWindowOffset((prev) => {
       const next = prev + direction * days;
       if (next < 0) return 0;
@@ -136,16 +163,12 @@ export function WeightChartSection({ entries, phases }: Props) {
     const el = swipeRef.current;
     if (!el || days === null) return;
     const onWheel = (e: WheelEvent) => {
-      // Nur horizontal-dominierte Gesten als Swipe interpretieren.
       if (Math.abs(e.deltaX) <= Math.abs(e.deltaY)) return;
       e.preventDefault();
       accumDeltaRef.current += e.deltaX;
       const now = Date.now();
       if (Math.abs(accumDeltaRef.current) < 50) return;
       if (now - lastShiftRef.current < 250) return;
-      // Reversed scroll: positiver deltaX (Swipe nach links) zeigt jetzt
-      // neuere Daten (Fenster Richtung Gegenwart); negatives deltaX (Swipe
-      // nach rechts) blättert in die Vergangenheit.
       const direction: 1 | -1 = accumDeltaRef.current > 0 ? -1 : 1;
       accumDeltaRef.current = 0;
       lastShiftRef.current = now;
@@ -155,7 +178,6 @@ export function WeightChartSection({ entries, phases }: Props) {
     return () => el.removeEventListener("wheel", onWheel);
   }, [days, maxOffset]);
 
-  // Label für den sichtbaren Zeitraum (für Tap-Buttons + visuelles Feedback).
   const windowLabel = useMemo(() => {
     if (filtered.length === 0) return "";
     const first = filtered[0].date;
@@ -167,14 +189,29 @@ export function WeightChartSection({ entries, phases }: Props) {
   const canShiftOlder = days !== null && windowOffset < maxOffset;
   const canShiftNewer = days !== null && windowOffset > 0;
 
+  const selectedActivity = selectedDate
+    ? activityByDate.get(selectedDate) ?? null
+    : null;
+  const selectedNutrition = selectedDate
+    ? nutritionByDate.get(selectedDate) ?? null
+    : null;
+  const selectedWeight = selectedDate
+    ? weightByDate.get(selectedDate) ?? null
+    : null;
+
   return (
     <div className="space-y-5">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="text-xs font-medium tracking-[0.2em] text-muted-foreground uppercase">
-          Verlauf
+          Kalorien-Verlauf
         </p>
         <div className="flex items-center gap-2">
-          <SegmentedControl options={OPTIONS} value={range} onChange={setRange} size="sm" />
+          <SegmentedControl
+            options={OPTIONS}
+            value={range}
+            onChange={setRange}
+            size="sm"
+          />
           <div className="flex items-center gap-1">
             <ToggleButton
               active={showSmoothing}
@@ -185,14 +222,6 @@ export function WeightChartSection({ entries, phases }: Props) {
               <Spline className="size-3.5" />
             </ToggleButton>
             <ToggleButton
-              active={showPhases}
-              onClick={() => setShowPhases((v) => !v)}
-              aria-label="Phasen anzeigen"
-              title="Phasen (Aufbau / Defizit)"
-            >
-              <Layers className="size-3.5" />
-            </ToggleButton>
-            <ToggleButton
               active={showTags}
               onClick={() => setShowTags((v) => !v)}
               aria-label="Tag anzeigen"
@@ -200,34 +229,21 @@ export function WeightChartSection({ entries, phases }: Props) {
             >
               <Tag className="size-3.5" />
             </ToggleButton>
-            <button
-              type="button"
-              onClick={() => {
-                setEditingPhase(null);
-                setPhaseDialogOpen(true);
-              }}
-              aria-label="Phase hinzufügen"
-              title="Phase hinzufügen"
-              className="ml-1 inline-flex size-7 items-center justify-center rounded-full text-muted-foreground/70 transition-colors hover:bg-muted hover:text-foreground"
-            >
-              <Plus className="size-3.5" />
-            </button>
           </div>
         </div>
       </div>
 
-      <div ref={swipeRef} className="space-y-2" title="Horizontal swipen: vor/zurück im Zeitfenster">
-        <WeightChart
+      <div
+        ref={swipeRef}
+        className="space-y-2"
+        title="Horizontal swipen: vor/zurück im Zeitfenster"
+      >
+        <NutritionChart
           data={filtered}
           smoothed={smoothed}
-          phases={visiblePhases}
           showTags={showTags}
           dense={range === "max"}
           onOpenDay={setSelectedDate}
-          onOpenPhase={(phase) => {
-            setEditingPhase(phase);
-            setPhaseDialogOpen(true);
-          }}
         />
         {days !== null && (
           <div className="flex items-center justify-between gap-2 px-1 text-xs text-muted-foreground">
@@ -250,16 +266,12 @@ export function WeightChartSection({ entries, phases }: Props) {
         )}
       </div>
 
-      <PhaseEditDialog
-        open={phaseDialogOpen}
-        phase={editingPhase}
-        onClose={() => setPhaseDialogOpen(false)}
-      />
-
-      <WeightDayDetailDialog
+      <NutritionDayDetailDialog
         open={selectedDate !== null}
         date={selectedDate}
-        entry={selectedDate ? entryByDate.get(selectedDate) ?? null : null}
+        nutrition={selectedNutrition}
+        weight={selectedWeight}
+        garminTotalKcal={selectedActivity?.totalKcal ?? null}
         onClose={() => setSelectedDate(null)}
       />
     </div>

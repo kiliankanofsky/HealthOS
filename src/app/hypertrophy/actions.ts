@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache";
 import {
   createSession as dbCreateSession,
   deleteSession as dbDeleteSession,
+  deleteSessionExerciseOverride,
   deleteSet as dbDeleteSet,
   getSession,
   getSessionById,
@@ -12,6 +13,7 @@ import {
   getTemplateBySlug,
   updateSessionNotes,
   updateSetWeightMode,
+  upsertSessionExerciseOverride,
   upsertSet,
 } from "@/lib/db/queries";
 import { weightModes, type WeightMode } from "@/lib/db/schema";
@@ -141,6 +143,40 @@ export async function deleteSet(input: {
 }): Promise<{ ok: boolean }> {
   if (!Number.isFinite(input.setId)) return { ok: false };
   dbDeleteSet(input.setId);
+  revalidatePath("/hypertrophy");
+  return { ok: true };
+}
+
+// ---- Exercise-Overrides (alternative Übung pro Slot pro Session) ----
+
+export async function saveExerciseOverride(input: {
+  sessionId: number;
+  templateExerciseId: number;
+  name: string;
+}): Promise<{ ok: boolean; error?: string }> {
+  const trimmed = input.name.trim();
+  if (trimmed.length === 0) {
+    return { ok: false, error: "Name darf nicht leer sein." };
+  }
+  if (trimmed.length > 80) {
+    return { ok: false, error: "Name max. 80 Zeichen." };
+  }
+  const session = getSessionById(input.sessionId);
+  if (!session) return { ok: false, error: "Session nicht gefunden." };
+  upsertSessionExerciseOverride({
+    sessionId: input.sessionId,
+    templateExerciseId: input.templateExerciseId,
+    name: trimmed,
+  });
+  revalidatePath("/hypertrophy");
+  return { ok: true };
+}
+
+export async function clearExerciseOverride(input: {
+  sessionId: number;
+  templateExerciseId: number;
+}): Promise<{ ok: boolean }> {
+  deleteSessionExerciseOverride(input.sessionId, input.templateExerciseId);
   revalidatePath("/hypertrophy");
   return { ok: true };
 }

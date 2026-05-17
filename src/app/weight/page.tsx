@@ -1,9 +1,16 @@
 import Link from "next/link";
 import { AppShell } from "@/components/site/AppShell";
+import { NutritionChartSection } from "@/components/nutrition/NutritionChartSection";
+import { NutritionCorrelationView } from "@/components/nutrition/NutritionCorrelationView";
 import { WeightChartSection } from "@/components/weight/WeightChartSection";
 import { WeightEntryForm } from "@/components/weight/WeightEntryForm";
 import { WeightStatCards } from "@/components/weight/WeightStats";
-import { getAllPhases, getAllWeightEntries } from "@/lib/db/queries";
+import {
+  getAllPhases,
+  getAllWeightEntries,
+  getDailyActivityEntries,
+  getNutritionEntries,
+} from "@/lib/db/queries";
 import { toLocalISODate } from "@/lib/utils/date";
 import { computeWeightStats } from "@/lib/utils/weight-stats";
 
@@ -13,6 +20,8 @@ export default function WeightPage() {
   const all = getAllWeightEntries();
   const phases = getAllPhases();
   const stats = computeWeightStats(all);
+  const nutrition = getNutritionEntries({ source: "fddb" });
+  const activity = getDailyActivityEntries({ source: "garmin" });
 
   return (
     <AppShell>
@@ -25,7 +34,7 @@ export default function WeightPage() {
           Gewicht
         </h1>
         <p className="max-w-xl text-sm text-muted-foreground">
-          Tägliche Messungen, Phasen, Cheat- und Alkohol-Tags.
+          Tägliche Messungen, Phasen, Tags.
         </p>
       </header>
 
@@ -66,6 +75,38 @@ export default function WeightPage() {
           </span>
         </div>
       </Link>
+
+      <header className="space-y-2 pt-6">
+        <p className="text-[11px] font-medium tracking-[0.22em] text-primary uppercase">
+          Weight · Ernährung
+        </p>
+        <h2 className="font-heading text-4xl font-semibold tracking-tight lg:text-5xl">
+          Nutrition
+        </h2>
+        <p className="max-w-xl text-sm text-muted-foreground">
+          Kalorien und Makros aus fddb.info. Klick auf einen Tag im Chart, um
+          Details + Bilanz mit Garmin-Verbrauch zu sehen.
+        </p>
+      </header>
+
+      <Section>
+        <NutritionChartSection
+          entries={nutrition}
+          weightEntries={all}
+          activity={activity}
+        />
+      </Section>
+
+      <Section
+        title="Energiebilanz"
+        description="Aufgenommene Kalorien (fddb) vs. verbrauchte Kalorien (Garmin) im Vergleich zum Gewicht."
+      >
+        <NutritionCorrelationView
+          nutrition={nutrition}
+          weight={all}
+          activity={activity}
+        />
+      </Section>
       </main>
     </AppShell>
   );

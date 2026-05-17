@@ -36,6 +36,34 @@
       "when": 1778282438960,
       "tag": "0004_yellow_pyro",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1778677521602,
+      "tag": "0005_huge_blonde_phantom",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1778747839177,
+      "tag": "0006_real_stephen_strange",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "6",
+      "when": 1778750056944,
+      "tag": "0007_clean_ink",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1778793700311,
+      "tag": "0008_swift_vampiro",
+      "breakpoints": true
     }
   ]
 }

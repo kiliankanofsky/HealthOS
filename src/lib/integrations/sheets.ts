@@ -296,11 +296,13 @@ export const sheetsAdapter: SyncableAdapter = {
         const isoDate = toLocalISODate(
           new Date(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()),
         );
+        // Bewusst kein cheatDay/alcohol/notes übergeben — upsertWeightEntry
+        // lässt nicht-übergebene Felder bei einem Konflikt unangetastet,
+        // damit manuell gepflegte Tags beim Sheets-Sync erhalten bleiben.
         upsertWeightEntry({
           date: isoDate,
           weightKg: w,
           source: "sheets",
-          notes: null,
         });
         inserted++;
       }

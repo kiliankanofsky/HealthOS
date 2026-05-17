@@ -21,6 +21,13 @@ export const weightEntries = sqliteTable("weight_entries", {
   notes: text("notes"),
   cheatDay: integer("cheat_day", { mode: "boolean" }).notNull().default(false),
   alcohol: integer("alcohol", { mode: "boolean" }).notNull().default(false),
+  // Cheat Meal: einzelnes Meal getauscht/nicht getrackt, aber im Kalorienziel
+  // geblieben — fddb-Wert für den Tag wird beim Charten durch das Tagesziel
+  // ersetzt.
+  cheatMeal: integer("cheat_meal", { mode: "boolean" }).notNull().default(false),
+  // Tagesziel in kcal — manuell pro Tag pflegbar. Wird für die Aufgenommen-
+  // Linie bei einem Cheat-Meal-Tag eingesetzt.
+  kcalTarget: integer("kcal_target"),
   createdAt: text("created_at")
     .notNull()
     .default(sql`(CURRENT_TIMESTAMP)`),
@@ -227,3 +234,122 @@ export const workoutSets = sqliteTable(
 
 export type WorkoutSet = typeof workoutSets.$inferSelect;
 export type NewWorkoutSet = typeof workoutSets.$inferInsert;
+
+// Pro Session kann ein Übungs-Slot durch eine alternative Übung ersetzt werden
+// (z.B. weil das Gerät besetzt war). Sätze werden weiter unter der ursprünglichen
+// templateExerciseId geloggt — der Override liefert nur einen anderen Anzeige-Namen,
+// damit die Historie für Statistiken konsistent bleibt und der Slot eindeutig ist.
+export const sessionExerciseOverrides = sqliteTable(
+  "session_exercise_overrides",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    sessionId: integer("session_id")
+      .notNull()
+      .references(() => workoutSessions.id, { onDelete: "cascade" }),
+    templateExerciseId: integer("template_exercise_id")
+      .notNull()
+      .references(() => workoutTemplateExercises.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    createdAt: text("created_at")
+      .notNull()
+      .default(sql`(CURRENT_TIMESTAMP)`),
+  },
+  (table) => [
+    uniqueIndex("override_session_exercise_unique").on(
+      table.sessionId,
+      table.templateExerciseId,
+    ),
+  ],
+);
+
+export type SessionExerciseOverride = typeof sessionExerciseOverrides.$inferSelect;
+export type NewSessionExerciseOverride =
+  typeof sessionExerciseOverrides.$inferInsert;
+
+// ============================================================
+// Nutrition: Tagessummen aus externen Trackern (fddb, später ggf. YAZIO /
+// Apple Health). Eine Zeile pro Tag pro Quelle — `source` ist Teil der
+// Eindeutigkeit, damit beim Quellen-Wechsel keine Daten überschrieben werden.
+// ============================================================
+
+export const nutritionSources = ["fddb", "yazio", "apple-health", "manual"] as const;
+export type NutritionSource = (typeof nutritionSources)[number];
+
+export const nutritionEntries = sqliteTable(
+  "nutrition_entries",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    // ISO-Date YYYY-MM-DD
+    date: text("date").notNull(),
+    source: text("source", { enum: nutritionSources })
+      .notNull()
+      .default("fddb"),
+    caloriesKcal: integer("calories_kcal").notNull(),
+    proteinG: real("protein_g").notNull(),
+    carbsG: real("carbs_g").notNull(),
+    fatG: real("fat_g").notNull(),
+    fiberG: real("fiber_g"),
+    sugarG: real("sugar_g"),
+    // Roh-Antwort der Quelle (z.B. fddb-HTML-Snippet oder JSON) für
+    // Debugging und späteres Re-Parsing ohne erneuten Netz-Request.
+    rawJson: text("raw_json"),
+    createdAt: text("created_at")
+      .notNull()
+      .default(sql`(CURRENT_TIMESTAMP)`),
+    updatedAt: text("updated_at")
+      .notNull()
+      .default(sql`(CURRENT_TIMESTAMP)`),
+  },
+  (table) => [
+    uniqueIndex("nutrition_date_source_unique").on(table.date, table.source),
+    check("calories_non_negative", sql`${table.caloriesKcal} >= 0`),
+    check("protein_non_negative", sql`${table.proteinG} >= 0`),
+    check("carbs_non_negative", sql`${table.carbsG} >= 0`),
+    check("fat_non_negative", sql`${table.fatG} >= 0`),
+  ],
+);
+
+export type NutritionEntry = typeof nutritionEntries.$inferSelect;
+export type NewNutritionEntry = typeof nutritionEntries.$inferInsert;
+
+// ============================================================
+// Daily Activity: Garmins „Total Calories burned" pro Tag — Summe aus BMR
+// + Aktivität (Workouts + Steps + NEAT). Bewusst getrennt von
+// nutrition_entries, da das eine Output- (Verbrauch) und das andere
+// Input-Daten (Aufnahme) sind.
+// ============================================================
+
+export const activitySources = ["garmin", "manual"] as const;
+export type ActivitySource = (typeof activitySources)[number];
+
+export const dailyActivity = sqliteTable(
+  "daily_activity",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    date: text("date").notNull(),
+    source: text("source", { enum: activitySources })
+      .notNull()
+      .default("garmin"),
+    // BMR + Aktivität — die Zahl, die Garmin als "Total" anzeigt.
+    totalKcal: integer("total_kcal").notNull(),
+    // Nur Aktivität (Workouts + Steps + NEAT).
+    activeKcal: integer("active_kcal"),
+    // Reine BMR-Komponente (Ruheumsatz).
+    bmrKcal: integer("bmr_kcal"),
+    steps: integer("steps"),
+    rawJson: text("raw_json"),
+    createdAt: text("created_at")
+      .notNull()
+      .default(sql`(CURRENT_TIMESTAMP)`),
+    updatedAt: text("updated_at")
+      .notNull()
+      .default(sql`(CURRENT_TIMESTAMP)`),
+  },
+  (table) => [
+    uniqueIndex("activity_date_source_unique").on(table.date, table.source),
+    check("total_kcal_non_negative", sql`${table.totalKcal} >= 0`),
+  ],
+);
+
+export type DailyActivity = typeof dailyActivity.$inferSelect;
+export type NewDailyActivity = typeof dailyActivity.$inferInsert;

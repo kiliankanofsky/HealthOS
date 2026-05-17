@@ -1,6 +1,6 @@
 "use client";
 
-import { Cookie, Trash2, Wine } from "lucide-react";
+import { Cookie, RotateCcw, Trash2, Wine } from "lucide-react";
 import { useEffect, useState, useTransition } from "react";
 
 import { removeWeightEntry, updateDayDetails } from "@/app/weight/actions";
@@ -31,6 +31,8 @@ export function WeightDayDetailDialog({ open, date, entry, onClose }: Props) {
   const [source, setSource] = useState<(typeof weightSources)[number]>("manual");
   const [cheatDay, setCheatDay] = useState(false);
   const [alcohol, setAlcohol] = useState(false);
+  const [cheatMeal, setCheatMeal] = useState(false);
+  const [kcalTargetInput, setKcalTargetInput] = useState("");
   const [notes, setNotes] = useState("");
 
   useEffect(() => {
@@ -40,6 +42,10 @@ export function WeightDayDetailDialog({ open, date, entry, onClose }: Props) {
     setSource(entry?.source ?? "manual");
     setCheatDay(entry?.cheatDay ?? false);
     setAlcohol(entry?.alcohol ?? false);
+    setCheatMeal(entry?.cheatMeal ?? false);
+    setKcalTargetInput(
+      entry?.kcalTarget != null ? String(entry.kcalTarget) : "",
+    );
     setNotes(entry?.notes ?? "");
   }, [open, entry]);
 
@@ -58,6 +64,17 @@ export function WeightDayDetailDialog({ open, date, entry, onClose }: Props) {
       return;
     }
 
+    const kcalTargetRaw = kcalTargetInput.trim();
+    let kcalTarget: number | null = null;
+    if (kcalTargetRaw.length > 0) {
+      const parsed = Number(kcalTargetRaw);
+      if (!Number.isFinite(parsed) || parsed < 0 || parsed > 10000) {
+        setError("Kalorienziel muss zwischen 0 und 10.000 liegen.");
+        return;
+      }
+      kcalTarget = Math.round(parsed);
+    }
+
     startTransition(async () => {
       const result = await updateDayDetails({
         date,
@@ -65,6 +82,8 @@ export function WeightDayDetailDialog({ open, date, entry, onClose }: Props) {
         source,
         cheatDay,
         alcohol,
+        cheatMeal,
+        kcalTarget,
         notes: notes.length > 0 ? notes : null,
       });
       if (!result.ok) {
@@ -132,12 +151,29 @@ export function WeightDayDetailDialog({ open, date, entry, onClose }: Props) {
                   onChange={setCheatDay}
                 />
                 <Toggle
+                  label="Cheat Meal"
+                  icon={<RotateCcw className="size-3.5" />}
+                  checked={cheatMeal}
+                  onChange={setCheatMeal}
+                />
+                <Toggle
                   label="Alkohol"
                   icon={<Wine className="size-3.5" />}
                   checked={alcohol}
                   onChange={setAlcohol}
                 />
               </div>
+            </Field>
+
+            <Field label="Kalorienziel (kcal)">
+              <input
+                type="text"
+                inputMode="numeric"
+                value={kcalTargetInput}
+                onChange={(e) => setKcalTargetInput(e.target.value)}
+                placeholder="z. B. 2300"
+                className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm tabular-nums outline-none focus:ring-2 focus:ring-ring/40"
+              />
             </Field>
 
             <Field label="Notizen">

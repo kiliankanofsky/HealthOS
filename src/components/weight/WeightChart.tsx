@@ -10,7 +10,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { useMemo } from "react";
+import { useMemo, useRef } from "react";
 
 import type { WeightPhase } from "@/lib/db/schema";
 import type { SmoothPoint } from "@/lib/utils/loess";
@@ -20,6 +20,7 @@ export type ChartPoint = {
   weight: number;
   cheatDay?: boolean;
   alcohol?: boolean;
+  cheatMeal?: boolean;
 };
 
 type Props = {
@@ -29,6 +30,7 @@ type Props = {
   showTags: boolean;
   dense?: boolean;
   onOpenDay?: (date: string) => void;
+  onOpenPhase?: (phase: WeightPhase) => void;
 };
 
 const SYSTEM_BLUE = "#007AFF";
@@ -49,6 +51,7 @@ export function WeightChart({
   showTags,
   dense = false,
   onOpenDay,
+  onOpenPhase,
 }: Props) {
   // Merge: jedem Datenpunkt ggf. den geglätteten Wert zuordnen, damit beide
   // Linien dieselbe x-Achse teilen (categorical "date").
@@ -91,17 +94,80 @@ export function WeightChart({
   const min = Math.floor(Math.min(...weights) - 0.5);
   const max = Math.ceil(Math.max(...weights) + 0.5);
 
+  // Pending-Phase-Klick: ReferenceArea setzt die Phase, der LineChart-Handler
+  // entscheidet danach anhand der Cursor-Nähe zur Linie, ob doch der Tages-
+  // Dialog gewinnt. So zählt die ReferenceArea zuerst, hat aber kein Veto.
+  const pendingPhaseRef = useRef<WeightPhase | null>(null);
+  const wrapperRef = useRef<HTMLDivElement | null>(null);
+
+  const phaseById = useMemo(() => {
+    const m = new Map<number, WeightPhase>();
+    for (const p of phases) m.set(p.id, p);
+    return m;
+  }, [phases]);
+
+  // Lookup: Datum → Gewicht. Nötig, um die Y-Position der Linie für einen
+  // angeklickten Tag selbst zu berechnen.
+  const weightByDate = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const d of data) m.set(d.date, d.weight);
+    return m;
+  }, [data]);
+
   return (
-    <div className="h-80 w-full">
+    <div ref={wrapperRef} className="h-80 w-full">
       <ResponsiveContainer width="100%" height="100%">
         <LineChart
           data={merged}
           margin={{ top: 8, right: 16, bottom: 8, left: 0 }}
-          onClick={(state) => {
+          onClick={(state, event) => {
+            const pendingPhase = pendingPhaseRef.current;
+            pendingPhaseRef.current = null;
+
             const label = state?.activeLabel;
-            if (typeof label === "string" && onOpenDay) onOpenDay(label);
+            if (typeof label !== "string") {
+              if (pendingPhase && onOpenPhase) onOpenPhase(pendingPhase);
+              return;
+            }
+
+            // Cursor-Y relativ zur Wrapper-Höhe.
+            const e = event as React.MouseEvent | undefined;
+            const rect = wrapperRef.current?.getBoundingClientRect();
+            const cursorY =
+              e && rect && typeof e.clientY === "number"
+                ? e.clientY - rect.top
+                : null;
+
+            // Datenpunkt-Y selbst berechnen: Plot-Bereich ist von oben (top=8)
+            // bis containerHöhe - X-Achsen-Höhe (~30) - bottom margin (8).
+            // Die Y-Achse mapped `max` auf top und `min` auf bottom.
+            const containerH = rect?.height ?? 320;
+            const plotTop = 8;
+            const plotBottom = containerH - 30 - 8;
+            const plotH = Math.max(1, plotBottom - plotTop);
+            const weight = weightByDate.get(label);
+            const pointY =
+              typeof weight === "number" && max > min
+                ? plotTop + ((max - weight) / (max - min)) * plotH
+                : null;
+
+            // Schwellwert in Pixeln. ~32px deckt Linien-Strich + großzügige
+            // Klick-Toleranz ab, ohne dass mittlere Phasen-Hintergründe schon
+            // mitzählen.
+            const onLine =
+              cursorY !== null && pointY !== null && Math.abs(cursorY - pointY) <= 32;
+
+            if (onLine) {
+              if (onOpenDay) onOpenDay(label);
+              return;
+            }
+            if (pendingPhase && onOpenPhase) {
+              onOpenPhase(pendingPhase);
+              return;
+            }
+            if (onOpenDay) onOpenDay(label);
           }}
-          style={onOpenDay ? { cursor: "pointer" } : undefined}
+          style={onOpenDay || onOpenPhase ? { cursor: "pointer" } : undefined}
         >
           <CartesianGrid stroke="currentColor" opacity={0.07} vertical={false} />
           <XAxis
@@ -131,6 +197,14 @@ export function WeightChart({
               fill={PHASE_FILL[p.kind]}
               stroke="none"
               ifOverflow="visible"
+              style={onOpenPhase ? { cursor: "pointer" } : undefined}
+              onClick={() => {
+                // Setzt nur den Pending-State; ob die Phase tatsächlich öffnet,
+                // entscheidet danach der LineChart-Handler (Linien-Nähe schlägt
+                // Phase).
+                const original = phaseById.get(p.id);
+                if (original) pendingPhaseRef.current = original;
+              }}
             />
           ))}
 
@@ -172,7 +246,10 @@ export function WeightChart({
             dot={(props: DotRenderProps) => {
               const { cx, cy, payload, index } = props;
               const isTag =
-                showTags && (payload?.cheatDay === true || payload?.alcohol === true);
+                showTags &&
+                (payload?.cheatDay === true ||
+                  payload?.alcohol === true ||
+                  payload?.cheatMeal === true);
               if (!isTag) {
                 return <g key={`d-${index}`} />;
               }

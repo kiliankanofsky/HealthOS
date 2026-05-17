@@ -1,12 +1,23 @@
-import { and, asc, desc, eq, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, lte, sql } from "drizzle-orm";
 import { db } from "./index";
 import {
+  type ActivitySource,
+  dailyActivity,
+  type DailyActivity,
   exercises,
   type Exercise,
+  type NewDailyActivity,
+  type NewNutritionEntry,
+  type NewSessionExerciseOverride,
   type NewWeightEntry,
   type NewWeightPhase,
   type NewWorkoutSession,
   type NewWorkoutSet,
+  type NutritionEntry,
+  type NutritionSource,
+  nutritionEntries,
+  sessionExerciseOverrides,
+  type SessionExerciseOverride,
   type WeightEntry,
   type WeightPhase,
   type WorkoutKind,
@@ -56,21 +67,27 @@ export function getWeightEntryByDate(date: string): WeightEntry | undefined {
     .get();
 }
 
-// Upsert: Pro Datum existiert nur ein Eintrag. Erneutes Speichern überschreibt
-// die schreibbaren Felder (weight, source, notes, cheat, alcohol).
+// Upsert: Pro Datum existiert nur ein Eintrag.
+// Felder, die NICHT im Input gesetzt sind (undefined), werden bei einem Konflikt
+// NICHT überschrieben — so können Sync-Pfade (z.B. Sheets) das Gewicht
+// updaten, ohne manuell gepflegte Tags (cheatDay/alcohol) oder Notizen
+// zu verlieren.
 export function upsertWeightEntry(entry: NewWeightEntry): WeightEntry {
+  const set: Record<string, unknown> = {
+    weightKg: entry.weightKg,
+    source: entry.source ?? "manual",
+  };
+  if (entry.notes !== undefined) set.notes = entry.notes;
+  if (entry.cheatDay !== undefined) set.cheatDay = entry.cheatDay;
+  if (entry.alcohol !== undefined) set.alcohol = entry.alcohol;
+  if (entry.cheatMeal !== undefined) set.cheatMeal = entry.cheatMeal;
+  if (entry.kcalTarget !== undefined) set.kcalTarget = entry.kcalTarget;
   return db
     .insert(weightEntries)
     .values(entry)
     .onConflictDoUpdate({
       target: weightEntries.date,
-      set: {
-        weightKg: entry.weightKg,
-        notes: entry.notes ?? null,
-        source: entry.source ?? "manual",
-        cheatDay: entry.cheatDay ?? false,
-        alcohol: entry.alcohol ?? false,
-      },
+      set,
     })
     .returning()
     .get();
@@ -80,7 +97,12 @@ export function upsertWeightEntry(entry: NewWeightEntry): WeightEntry {
 // Der Eintrag muss bereits existieren — sonst no-op.
 export function updateWeightMetadata(
   date: string,
-  patch: Partial<Pick<WeightEntry, "notes" | "source" | "cheatDay" | "alcohol">>,
+  patch: Partial<
+    Pick<
+      WeightEntry,
+      "notes" | "source" | "cheatDay" | "alcohol" | "cheatMeal" | "kcalTarget"
+    >
+  >,
 ): WeightEntry | undefined {
   return db
     .update(weightEntries)
@@ -356,6 +378,132 @@ export function deleteSet(id: number): void {
   db.delete(workoutSets).where(eq(workoutSets.id, id)).run();
 }
 
+// ---- Session-Exercise-Overrides ----
+
+export function getOverridesForSession(
+  sessionId: number,
+): SessionExerciseOverride[] {
+  return db
+    .select()
+    .from(sessionExerciseOverrides)
+    .where(eq(sessionExerciseOverrides.sessionId, sessionId))
+    .all();
+}
+
+export function upsertSessionExerciseOverride(
+  input: NewSessionExerciseOverride,
+): SessionExerciseOverride {
+  return db
+    .insert(sessionExerciseOverrides)
+    .values(input)
+    .onConflictDoUpdate({
+      target: [
+        sessionExerciseOverrides.sessionId,
+        sessionExerciseOverrides.templateExerciseId,
+      ],
+      set: { name: input.name },
+    })
+    .returning()
+    .get();
+}
+
+export function deleteSessionExerciseOverride(
+  sessionId: number,
+  templateExerciseId: number,
+): void {
+  db.delete(sessionExerciseOverrides)
+    .where(
+      and(
+        eq(sessionExerciseOverrides.sessionId, sessionId),
+        eq(sessionExerciseOverrides.templateExerciseId, templateExerciseId),
+      ),
+    )
+    .run();
+}
+
+// ---- Progress-Indikator: Vorheriges Training pro Übungs-Slot ----
+
+export type PreviousSetEntry = {
+  setNumber: number;
+  weightKg: number;
+  reps: number;
+};
+
+export type PreviousSessionSets = {
+  date: string;
+  sessionId: number;
+  overrideName: string | null;
+  sets: PreviousSetEntry[];
+};
+
+// Liefert die Sätze aus der jüngsten Session VOR `excludeSessionId`, in der
+// dieser Slot tatsächlich geloggte Sätze hat (reps > 0). Pro Satz-Nummer
+// wird der jeweils höchste Gewichts-Eintrag genommen (typischerweise eh nur einer).
+// Der Override-Name jener Session kommt mit, damit der Caller filtern kann
+// (Vergleich nur bei gleicher Übung).
+export function getPreviousSessionSetsForSlot(
+  templateExerciseId: number,
+  excludeSessionId: number,
+  beforeDate: string,
+): PreviousSessionSets | null {
+  // Kandidaten-Sessions: jüngste zuerst.
+  const candidateSessions = db
+    .selectDistinct({
+      sessionId: workoutSets.sessionId,
+      date: workoutSessions.date,
+    })
+    .from(workoutSets)
+    .innerJoin(workoutSessions, eq(workoutSessions.id, workoutSets.sessionId))
+    .where(
+      and(
+        eq(workoutSets.templateExerciseId, templateExerciseId),
+        sql`${workoutSessions.id} <> ${excludeSessionId}`,
+        sql`${workoutSessions.date} <= ${beforeDate}`,
+      ),
+    )
+    .orderBy(desc(workoutSessions.date))
+    .all();
+
+  for (const cand of candidateSessions) {
+    const sets = db
+      .select({
+        setNumber: workoutSets.setNumber,
+        weightKg: workoutSets.weightKg,
+        reps: workoutSets.reps,
+      })
+      .from(workoutSets)
+      .where(
+        and(
+          eq(workoutSets.sessionId, cand.sessionId),
+          eq(workoutSets.templateExerciseId, templateExerciseId),
+          sql`${workoutSets.reps} > 0`,
+        ),
+      )
+      .orderBy(asc(workoutSets.setNumber))
+      .all();
+    if (sets.length === 0) continue;
+
+    const override = db
+      .select()
+      .from(sessionExerciseOverrides)
+      .where(
+        and(
+          eq(sessionExerciseOverrides.sessionId, cand.sessionId),
+          eq(sessionExerciseOverrides.templateExerciseId, templateExerciseId),
+        ),
+      )
+      .get();
+
+    return {
+      date: cand.date,
+      sessionId: cand.sessionId,
+      overrideName: override?.name ?? null,
+      sets,
+    };
+  }
+  return null;
+}
+
 export function getSessionByGarminId(
   garminActivityId: number,
 ): WorkoutSession | undefined {
@@ -380,6 +528,113 @@ export function buildExerciseAliasMap(): Map<string, number> {
     }
   }
   return map;
+}
+
+// ============================================================
+// Nutrition
+// ============================================================
+
+export function getNutritionEntries(opts?: {
+  from?: string;
+  to?: string;
+  source?: NutritionSource;
+}): NutritionEntry[] {
+  const conds = [] as ReturnType<typeof eq>[];
+  if (opts?.from) conds.push(gte(nutritionEntries.date, opts.from));
+  if (opts?.to) conds.push(lte(nutritionEntries.date, opts.to));
+  if (opts?.source) conds.push(eq(nutritionEntries.source, opts.source));
+  const where = conds.length > 0 ? and(...conds) : undefined;
+  const q = db.select().from(nutritionEntries);
+  return (where ? q.where(where) : q).orderBy(asc(nutritionEntries.date)).all();
+}
+
+export function getNutritionForDate(
+  date: string,
+  source: NutritionSource = "fddb",
+): NutritionEntry | undefined {
+  return db
+    .select()
+    .from(nutritionEntries)
+    .where(
+      and(
+        eq(nutritionEntries.date, date),
+        eq(nutritionEntries.source, source),
+      ),
+    )
+    .get();
+}
+
+// Upsert pro (date, source). Bei Konflikt werden alle Werte aktualisiert
+// und `updated_at` neu gesetzt — die Quelle ist hier authoritativ.
+export function upsertNutritionEntry(entry: NewNutritionEntry): NutritionEntry {
+  return db
+    .insert(nutritionEntries)
+    .values(entry)
+    .onConflictDoUpdate({
+      target: [nutritionEntries.date, nutritionEntries.source],
+      set: {
+        caloriesKcal: entry.caloriesKcal,
+        proteinG: entry.proteinG,
+        carbsG: entry.carbsG,
+        fatG: entry.fatG,
+        fiberG: entry.fiberG ?? null,
+        sugarG: entry.sugarG ?? null,
+        rawJson: entry.rawJson ?? null,
+        updatedAt: sql`(CURRENT_TIMESTAMP)`,
+      },
+    })
+    .returning()
+    .get();
+}
+
+// ============================================================
+// Daily Activity (Garmin total kcal burned)
+// ============================================================
+
+export function getDailyActivityEntries(opts?: {
+  from?: string;
+  to?: string;
+  source?: ActivitySource;
+}): DailyActivity[] {
+  const conds = [] as ReturnType<typeof eq>[];
+  if (opts?.from) conds.push(gte(dailyActivity.date, opts.from));
+  if (opts?.to) conds.push(lte(dailyActivity.date, opts.to));
+  if (opts?.source) conds.push(eq(dailyActivity.source, opts.source));
+  const where = conds.length > 0 ? and(...conds) : undefined;
+  const q = db.select().from(dailyActivity);
+  return (where ? q.where(where) : q).orderBy(asc(dailyActivity.date)).all();
+}
+
+export function getDailyActivityForDate(
+  date: string,
+  source: ActivitySource = "garmin",
+): DailyActivity | undefined {
+  return db
+    .select()
+    .from(dailyActivity)
+    .where(
+      and(eq(dailyActivity.date, date), eq(dailyActivity.source, source)),
+    )
+    .get();
+}
+
+export function upsertDailyActivity(entry: NewDailyActivity): DailyActivity {
+  return db
+    .insert(dailyActivity)
+    .values(entry)
+    .onConflictDoUpdate({
+      target: [dailyActivity.date, dailyActivity.source],
+      set: {
+        totalKcal: entry.totalKcal,
+        activeKcal: entry.activeKcal ?? null,
+        bmrKcal: entry.bmrKcal ?? null,
+        steps: entry.steps ?? null,
+        rawJson: entry.rawJson ?? null,
+        updatedAt: sql`(CURRENT_TIMESTAMP)`,
+      },
+    })
+    .returning()
+    .get();
 }
 
 // Cycle-Nummer = wievielte Ausführung dieses Templates (chronologisch).

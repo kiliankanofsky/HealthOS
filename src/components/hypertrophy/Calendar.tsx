@@ -1,15 +1,11 @@
 "use client";
 
-import { ChevronLeft, ChevronRight, Cookie, Wine } from "lucide-react";
+import { ChevronLeft, ChevronRight, Cookie, Dumbbell, Wine } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import type { WorkoutKind } from "@/lib/db/schema";
-import {
-  WORKOUT_COLORS,
-  WORKOUT_LABELS,
-  WORKOUT_MARKER_LETTER,
-} from "@/lib/hypertrophy/workouts";
+import { WORKOUT_COLORS, WORKOUT_LABELS } from "@/lib/hypertrophy/workouts";
 import { cn } from "@/lib/utils";
 
 export type CalendarMarker = {
@@ -118,86 +114,132 @@ export function Calendar({ markers, tags = [] }: Props) {
 
       <div
         ref={gridRef}
-        className="grid grid-cols-7 gap-px overflow-hidden rounded-xl bg-border/60 ring-1 ring-foreground/10 select-none"
+        className="select-none"
         title="Trackpad-/Mausrad-Swipe vertikal: Woche wechseln"
       >
-        {WEEKDAYS_DE.map((d) => (
-          <div
-            key={d}
-            className="bg-muted/40 px-2 py-1.5 text-center text-[10px] font-medium tracking-wider text-muted-foreground uppercase"
-          >
-            {d}
-          </div>
-        ))}
-        {cells.map((cell, i) => {
-          const isCurrentMonth = cell.month === anchorMonth;
-          const cellMarkers = markersByDate.get(cell.iso) ?? [];
-          const cellTag = tagsByDate.get(cell.iso);
-          const isToday = cell.iso === todayIso;
-
-          return (
+        <div className="grid grid-cols-7 gap-1 pb-2">
+          {WEEKDAYS_DE.map((d) => (
             <div
-              key={i}
-              className={cn(
-                "relative flex aspect-square min-h-[68px] flex-col gap-1.5 p-1.5 transition-colors",
-                isCurrentMonth ? "bg-card" : "bg-muted/30 text-muted-foreground/50",
-              )}
+              key={d}
+              className="text-center text-[11px] font-medium tracking-wider text-muted-foreground/80 uppercase"
             >
+              {d}
+            </div>
+          ))}
+        </div>
+        <div className="grid grid-cols-7 gap-y-1.5">
+          {cells.map((cell, i) => {
+            const isCurrentMonth = cell.month === anchorMonth;
+            const cellMarkers = markersByDate.get(cell.iso) ?? [];
+            const cellTag = tagsByDate.get(cell.iso);
+            const isToday = cell.iso === todayIso;
+            // Pro Tag wird der erste Marker dominant angezeigt — wenn ein
+            // Doppel-Workout vorkommt, dann als kleines Hinweis-Dot rechts oben.
+            const primary = cellMarkers[0] ?? null;
+            const extraCount = Math.max(0, cellMarkers.length - 1);
+
+            return (
               <div
-                className={cn(
-                  "flex items-center justify-between gap-1 text-xs tabular-nums",
-                  isToday && "font-semibold text-primary",
-                )}
+                key={i}
+                className="relative flex flex-col items-center gap-1 py-1"
               >
-                <span className="flex items-center gap-0.5 text-rose-600/80">
-                  {cellTag?.cheatDay && (
-                    <span title="Cheat Day" aria-label="Cheat Day">
-                      <Cookie className="size-3" />
-                    </span>
-                  )}
-                  {cellTag?.alcohol && (
-                    <span title="Alkohol" aria-label="Alkohol">
-                      <Wine className="size-3" />
-                    </span>
-                  )}
-                </span>
-                {isToday ? (
-                  <span className="inline-flex size-5 items-center justify-center rounded-full bg-primary text-[11px] text-primary-foreground">
-                    {cell.day}
-                  </span>
+                {primary ? (
+                  <WorkoutDayCell
+                    marker={primary}
+                    extraCount={extraCount}
+                    isToday={isToday}
+                    faded={!isCurrentMonth}
+                  />
                 ) : (
-                  <span>{cell.day}</span>
+                  <EmptyDayCell
+                    day={cell.day}
+                    isToday={isToday}
+                    faded={!isCurrentMonth}
+                  />
+                )}
+                {(cellTag?.cheatDay || cellTag?.alcohol) && (
+                  <span className="flex items-center gap-0.5 text-rose-600/80">
+                    {cellTag.cheatDay && (
+                      <span title="Cheat Day" aria-label="Cheat Day">
+                        <Cookie className="size-2.5" />
+                      </span>
+                    )}
+                    {cellTag.alcohol && (
+                      <span title="Alkohol" aria-label="Alkohol">
+                        <Wine className="size-2.5" />
+                      </span>
+                    )}
+                  </span>
                 )}
               </div>
-
-              {cellMarkers.length > 0 && (
-                <div className="flex flex-wrap items-center gap-1">
-                  {cellMarkers.map((m) => (
-                    <Marker key={`${m.date}-${m.templateSlug}`} marker={m} />
-                  ))}
-                </div>
-              )}
-            </div>
-          );
-        })}
+            );
+          })}
+        </div>
       </div>
     </div>
   );
 }
 
-function Marker({ marker }: { marker: CalendarMarker }) {
+// Tag mit Workout: ausgefüllter Kreis in der Workout-Farbe + Hantel-Icon innen.
+// Strava-Anlehnung: Icon trägt die Bedeutung, Datum-Nummer entfällt für gefüllte Tage.
+function WorkoutDayCell({
+  marker,
+  extraCount,
+  isToday,
+  faded,
+}: {
+  marker: CalendarMarker;
+  extraCount: number;
+  isToday: boolean;
+  faded: boolean;
+}) {
   const colors = WORKOUT_COLORS[marker.kind];
   return (
     <Link
       href={`/hypertrophy/${marker.templateSlug}/${marker.date}?scope=all`}
       title={`${WORKOUT_LABELS[marker.kind]} · ${marker.date}`}
       className={cn(
-        "inline-flex size-5 items-center justify-center rounded-full text-[10px] font-semibold text-white shadow-sm transition-transform hover:scale-110",
+        "relative inline-flex size-10 items-center justify-center rounded-full text-white shadow-sm ring-2 transition-transform hover:scale-110",
         colors.bg,
+        isToday ? "ring-foreground/40" : "ring-transparent",
+        faded && "opacity-50",
       )}
     >
-      {WORKOUT_MARKER_LETTER[marker.kind]}
+      <Dumbbell className="size-4" />
+      {extraCount > 0 && (
+        <span
+          aria-hidden
+          className="absolute -top-0.5 -right-0.5 inline-flex size-3.5 items-center justify-center rounded-full bg-foreground text-[9px] font-semibold tabular-nums text-background ring-2 ring-card"
+        >
+          +{extraCount}
+        </span>
+      )}
     </Link>
+  );
+}
+
+// Tag ohne Workout: nur die Datums-Nummer in einem dezenten outline Kreis.
+function EmptyDayCell({
+  day,
+  isToday,
+  faded,
+}: {
+  day: number;
+  isToday: boolean;
+  faded: boolean;
+}) {
+  return (
+    <span
+      className={cn(
+        "inline-flex size-10 items-center justify-center rounded-full text-sm tabular-nums",
+        isToday
+          ? "bg-foreground text-background font-semibold"
+          : "text-muted-foreground/80 ring-1 ring-inset ring-border/70",
+        faded && "opacity-40",
+      )}
+    >
+      {day}
+    </span>
   );
 }
 

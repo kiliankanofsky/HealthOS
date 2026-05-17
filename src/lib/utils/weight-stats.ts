@@ -1,10 +1,20 @@
 import type { WeightEntry } from "@/lib/db/schema";
 
+export type WindowAvg = {
+  avg: number | null;
+  // Anzahl Messungen im Fenster — auch wenn null returns, gibt Auskunft über Datenlage.
+  count: number;
+};
+
 export type WeightStats = {
   current: number | null;
   currentDate: string | null;
-  trend7d: number | null;
-  trend30d: number | null;
+  // Wöchentlicher Schnitt: letzte 7 Tage (relativ zum aktuellsten Eintrag).
+  weekAvg: WindowAvg;
+  // Schnitt der 7 Tage davor (Tag -14 bis Tag -7).
+  prevWeekAvg: WindowAvg;
+  // Schnitt der letzten 28 Tage als mittelfristige Baseline.
+  fourWeekAvg: WindowAvg;
   min: number | null;
   max: number | null;
   avg: number | null;
@@ -12,14 +22,14 @@ export type WeightStats = {
 };
 
 // Erwartet Einträge in chronologischer Reihenfolge (asc).
-// Berechnet Trend als Differenz zum nächstgelegenen Eintrag, der mind. n Tage zurückliegt.
 export function computeWeightStats(entries: WeightEntry[]): WeightStats {
   if (entries.length === 0) {
     return {
       current: null,
       currentDate: null,
-      trend7d: null,
-      trend30d: null,
+      weekAvg: { avg: null, count: 0 },
+      prevWeekAvg: { avg: null, count: 0 },
+      fourWeekAvg: { avg: null, count: 0 },
       min: null,
       max: null,
       avg: null,
@@ -29,12 +39,14 @@ export function computeWeightStats(entries: WeightEntry[]): WeightStats {
 
   const latest = entries[entries.length - 1];
   const weights = entries.map((e) => e.weightKg);
+  const latestDate = latest.date;
 
   return {
     current: latest.weightKg,
-    currentDate: latest.date,
-    trend7d: computeTrend(entries, 7),
-    trend30d: computeTrend(entries, 30),
+    currentDate: latestDate,
+    weekAvg: windowAverage(entries, latestDate, 0, 6),
+    prevWeekAvg: windowAverage(entries, latestDate, 7, 13),
+    fourWeekAvg: windowAverage(entries, latestDate, 0, 27),
     min: Math.min(...weights),
     max: Math.max(...weights),
     avg: weights.reduce((sum, w) => sum + w, 0) / weights.length,
@@ -42,24 +54,42 @@ export function computeWeightStats(entries: WeightEntry[]): WeightStats {
   };
 }
 
-// Differenz zwischen aktuellstem Eintrag und dem nächstgelegenen Eintrag,
-// der mindestens `days` Tage zurückliegt. Negative Werte = Gewichtsabnahme.
-function computeTrend(entries: WeightEntry[], days: number): number | null {
-  if (entries.length < 2) return null;
+// Mittelt Einträge, deren Datum im Fenster [anchor - endOffset, anchor - startOffset] liegt.
+// Offsets in Tagen, inklusive. startOffset = 0 bedeutet "ab heute rückwärts".
+function windowAverage(
+  entries: WeightEntry[],
+  anchorIso: string,
+  startOffset: number,
+  endOffset: number,
+): WindowAvg {
+  const anchor = new Date(`${anchorIso}T00:00:00`);
+  const winEnd = new Date(anchor);
+  winEnd.setDate(winEnd.getDate() - startOffset);
+  const winStart = new Date(anchor);
+  winStart.setDate(winStart.getDate() - endOffset);
 
-  const latest = entries[entries.length - 1];
-  const latestDate = new Date(latest.date);
-  const cutoff = new Date(latestDate);
-  cutoff.setDate(cutoff.getDate() - days);
-
-  // Suche rückwärts den ersten Eintrag, der am oder vor cutoff liegt.
-  for (let i = entries.length - 2; i >= 0; i--) {
-    if (new Date(entries[i].date) <= cutoff) {
-      return latest.weightKg - entries[i].weightKg;
+  let sum = 0;
+  let count = 0;
+  for (const e of entries) {
+    const d = new Date(`${e.date}T00:00:00`);
+    if (d >= winStart && d <= winEnd) {
+      sum += e.weightKg;
+      count++;
     }
   }
-  // Kein Eintrag im gewünschten Zeitfenster.
-  return null;
+  if (count === 0) return { avg: null, count: 0 };
+  return { avg: sum / count, count };
+}
+
+export function formatAvg(value: number | null): string {
+  if (value === null || Number.isNaN(value)) return "–";
+  return `${value.toFixed(1)} kg`;
+}
+
+// Differenz a − b. Null wenn ein Wert fehlt.
+export function diff(a: number | null, b: number | null): number | null {
+  if (a === null || b === null) return null;
+  return a - b;
 }
 
 export function formatKg(value: number | null, fractionDigits = 1): string {

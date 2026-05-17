@@ -11,6 +11,8 @@ import {
   getAllPhases,
   getAllSessions,
   getAllTemplates,
+  getOverridesForSession,
+  getPreviousSessionSetsForSlot,
   getSession,
   getSessionsByTemplate,
   getSetsBySession,
@@ -65,6 +67,10 @@ export default async function SessionPage({
 
   const exerciseRows = getTemplateExercises(template.id);
   const sets = getSetsBySession(session.id);
+  const overrides = getOverridesForSession(session.id);
+  const overrideByTemplateExerciseId = new Map(
+    overrides.map((o) => [o.templateExerciseId, o.name]),
+  );
   const cycle = cycleNumberFor(template.id, date);
   // Cheat-Day / Alkohol vom Vortag — sie wirken auf das Training am Folgetag.
   const previousDay = previousDayIso(date);
@@ -188,14 +194,33 @@ export default async function SessionPage({
 
       <SessionLogger
         sessionId={session.id}
-        exerciseRows={exerciseRows.map((row) => ({
-          templateExerciseId: row.templateExercise.id,
-          name: row.exercise.name,
-          unilateral: row.exercise.unilateral,
-          repMin: row.templateExercise.repMin ?? row.exercise.defaultRepMin,
-          repMax: row.templateExercise.repMax ?? row.exercise.defaultRepMax,
-          sets: setsByExercise.get(row.templateExercise.id) ?? [],
-        }))}
+        exerciseRows={exerciseRows.map((row) => {
+          const overrideName =
+            overrideByTemplateExerciseId.get(row.templateExercise.id) ?? null;
+          const previous = getPreviousSessionSetsForSlot(
+            row.templateExercise.id,
+            session.id,
+            date,
+          );
+          // Vergleich nur sinnvoll, wenn die letzte Session denselben Übungs-Namen
+          // hatte wie die aktuelle (Override oder Stamm).
+          const currentName = overrideName ?? row.exercise.name;
+          const previousName = previous?.overrideName ?? row.exercise.name;
+          const previousSets =
+            previous && currentName.toLowerCase() === previousName.toLowerCase()
+              ? { date: previous.date, sets: previous.sets }
+              : null;
+          return {
+            templateExerciseId: row.templateExercise.id,
+            name: row.exercise.name,
+            overrideName,
+            unilateral: row.exercise.unilateral,
+            repMin: row.templateExercise.repMin ?? row.exercise.defaultRepMin,
+            repMax: row.templateExercise.repMax ?? row.exercise.defaultRepMax,
+            sets: setsByExercise.get(row.templateExercise.id) ?? [],
+            previousSets,
+          };
+        })}
       />
 
       <div className="flex justify-end pt-4">

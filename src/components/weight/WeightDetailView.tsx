@@ -15,7 +15,7 @@ type Props = {
 };
 
 export function WeightDetailView({ entries, matrixYear }: Props) {
-  const [view, setView] = useState<View>("day");
+  const [view, setView] = useState<View>("week");
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
 
   const byDate = useMemo(() => {

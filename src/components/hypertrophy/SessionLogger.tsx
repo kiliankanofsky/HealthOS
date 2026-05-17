@@ -1,21 +1,37 @@
 "use client";
 
-import { Plus, Trash2 } from "lucide-react";
-import { useState, useTransition } from "react";
+import { Check, Plus, RotateCcw, Trash2, X } from "lucide-react";
+import { useMemo, useState, useTransition } from "react";
 
-import { deleteSet, saveSet, toggleSetWeightMode } from "@/app/hypertrophy/actions";
+import {
+  clearExerciseOverride,
+  deleteSet,
+  saveExerciseOverride,
+  saveSet,
+  toggleSetWeightMode,
+} from "@/app/hypertrophy/actions";
 import { Button } from "@/components/ui/button";
 import type { WeightMode, WorkoutSet } from "@/lib/db/schema";
 import { effectiveE1RM, round1 } from "@/lib/utils/strength";
 import { cn } from "@/lib/utils";
 
+export type PreviousSetRef = {
+  setNumber: number;
+  weightKg: number;
+  reps: number;
+};
+
 export type ExerciseLogRow = {
   templateExerciseId: number;
   name: string;
+  // Wenn gesetzt, steht der alternative Name; "name" bleibt der Slot-Default.
+  overrideName: string | null;
   unilateral: boolean;
   repMin: number;
   repMax: number;
   sets: WorkoutSet[];
+  // Sätze aus dem letzten vergleichbaren Training (gleiche Übung), keyed via setNumber.
+  previousSets: { date: string; sets: PreviousSetRef[] } | null;
 };
 
 type Props = {
@@ -71,6 +87,20 @@ function ExerciseCard({
   const [drafts, setDrafts] = useState<DraftSet[]>(() => setsToDraft(row.sets));
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
+  // Override-State: Edit-Mode (Input offen) und lokaler Name-Buffer.
+  const [editingOverride, setEditingOverride] = useState(false);
+  const [overrideDraft, setOverrideDraft] = useState("");
+
+  const isOverridden = row.overrideName !== null;
+  const displayName = row.overrideName ?? row.name;
+
+  // Vorherige Sätze für schnellen Lookup per setNumber.
+  const previousBySetNumber = useMemo(() => {
+    const m = new Map<number, PreviousSetRef>();
+    if (!row.previousSets) return m;
+    for (const s of row.previousSets.sets) m.set(s.setNumber, s);
+    return m;
+  }, [row.previousSets]);
 
   const update = (idx: number, patch: Partial<DraftSet>) => {
     setDrafts((prev) =>
@@ -131,7 +161,6 @@ function ExerciseCard({
   const removeRow = (idx: number) => {
     const d = drafts[idx];
     if (d.id === null) {
-      // Lokal-only — einfach aus dem State werfen.
       setDrafts((prev) => prev.filter((_, i) => i !== idx));
       return;
     }
@@ -142,16 +171,138 @@ function ExerciseCard({
     });
   };
 
+  const saveOverride = () => {
+    setError(null);
+    const trimmed = overrideDraft.trim();
+    if (trimmed.length === 0) {
+      // Leerer Name = Override löschen (zurück zur Original-Übung).
+      startTransition(async () => {
+        await clearExerciseOverride({
+          sessionId,
+          templateExerciseId: row.templateExerciseId,
+        });
+        setEditingOverride(false);
+      });
+      return;
+    }
+    startTransition(async () => {
+      const result = await saveExerciseOverride({
+        sessionId,
+        templateExerciseId: row.templateExerciseId,
+        name: trimmed,
+      });
+      if (!result.ok) {
+        setError(result.error ?? "Override speichern fehlgeschlagen.");
+        return;
+      }
+      setEditingOverride(false);
+    });
+  };
+
   return (
-    <div className="space-y-3 rounded-2xl bg-card p-5 ring-1 ring-foreground/10">
-      <div className="flex items-baseline justify-between gap-3">
-        <h3 className="font-heading text-lg font-semibold tracking-tight">
-          {row.name}
-        </h3>
-        <p className="text-xs text-muted-foreground">
-          {row.repMin}–{row.repMax} Reps
-          {row.unilateral && " · einarmig"}
-        </p>
+    <div
+      className={cn(
+        "space-y-3 rounded-2xl p-5 ring-1 ring-foreground/10",
+        // Overridden Cards leicht gräulich abgesetzt, damit der Slot-Swap
+        // auf einen Blick sichtbar ist.
+        isOverridden ? "bg-muted/55" : "bg-card",
+      )}
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0 flex-1">
+          {editingOverride ? (
+            <div className="flex items-center gap-2">
+              <input
+                type="text"
+                value={overrideDraft}
+                onChange={(e) => setOverrideDraft(e.target.value)}
+                placeholder={`Alternative für ${row.name}`}
+                autoFocus
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") saveOverride();
+                  if (e.key === "Escape") {
+                    setOverrideDraft(row.overrideName ?? "");
+                    setEditingOverride(false);
+                  }
+                }}
+                className="min-w-0 flex-1 rounded-lg border border-border bg-background px-2.5 py-1 font-heading text-lg font-semibold tracking-tight outline-none focus:ring-2 focus:ring-ring/40"
+              />
+              <button
+                type="button"
+                onClick={saveOverride}
+                disabled={pending}
+                aria-label="Übernehmen"
+                className="inline-flex size-7 items-center justify-center rounded-full text-emerald-600 transition-colors hover:bg-emerald-500/10"
+              >
+                <Check className="size-4" />
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setOverrideDraft(row.overrideName ?? "");
+                  setEditingOverride(false);
+                }}
+                aria-label="Abbrechen"
+                className="inline-flex size-7 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+              >
+                <X className="size-4" />
+              </button>
+            </div>
+          ) : (
+            <div className="flex items-baseline gap-2">
+              <h3 className="font-heading text-lg font-semibold tracking-tight">
+                {displayName}
+              </h3>
+              {isOverridden && (
+                <span className="text-[10px] font-medium tracking-wider text-muted-foreground uppercase">
+                  statt {row.name}
+                </span>
+              )}
+            </div>
+          )}
+          <p className="text-xs text-muted-foreground">
+            {row.repMin}–{row.repMax} Reps
+            {row.unilateral && " · einarmig"}
+          </p>
+        </div>
+
+        <div className="flex items-center gap-1.5">
+          <button
+            type="button"
+            onClick={() => {
+              if (isOverridden) {
+                // Bereits überschrieben → ein Klick setzt zurück zur Original-Übung.
+                setError(null);
+                startTransition(async () => {
+                  await clearExerciseOverride({
+                    sessionId,
+                    templateExerciseId: row.templateExerciseId,
+                  });
+                });
+                return;
+              }
+              // Noch original → Input öffnen, leer beginnen.
+              setOverrideDraft("");
+              setEditingOverride(true);
+            }}
+            aria-label={
+              isOverridden ? "Auf Original-Übung zurücksetzen" : "Alternative Übung wählen"
+            }
+            title={
+              isOverridden
+                ? `Klick: zurück zu „${row.name}“`
+                : "Alternative Übung wählen"
+            }
+            className={cn(
+              "inline-flex size-7 items-center justify-center rounded-full transition-colors",
+              isOverridden
+                ? "bg-foreground/10 text-foreground ring-1 ring-foreground/15 hover:bg-foreground/15"
+                : "text-muted-foreground/70 hover:bg-muted hover:text-foreground",
+            )}
+          >
+            <RotateCcw className="size-3.5" />
+          </button>
+        </div>
       </div>
 
       <div
@@ -184,6 +335,7 @@ function ExerciseCard({
                 })
               : 0;
           const skipped = Number.isFinite(r) && r === 0 && d.reps !== "";
+          const previous = previousBySetNumber.get(d.setNumber) ?? null;
           return (
             <div
               key={`${d.id ?? "new"}-${d.setNumber}`}
@@ -217,8 +369,16 @@ function ExerciseCard({
                 onChange={(v) => update(idx, { reps: v })}
                 onBlur={() => persist(idx)}
               />
-              <span className="w-12 text-right text-sm tabular-nums text-muted-foreground">
-                {e1 > 0 ? round1(e1) : "—"}
+              <span className="flex items-center justify-end gap-1.5">
+                <SetDiffChip
+                  currentWeight={d.weight}
+                  currentReps={d.reps}
+                  previous={previous}
+                  previousDate={row.previousSets?.date ?? null}
+                />
+                <span className="w-12 text-right text-sm tabular-nums text-muted-foreground">
+                  {e1 > 0 ? round1(e1) : "—"}
+                </span>
               </span>
               <button
                 type="button"
@@ -253,6 +413,63 @@ function ExerciseCard({
         )}
       </div>
     </div>
+  );
+}
+
+// Pro-Satz-Diff: vergleicht den aktuellen Satz mit dem gleich-nummerierten Satz
+// aus dem letzten vergleichbaren Training. Zeigt Gewichts-Δ zuerst; bei
+// gleichem Gewicht das Reps-Δ. Bei fehlenden Eingaben oder ohne Baseline: nichts.
+function SetDiffChip({
+  currentWeight,
+  currentReps,
+  previous,
+  previousDate,
+}: {
+  currentWeight: string;
+  currentReps: string;
+  previous: PreviousSetRef | null;
+  previousDate: string | null;
+}) {
+  if (!previous) return null;
+  const w = Number(currentWeight.replace(",", "."));
+  const r = Number(currentReps);
+  if (!Number.isFinite(w) || !Number.isFinite(r) || r === 0) return null;
+  const dWeight = Math.round((w - previous.weightKg) * 10) / 10;
+  const dReps = r - previous.reps;
+  const title = `Vorher: ${previous.weightKg} kg × ${previous.reps}${
+    previousDate ? ` (${previousDate})` : ""
+  }`;
+
+  let text: string;
+  let tone: "up" | "down" | "flat";
+  if (dWeight > 0) {
+    text = `+${dWeight} kg`;
+    tone = "up";
+  } else if (dWeight < 0) {
+    text = `${dWeight} kg`;
+    tone = "down";
+  } else if (dReps > 0) {
+    text = `+${dReps}`;
+    tone = "up";
+  } else if (dReps < 0) {
+    text = `${dReps}`;
+    tone = "down";
+  } else {
+    text = "±0";
+    tone = "flat";
+  }
+  return (
+    <span
+      title={title}
+      className={cn(
+        "inline-flex items-center rounded-full px-1.5 py-0.5 text-[10px] font-semibold tabular-nums ring-1",
+        tone === "up" && "bg-emerald-500/12 text-emerald-700 ring-emerald-500/25",
+        tone === "down" && "bg-rose-500/10 text-rose-700 ring-rose-500/20",
+        tone === "flat" && "bg-muted text-muted-foreground ring-transparent",
+      )}
+    >
+      {text}
+    </span>
   );
 }
 

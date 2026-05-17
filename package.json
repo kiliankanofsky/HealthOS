@@ -15,12 +15,15 @@
     "db:sync:sheets": "tsx scripts/sync-sheets.ts",
     "garmin:login-check": "tsx scripts/garmin-login-check.ts",
     "garmin:strength-list": "tsx scripts/garmin-strength-list.ts",
-    "db:sync:garmin": "tsx scripts/sync-garmin-strength.ts"
+    "db:sync:garmin": "tsx scripts/sync-garmin-strength.ts",
+    "db:sync:nutrition": "tsx scripts/sync-nutrition.ts",
+    "db:sync:garmin-calories": "tsx scripts/sync-garmin-calories.ts"
   },
   "dependencies": {
     "@base-ui/react": "^1.4.1",
     "@gooin/garmin-connect": "^1.7.6",
     "better-sqlite3": "^12.9.0",
+    "cheerio": "^1.2.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "dotenv": "^17.4.2",

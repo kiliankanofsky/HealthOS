@@ -1,3 +1,4 @@
+import Image from "next/image";
 import Link from "next/link";
 
 import { AppShell } from "@/components/site/AppShell";
@@ -11,6 +12,19 @@ export function ComingSoon({ section, description }: Props) {
   return (
     <AppShell>
       <main className="mx-auto flex min-h-[calc(100vh-14rem)] w-full max-w-3xl flex-col items-center justify-center gap-6 px-6 py-16 text-center">
+        <span
+          aria-hidden
+          className="inline-flex size-20 items-center justify-center overflow-hidden rounded-2xl bg-white ring-1 ring-foreground/10 shadow-sm"
+        >
+          <Image
+            src="/logo.png"
+            alt=""
+            width={160}
+            height={160}
+            className="size-full object-contain"
+            priority
+          />
+        </span>
         <p className="text-[11px] font-medium tracking-[0.22em] text-primary uppercase">
           {section}
         </p>
