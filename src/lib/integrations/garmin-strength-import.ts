@@ -88,11 +88,11 @@ export async function syncGarminStrength(
   };
 
   // Lookup-Daten aus DB einmal vorbereiten.
-  const aliasMap = buildExerciseAliasMap();
-  const templates = getAllTemplates();
+  const aliasMap = await buildExerciseAliasMap();
+  const templates = await getAllTemplates();
   const templateExercisesByTemplate = new Map<number, TemplateExerciseRow[]>();
   for (const tpl of templates) {
-    templateExercisesByTemplate.set(tpl.id, getTemplateExercises(tpl.id));
+    templateExercisesByTemplate.set(tpl.id, await getTemplateExercises(tpl.id));
   }
 
   // Aktivitäten holen.
@@ -114,7 +114,7 @@ export async function syncGarminStrength(
     if (since && dateIso < since) continue;
 
     // Idempotenz: schon importiert?
-    const existing = getSessionByGarminId(act.activityId);
+    const existing = await getSessionByGarminId(act.activityId);
     if (existing) {
       result.skippedAlreadyImported += 1;
       continue;
@@ -218,7 +218,7 @@ export async function syncGarminStrength(
     // Session anlegen — abfangen, falls schon eine manuelle Session am Datum existiert.
     let sessionId: number;
     try {
-      const session = dbCreateSession({
+      const session = await dbCreateSession({
         templateId: match.template.id,
         date: dateIso,
         notes: act.activityName ?? null,
@@ -257,7 +257,7 @@ export async function syncGarminStrength(
         a.startTime.localeCompare(b.startTime),
       );
       for (let i = 0; i < sorted.length; i++) {
-        upsertSet({
+        await upsertSet({
           sessionId,
           templateExerciseId: tplRow.templateExercise.id,
           setNumber: i + 1,

@@ -17,74 +17,81 @@ import { bestE1RM, round1 } from "@/lib/utils/strength";
 
 // Pro Workout eine Card mit: Marker-Badge, Name, aktueller Cycle, letzte Session.
 // Jede Card linkt auf die Workout-Detail-Page.
-export function WorkoutCards() {
-  const templates = getAllTemplates();
+export async function WorkoutCards() {
+  const templates = await getAllTemplates();
   // In WORKOUT_ORDER sortieren.
   const ordered = WORKOUT_ORDER.map((kind) =>
     templates.find((t) => t.kind === kind),
   ).filter((t): t is NonNullable<typeof t> => t !== undefined);
 
+  // Pre-compute all card data ahead of rendering, weil JSX-map nicht async sein kann.
+  const cards = await Promise.all(
+    ordered.map(async (tpl) => {
+      const sessions = await getSessionsByTemplate(tpl.id);
+      const lastSession = sessions[0]; // sessions sind desc nach Datum sortiert
+      const cycle = sessions.length;
+      const colors = WORKOUT_COLORS[tpl.kind];
+
+      // Unilateral-Flag pro Template-Exercise vorhalten, damit
+      // effectiveE1RM den Weight-Mode korrekt anwendet.
+      const tplExercises = await getTemplateExercises(tpl.id);
+      const unilateralByTplExId = new Map(
+        tplExercises.map((row) => [row.templateExercise.id, row.exercise.unilateral]),
+      );
+
+      const computeTotalE1 = async (sessionId: number): Promise<{ total: number; count: number }> => {
+        const sets = await getSetsBySession(sessionId);
+        const byExercise = new Map<
+          number,
+          { weightKg: number; reps: number; weightMode: "per-side" | "summed"; unilateral: boolean }[]
+        >();
+        for (const s of sets) {
+          const unilateral = unilateralByTplExId.get(s.templateExerciseId) ?? false;
+          const list = byExercise.get(s.templateExerciseId) ?? [];
+          list.push({
+            weightKg: s.weightKg,
+            reps: s.reps,
+            weightMode: s.weightMode,
+            unilateral,
+          });
+          byExercise.set(s.templateExerciseId, list);
+        }
+        let total = 0;
+        for (const ex of byExercise.values()) {
+          const best = bestE1RM(ex);
+          if (best !== null) total += best;
+        }
+        return { total, count: sets.filter((s) => s.reps > 0).length };
+      };
+
+      // Mini-Stats der letzten Session: Σ Best e1RM + Anzahl Sätze + Trend zur vorletzten.
+      let lastSummary: {
+        totalE1: number;
+        setCount: number;
+        delta: number | null;
+      } | null = null;
+      if (lastSession) {
+        const last = await computeTotalE1(lastSession.id);
+        let delta: number | null = null;
+        const prev = sessions[1];
+        if (prev) {
+          const prevTotal = (await computeTotalE1(prev.id)).total;
+          if (prevTotal > 0) delta = last.total - prevTotal;
+        }
+        lastSummary = {
+          totalE1: round1(last.total),
+          setCount: last.count,
+          delta,
+        };
+      }
+
+      return { tpl, lastSession, cycle, colors, lastSummary };
+    }),
+  );
+
   return (
     <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-      {ordered.map((tpl) => {
-        const sessions = getSessionsByTemplate(tpl.id);
-        const lastSession = sessions[0]; // sessions sind desc nach Datum sortiert
-        const cycle = sessions.length;
-        const colors = WORKOUT_COLORS[tpl.kind];
-
-        // Unilateral-Flag pro Template-Exercise vorhalten, damit
-        // effectiveE1RM den Weight-Mode korrekt anwendet.
-        const tplExercises = getTemplateExercises(tpl.id);
-        const unilateralByTplExId = new Map(
-          tplExercises.map((row) => [row.templateExercise.id, row.exercise.unilateral]),
-        );
-
-        const computeTotalE1 = (sessionId: number): { total: number; count: number } => {
-          const sets = getSetsBySession(sessionId);
-          const byExercise = new Map<
-            number,
-            { weightKg: number; reps: number; weightMode: "per-side" | "summed"; unilateral: boolean }[]
-          >();
-          for (const s of sets) {
-            const unilateral = unilateralByTplExId.get(s.templateExerciseId) ?? false;
-            const list = byExercise.get(s.templateExerciseId) ?? [];
-            list.push({
-              weightKg: s.weightKg,
-              reps: s.reps,
-              weightMode: s.weightMode,
-              unilateral,
-            });
-            byExercise.set(s.templateExerciseId, list);
-          }
-          let total = 0;
-          for (const ex of byExercise.values()) {
-            const best = bestE1RM(ex);
-            if (best !== null) total += best;
-          }
-          return { total, count: sets.filter((s) => s.reps > 0).length };
-        };
-
-        // Mini-Stats der letzten Session: Σ Best e1RM + Anzahl Sätze + Trend zur vorletzten.
-        let lastSummary: {
-          totalE1: number;
-          setCount: number;
-          delta: number | null;
-        } | null = null;
-        if (lastSession) {
-          const last = computeTotalE1(lastSession.id);
-          let delta: number | null = null;
-          const prev = sessions[1];
-          if (prev) {
-            const prevTotal = computeTotalE1(prev.id).total;
-            if (prevTotal > 0) delta = last.total - prevTotal;
-          }
-          lastSummary = {
-            totalE1: round1(last.total),
-            setCount: last.count,
-            delta,
-          };
-        }
-
+      {cards.map(({ tpl, lastSession, cycle, colors, lastSummary }) => {
         return (
           <Link
             key={tpl.id}

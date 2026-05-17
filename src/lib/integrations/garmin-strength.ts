@@ -1,49 +1,40 @@
 import { GarminConnect } from "@gooin/garmin-connect";
-import { existsSync, mkdirSync } from "node:fs";
-import path from "node:path";
+import { getGarminTokens, saveGarminTokens } from "@/lib/db/queries";
 
 // Garmin-Strength-Adapter: liest Krafttraining-Aktivitäten aus Garmin Connect.
 //
 // Auth-Flow:
-// 1. Erste Anmeldung mit Username + Passwort (aus .env.local).
-// 2. Library cached OAuth1- und OAuth2-Token im DATA-Dir.
-// 3. Folgende Aufrufe nutzen die Tokens — kein erneutes Passwort-Login,
-//    bis OAuth2 abläuft (Garmin refresht es automatisch über OAuth1).
-
-const TOKEN_DIR = path.join(process.cwd(), "data", "garmin");
-
-function ensureTokenDir(): void {
-  if (!existsSync(TOKEN_DIR)) {
-    mkdirSync(TOKEN_DIR, { recursive: true });
-  }
-}
+// 1. Erste Anmeldung mit Username + Passwort (aus ENV).
+// 2. OAuth1- und OAuth2-Token werden in der DB-Tabelle `garmin_tokens` (id=1)
+//    abgelegt — auf Vercel gibt es kein persistentes Filesystem.
+// 3. Folgende Aufrufe laden die Tokens aus der DB; bei Ablauf wird neu
+//    eingeloggt und gespeichert.
 
 function getCredentials(): { username: string; password: string } {
   const username = process.env.GARMIN_USERNAME;
   const password = process.env.GARMIN_PASSWORD;
   if (!username || !password) {
     throw new Error(
-      "GARMIN_USERNAME / GARMIN_PASSWORD nicht gesetzt. Lege sie in .env.local an.",
+      "GARMIN_USERNAME / GARMIN_PASSWORD nicht gesetzt. Lege sie als Env-Var an.",
     );
   }
   return { username, password };
 }
 
-// Liefert einen authentifizierten Client. Versucht zuerst Token-Restore,
-// fällt sonst auf Passwort-Login zurück. Beim Login werden die Tokens
-// automatisch wieder gespeichert.
+// Liefert einen authentifizierten Client. Versucht zuerst Token-Restore aus DB,
+// fällt sonst auf Passwort-Login zurück. Beim Login werden die neuen Tokens
+// in der DB persistiert.
 export async function getGarminClient(): Promise<GarminConnect> {
-  ensureTokenDir();
   const credentials = getCredentials();
   const client = new GarminConnect(credentials);
 
-  const oauth1Path = path.join(TOKEN_DIR, "oauth1_token.json");
-  const oauth2Path = path.join(TOKEN_DIR, "oauth2_token.json");
-  const hasTokens = existsSync(oauth1Path) && existsSync(oauth2Path);
-
-  if (hasTokens) {
+  const stored = await getGarminTokens();
+  if (stored) {
     try {
-      await client.loadTokenByFile(TOKEN_DIR);
+      client.loadToken(
+        JSON.parse(stored.oauth1Json),
+        JSON.parse(stored.oauth2Json),
+      );
       // Smoke-Test: User-Profil laden. Wenn das wirft, sind die Tokens kaputt.
       await client.getUserProfile();
       return client;
@@ -53,6 +44,10 @@ export async function getGarminClient(): Promise<GarminConnect> {
   }
 
   await client.login();
-  await client.exportTokenToFile(TOKEN_DIR);
+  const tokens = client.exportToken();
+  await saveGarminTokens(
+    JSON.stringify(tokens.oauth1),
+    JSON.stringify(tokens.oauth2),
+  );
   return client;
 }

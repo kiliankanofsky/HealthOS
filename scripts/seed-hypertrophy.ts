@@ -340,10 +340,10 @@ const TEMPLATES: TemplateSeed[] = [
   },
 ];
 
-function seedExercises(): Map<string, number> {
+async function seedExercises(): Promise<Map<string, number>> {
   const idBySlug = new Map<string, number>();
   for (const e of EXERCISES) {
-    const inserted = db
+    const [inserted] = await db
       .insert(exercises)
       .values({
         slug: e.slug,
@@ -371,24 +371,22 @@ function seedExercises(): Map<string, number> {
           notes: e.notes ?? null,
         },
       })
-      .returning()
-      .get();
+      .returning();
     idBySlug.set(e.slug, inserted.id);
   }
   return idBySlug;
 }
 
-function seedTemplates(exerciseIdBySlug: Map<string, number>) {
+async function seedTemplates(exerciseIdBySlug: Map<string, number>) {
   for (const t of TEMPLATES) {
-    const tpl = db
+    const [tpl] = await db
       .insert(workoutTemplates)
       .values({ slug: t.slug, kind: t.kind, name: t.name })
       .onConflictDoUpdate({
         target: workoutTemplates.slug,
         set: { kind: t.kind, name: t.name },
       })
-      .returning()
-      .get();
+      .returning();
 
     // Upsert per (template_id, position): wenn an Position N schon eine
     // Übung steht, wird sie auf die neue Übung umgehängt. Foreign-Key-sicher
@@ -401,7 +399,7 @@ function seedTemplates(exerciseIdBySlug: Map<string, number>) {
           `Exercise "${slug}" missing in seed (template ${t.slug}).`,
         );
       }
-      db.insert(workoutTemplateExercises)
+      await db.insert(workoutTemplateExercises)
         .values({
           templateId: tpl.id,
           exerciseId: exId,
@@ -421,11 +419,11 @@ function seedTemplates(exerciseIdBySlug: Map<string, number>) {
 
     // Sicherheits-Check: existieren Positionen, die wir nicht definiert haben?
     // Kommt nur vor, wenn wir Übungen aus dem Template entfernen würden.
-    const existingPositions = db
+    const existingPositions = (await db
       .select({ position: workoutTemplateExercises.position })
       .from(workoutTemplateExercises)
       .where(eq(workoutTemplateExercises.templateId, tpl.id))
-      .all()
+      .all())
       .map((row) => row.position);
     const expected = new Set(t.exerciseSlugs.map((_, i) => i + 1));
     const orphans = existingPositions.filter((p) => !expected.has(p));
@@ -437,20 +435,27 @@ function seedTemplates(exerciseIdBySlug: Map<string, number>) {
   }
 }
 
-console.log("Seeding hypertrophy exercises + templates...");
-const ids = seedExercises();
-console.log(`  ${ids.size} exercises upserted.`);
-seedTemplates(ids);
+async function main() {
+  console.log("Seeding hypertrophy exercises + templates...");
+  const ids = await seedExercises();
+  console.log(`  ${ids.size} exercises upserted.`);
+  await seedTemplates(ids);
 
-const templateCount = db
-  .select({ count: sql<number>`count(*)` })
-  .from(workoutTemplates)
-  .get();
-const tpExCount = db
-  .select({ count: sql<number>`count(*)` })
-  .from(workoutTemplateExercises)
-  .get();
-console.log(
-  `  ${templateCount?.count ?? 0} templates, ${tpExCount?.count ?? 0} template-exercise links.`,
-);
-console.log("Done.");
+  const templateCount = await db
+    .select({ count: sql<number>`count(*)` })
+    .from(workoutTemplates)
+    .get();
+  const tpExCount = await db
+    .select({ count: sql<number>`count(*)` })
+    .from(workoutTemplateExercises)
+    .get();
+  console.log(
+    `  ${templateCount?.count ?? 0} templates, ${tpExCount?.count ?? 0} template-exercise links.`,
+  );
+  console.log("Done.");
+}
+
+main().catch((err) => {
+  console.error(err);
+  process.exit(1);
+});

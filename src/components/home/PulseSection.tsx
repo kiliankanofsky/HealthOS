@@ -13,10 +13,12 @@ import { cn } from "@/lib/utils";
 
 // "Heute in HealthOS" — drei Kacheln mit aktuellen Live-Daten aus der DB,
 // inspiriert vom Adidas-Editorial-Layout darunter.
-export function PulseSection() {
-  const weight = readWeightPulse();
-  const hyper = readHypertrophyPulse();
-  const endurance = readEndurancePulse();
+export async function PulseSection() {
+  const [weight, hyper, endurance] = await Promise.all([
+    readWeightPulse(),
+    readHypertrophyPulse(),
+    readEndurancePulse(),
+  ]);
 
   return (
     <section className="mx-auto w-full max-w-[1440px] px-5 py-14 sm:px-8 sm:py-16 lg:px-10 lg:py-20">
@@ -145,9 +147,9 @@ function PulseCard({
 
 // ---- Daten lesen (Server-Side, weil das ein Server Component ist) ----
 
-function readWeightPulse(): PulseCardProps {
+async function readWeightPulse(): Promise<PulseCardProps> {
   const cfg = modulesBySlug.get("weight")!;
-  const entries = getAllWeightEntries();
+  const entries = await getAllWeightEntries();
   if (entries.length === 0) {
     return {
       module: "weight",
@@ -189,9 +191,9 @@ function readWeightPulse(): PulseCardProps {
   };
 }
 
-function readHypertrophyPulse(): PulseCardProps {
+async function readHypertrophyPulse(): Promise<PulseCardProps> {
   const cfg = modulesBySlug.get("hypertrophy")!;
-  const sessions = getAllSessions();
+  const sessions = await getAllSessions();
   if (sessions.length === 0) {
     return {
       module: "hypertrophy",
@@ -203,15 +205,15 @@ function readHypertrophyPulse(): PulseCardProps {
       accent: cfg.gradientTo,
     };
   }
-  const templates = getAllTemplates();
+  const templates = await getAllTemplates();
   const templateById = new Map(templates.map((t) => [t.id, t]));
   const last = sessions[0]; // desc
   const tpl = templateById.get(last.templateId);
-  const tplExercises = tpl ? getTemplateExercises(tpl.id) : [];
+  const tplExercises = tpl ? await getTemplateExercises(tpl.id) : [];
   const unilateralByTplExId = new Map(
     tplExercises.map((row) => [row.templateExercise.id, row.exercise.unilateral]),
   );
-  const lastSets = getSetsBySession(last.id);
+  const lastSets = await getSetsBySession(last.id);
   const byEx = new Map<
     number,
     { weightKg: number; reps: number; weightMode: "per-side" | "summed"; unilateral: boolean }[]
@@ -246,7 +248,7 @@ function readHypertrophyPulse(): PulseCardProps {
   };
 }
 
-function readEndurancePulse(): PulseCardProps {
+async function readEndurancePulse(): Promise<PulseCardProps> {
   const cfg = modulesBySlug.get("endurance")!;
   return {
     module: "endurance",

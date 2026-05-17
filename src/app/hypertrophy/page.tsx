@@ -16,10 +16,10 @@ import type { WorkoutKind } from "@/lib/db/schema";
 
 export const dynamic = "force-dynamic";
 
-export default function HypertrophyPage() {
-  const templates = getAllTemplates();
+export default async function HypertrophyPage() {
+  const templates = await getAllTemplates();
   const templateById = new Map(templates.map((t) => [t.id, t]));
-  const sessions = getAllSessions();
+  const sessions = await getAllSessions();
   const markers: CalendarMarker[] = sessions
     .map((s) => {
       const t = templateById.get(s.templateId);
@@ -33,7 +33,7 @@ export default function HypertrophyPage() {
     .filter((m): m is CalendarMarker => m !== null);
 
   // Cheat-Day / Alkohol kommen aus weight_entries (Single Source of Truth).
-  const tags: CalendarTag[] = getAllWeightEntries()
+  const tags: CalendarTag[] = (await getAllWeightEntries())
     .filter((e) => e.cheatDay || e.alcohol)
     .map((e) => ({ date: e.date, cheatDay: e.cheatDay, alcohol: e.alcohol }));
 

@@ -353,3 +353,21 @@ export const dailyActivity = sqliteTable(
 
 export type DailyActivity = typeof dailyActivity.$inferSelect;
 export type NewDailyActivity = typeof dailyActivity.$inferInsert;
+
+// ============================================================
+// Garmin OAuth-Tokens — eine einzelne Zeile (id=1) statt File-Cache.
+// Auf Vercel (serverless) gibt es kein persistentes Filesystem; deshalb
+// wandern die Tokens in die DB, damit der Cron-Sync sie zwischen Runs
+// behalten kann.
+// ============================================================
+export const garminTokens = sqliteTable("garmin_tokens", {
+  id: integer("id").primaryKey(),
+  oauth1Json: text("oauth1_json").notNull(),
+  oauth2Json: text("oauth2_json").notNull(),
+  updatedAt: text("updated_at")
+    .notNull()
+    .default(sql`(CURRENT_TIMESTAMP)`),
+});
+
+export type GarminTokens = typeof garminTokens.$inferSelect;
+export type NewGarminTokens = typeof garminTokens.$inferInsert;

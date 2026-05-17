@@ -24,18 +24,18 @@ export default async function ExerciseProgressPage({
   params: Promise<Params>;
 }) {
   const { slug, exerciseSlug } = await params;
-  const template = getTemplateBySlug(slug);
+  const template = await getTemplateBySlug(slug);
   if (!template) notFound();
 
-  const row = getTemplateExerciseBySlug(template.id, exerciseSlug);
+  const row = await getTemplateExerciseBySlug(template.id, exerciseSlug);
   if (!row) notFound();
 
-  const sets = getSetsByTemplateExercise(row.templateExercise.id);
+  const sets = await getSetsByTemplateExercise(row.templateExercise.id);
   const repMin = row.templateExercise.repMin ?? row.exercise.defaultRepMin;
   const repMax = row.templateExercise.repMax ?? row.exercise.defaultRepMax;
 
   // Sibling-Übungen für Prev/Next-Navigation (Reihenfolge nach `position` aus DB).
-  const siblings = getTemplateExercises(template.id);
+  const siblings = await getTemplateExercises(template.id);
   const currentIdx = siblings.findIndex(
     (r) => r.templateExercise.id === row.templateExercise.id,
   );

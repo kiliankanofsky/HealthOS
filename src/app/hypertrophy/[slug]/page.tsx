@@ -36,11 +36,11 @@ export default async function WorkoutPage({
   params: Promise<Params>;
 }) {
   const { slug } = await params;
-  const template = getTemplateBySlug(slug);
+  const template = await getTemplateBySlug(slug);
   if (!template) notFound();
 
-  const exerciseRows = getTemplateExercises(template.id);
-  const sessions = getSessionsByTemplate(template.id);
+  const exerciseRows = await getTemplateExercises(template.id);
+  const sessions = await getSessionsByTemplate(template.id);
   const colors = WORKOUT_COLORS[template.kind];
 
   // Avatar: aggregierte Muskel-Highlights ("höchste Stufe gewinnt") +
@@ -92,8 +92,8 @@ export default async function WorkoutPage({
   // Aggregierte Daten pro Session für den Übersichts-Chart.
   // Cycle-Nummer = chronologischer Index (älteste = 1).
   const sessionsAsc = [...sessions].sort((a, b) => a.date.localeCompare(b.date));
-  const aggregateSessions = sessionsAsc.map((s, idx) => {
-    const sets = getSetsBySession(s.id);
+  const aggregateSessions = await Promise.all(sessionsAsc.map(async (s, idx) => {
+    const sets = await getSetsBySession(s.id);
     const setsByExercise = new Map<
       number,
       { weightKg: number; reps: number; weightMode: "per-side" | "summed" }[]
@@ -115,7 +115,7 @@ export default async function WorkoutPage({
         setsForChart: setsByExercise.get(row.templateExercise.id) ?? [],
       })),
     };
-  });
+  }));
 
   return (
     <AppShell>

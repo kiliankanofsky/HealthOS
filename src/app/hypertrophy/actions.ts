@@ -34,16 +34,16 @@ export async function createSession(input: {
   if (!DATE_REGEX.test(input.date)) {
     return { ok: false, error: "Datum muss YYYY-MM-DD sein." };
   }
-  const template = getTemplateBySlug(input.templateSlug);
+  const template = await getTemplateBySlug(input.templateSlug);
   if (!template) return { ok: false, error: "Workout nicht gefunden." };
 
-  const existing = getSession(template.id, input.date);
+  const existing = await getSession(template.id, input.date);
   if (existing) {
     // Idempotent: wenn schon eine Session existiert, einfach diese zurückgeben.
     return { ok: true, date: existing.date, templateSlug: input.templateSlug };
   }
 
-  const created = dbCreateSession({
+  const created = await dbCreateSession({
     templateId: template.id,
     date: input.date,
     notes: input.notes ?? null,
@@ -59,9 +59,9 @@ export async function createSession(input: {
 export async function deleteSession(input: {
   sessionId: number;
 }): Promise<{ ok: boolean; error?: string }> {
-  const s = getSessionById(input.sessionId);
+  const s = await getSessionById(input.sessionId);
   if (!s) return { ok: false, error: "Session nicht gefunden." };
-  dbDeleteSession(input.sessionId);
+  await dbDeleteSession(input.sessionId);
   revalidatePath("/hypertrophy");
   return { ok: true };
 }
@@ -70,7 +70,7 @@ export async function setSessionNotes(input: {
   sessionId: number;
   notes: string | null;
 }): Promise<{ ok: boolean; error?: string }> {
-  const s = getSessionById(input.sessionId);
+  const s = await getSessionById(input.sessionId);
   if (!s) return { ok: false, error: "Session nicht gefunden." };
   const cleaned =
     input.notes === null
@@ -78,7 +78,7 @@ export async function setSessionNotes(input: {
       : input.notes.trim().length > 0
         ? input.notes.trim()
         : null;
-  updateSessionNotes(input.sessionId, cleaned);
+  await updateSessionNotes(input.sessionId, cleaned);
   revalidatePath("/hypertrophy");
   return { ok: true };
 }
@@ -109,10 +109,10 @@ export async function saveSet(
   if (input.weightMode && !weightModes.includes(input.weightMode)) {
     return { ok: false, error: "Ungültiger Weight-Mode." };
   }
-  const session = getSessionById(input.sessionId);
+  const session = await getSessionById(input.sessionId);
   if (!session) return { ok: false, error: "Session nicht gefunden." };
 
-  upsertSet({
+  await upsertSet({
     sessionId: input.sessionId,
     templateExerciseId: input.templateExerciseId,
     setNumber: input.setNumber,
@@ -130,10 +130,10 @@ export async function saveSet(
 export async function toggleSetWeightMode(input: {
   setId: number;
 }): Promise<{ ok: boolean; mode?: WeightMode; error?: string }> {
-  const set = getSetById(input.setId);
+  const set = await getSetById(input.setId);
   if (!set) return { ok: false, error: "Satz nicht gefunden." };
   const next: WeightMode = set.weightMode === "summed" ? "per-side" : "summed";
-  updateSetWeightMode(input.setId, next);
+  await updateSetWeightMode(input.setId, next);
   revalidatePath("/hypertrophy");
   return { ok: true, mode: next };
 }
@@ -142,7 +142,7 @@ export async function deleteSet(input: {
   setId: number;
 }): Promise<{ ok: boolean }> {
   if (!Number.isFinite(input.setId)) return { ok: false };
-  dbDeleteSet(input.setId);
+  await dbDeleteSet(input.setId);
   revalidatePath("/hypertrophy");
   return { ok: true };
 }
@@ -161,9 +161,9 @@ export async function saveExerciseOverride(input: {
   if (trimmed.length > 80) {
     return { ok: false, error: "Name max. 80 Zeichen." };
   }
-  const session = getSessionById(input.sessionId);
+  const session = await getSessionById(input.sessionId);
   if (!session) return { ok: false, error: "Session nicht gefunden." };
-  upsertSessionExerciseOverride({
+  await upsertSessionExerciseOverride({
     sessionId: input.sessionId,
     templateExerciseId: input.templateExerciseId,
     name: trimmed,
@@ -176,7 +176,7 @@ export async function clearExerciseOverride(input: {
   sessionId: number;
   templateExerciseId: number;
 }): Promise<{ ok: boolean }> {
-  deleteSessionExerciseOverride(input.sessionId, input.templateExerciseId);
+  await deleteSessionExerciseOverride(input.sessionId, input.templateExerciseId);
   revalidatePath("/hypertrophy");
   return { ok: true };
 }

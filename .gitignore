@@ -44,3 +44,9 @@ next-env.d.ts
 # local sqlite database
 /data
 
+# claude code local settings
+.claude/
+
+# scratch files
+b.txt
+test-in-repo.txt

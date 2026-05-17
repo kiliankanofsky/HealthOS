@@ -59,23 +59,23 @@ export default async function SessionPage({
   const { scope } = await searchParams;
   if (!DATE_REGEX.test(date)) notFound();
 
-  const template = getTemplateBySlug(slug);
+  const template = await getTemplateBySlug(slug);
   if (!template) notFound();
 
-  const session = getSession(template.id, date);
+  const session = await getSession(template.id, date);
   if (!session) notFound();
 
-  const exerciseRows = getTemplateExercises(template.id);
-  const sets = getSetsBySession(session.id);
-  const overrides = getOverridesForSession(session.id);
+  const exerciseRows = await getTemplateExercises(template.id);
+  const sets = await getSetsBySession(session.id);
+  const overrides = await getOverridesForSession(session.id);
   const overrideByTemplateExerciseId = new Map(
     overrides.map((o) => [o.templateExerciseId, o.name]),
   );
-  const cycle = cycleNumberFor(template.id, date);
+  const cycle = await cycleNumberFor(template.id, date);
   // Cheat-Day / Alkohol vom Vortag — sie wirken auf das Training am Folgetag.
   const previousDay = previousDayIso(date);
-  const previousEntry = getWeightEntryByDate(previousDay);
-  const phase = findPhaseFor(date);
+  const previousEntry = await getWeightEntryByDate(previousDay);
+  const phase = await findPhaseFor(date);
   const colors = WORKOUT_COLORS[template.kind];
 
   // Sibling-Sessions für Prev/Next-Navigation. Scope steuert die Kette:
@@ -83,10 +83,10 @@ export default async function SessionPage({
   //   sonst           → nur Sessions desselben Templates
   const isAllScope = scope === "all";
   const sessionList = isAllScope
-    ? getAllSessions()
-    : getSessionsByTemplate(template.id);
+    ? await getAllSessions()
+    : await getSessionsByTemplate(template.id);
   const templateById = new Map(
-    getAllTemplates().map((t) => [t.id, t]),
+    (await getAllTemplates()).map((t) => [t.id, t]),
   );
   // sessionList ist desc nach Datum sortiert (neueste zuerst).
   const currentIdx = sessionList.findIndex((s) => s.id === session.id);
@@ -194,10 +194,10 @@ export default async function SessionPage({
 
       <SessionLogger
         sessionId={session.id}
-        exerciseRows={exerciseRows.map((row) => {
+        exerciseRows={await Promise.all(exerciseRows.map(async (row) => {
           const overrideName =
             overrideByTemplateExerciseId.get(row.templateExercise.id) ?? null;
-          const previous = getPreviousSessionSetsForSlot(
+          const previous = await getPreviousSessionSetsForSlot(
             row.templateExercise.id,
             session.id,
             date,
@@ -220,7 +220,7 @@ export default async function SessionPage({
             sets: setsByExercise.get(row.templateExercise.id) ?? [],
             previousSets,
           };
-        })}
+        }))}
       />
 
       <div className="flex justify-end pt-4">
@@ -255,8 +255,8 @@ function isoWeek(iso: string): number {
   return 1 + Math.round((diff - 3 + ((firstThursday.getUTCDay() + 6) % 7)) / 7);
 }
 
-function findPhaseFor(iso: string): PhaseKind | null {
-  const phases = getAllPhases();
+async function findPhaseFor(iso: string): Promise<PhaseKind | null> {
+  const phases = await getAllPhases();
   for (const p of phases) {
     if (p.startDate <= iso && (p.endDate === null || p.endDate >= iso)) {
       return p.kind;

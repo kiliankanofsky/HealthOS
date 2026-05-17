@@ -1,22 +1,43 @@
-import Database from "better-sqlite3";
-import { drizzle } from "drizzle-orm/better-sqlite3";
-import { migrate } from "drizzle-orm/better-sqlite3/migrator";
+import "dotenv/config";
+import { createClient } from "@libsql/client";
+import { drizzle } from "drizzle-orm/libsql";
+import { migrate } from "drizzle-orm/libsql/migrator";
 import { existsSync, mkdirSync } from "node:fs";
 import path from "node:path";
 
-const DB_DIR = path.join(process.cwd(), "data");
-const DB_PATH = path.join(DB_DIR, "health.db");
-const MIGRATIONS_DIR = path.join(process.cwd(), "drizzle");
+// Default: lokale Datei. Setze USE_TURSO=1 (mit TURSO_DATABASE_URL+TOKEN gesetzt),
+// um Migrationen gegen die Cloud-DB laufen zu lassen.
+const useTurso = process.env.USE_TURSO === "1";
 
-if (!existsSync(DB_DIR)) {
-  mkdirSync(DB_DIR, { recursive: true });
+const url = useTurso
+  ? process.env.TURSO_DATABASE_URL
+  : `file:${path.join(process.cwd(), "data", "health.db")}`;
+
+if (!url) {
+  throw new Error("TURSO_DATABASE_URL fehlt (USE_TURSO=1 gesetzt).");
 }
 
-const sqlite = new Database(DB_PATH);
-const db = drizzle(sqlite);
+if (!useTurso) {
+  const dir = path.join(process.cwd(), "data");
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+}
 
-console.log("Running migrations against", DB_PATH);
-migrate(db, { migrationsFolder: MIGRATIONS_DIR });
-console.log("Migrations applied.");
+const client = createClient({
+  url,
+  authToken: useTurso ? process.env.TURSO_AUTH_TOKEN : undefined,
+});
+const db = drizzle(client);
 
-sqlite.close();
+const MIGRATIONS_DIR = path.join(process.cwd(), "drizzle");
+
+async function main() {
+  console.log("Running migrations against", useTurso ? url : "local file");
+  await migrate(db, { migrationsFolder: MIGRATIONS_DIR });
+  console.log("Migrations applied.");
+  client.close();
+}
+
+main().catch((err) => {
+  console.error(err);
+  process.exit(1);
+});

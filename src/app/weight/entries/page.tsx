@@ -5,8 +5,8 @@ import { getAllWeightEntries } from "@/lib/db/queries";
 
 export const dynamic = "force-dynamic";
 
-export default function WeightEntriesPage() {
-  const entries = getAllWeightEntries();
+export default async function WeightEntriesPage() {
+  const entries = await getAllWeightEntries();
   const matrixYear = new Date().getFullYear();
 
   return (

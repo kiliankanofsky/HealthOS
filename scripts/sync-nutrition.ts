@@ -49,7 +49,7 @@ async function main() {
   let inserted = 0;
   let updated = 0;
   for (const entry of entries) {
-    const existing = getNutritionForDate(entry.date, "fddb");
+    const existing = await getNutritionForDate(entry.date, "fddb");
     console.log(
       `  ${entry.date}: ${entry.caloriesKcal} kcal · ` +
         `P ${entry.proteinG.toFixed(1)}g · ` +
@@ -64,7 +64,7 @@ async function main() {
         (existing ? "  [update]" : "  [neu]"),
     );
     if (!dryRun) {
-      upsertNutritionEntry(entry);
+      await upsertNutritionEntry(entry);
       if (existing) updated++;
       else inserted++;
     }

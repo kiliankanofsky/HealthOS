@@ -47,7 +47,7 @@ async function main() {
   let inserted = 0;
   let updated = 0;
   for (const entry of entries) {
-    const existing = getDailyActivityForDate(entry.date, "garmin");
+    const existing = await getDailyActivityForDate(entry.date, "garmin");
     console.log(
       `  ${entry.date}: ${entry.totalKcal} kcal total` +
         (entry.activeKcal !== null && entry.activeKcal !== undefined
@@ -59,7 +59,7 @@ async function main() {
         (existing ? "  [update]" : "  [neu]"),
     );
     if (!dryRun) {
-      upsertDailyActivity(entry);
+      await upsertDailyActivity(entry);
       if (existing) updated++;
       else inserted++;
     }

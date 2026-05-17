@@ -16,12 +16,12 @@ import { computeWeightStats } from "@/lib/utils/weight-stats";
 
 export const dynamic = "force-dynamic";
 
-export default function WeightPage() {
-  const all = getAllWeightEntries();
-  const phases = getAllPhases();
+export default async function WeightPage() {
+  const all = await getAllWeightEntries();
+  const phases = await getAllPhases();
   const stats = computeWeightStats(all);
-  const nutrition = getNutritionEntries({ source: "fddb" });
-  const activity = getDailyActivityEntries({ source: "garmin" });
+  const nutrition = await getNutritionEntries({ source: "fddb" });
+  const activity = await getDailyActivityEntries({ source: "garmin" });
 
   return (
     <AppShell>

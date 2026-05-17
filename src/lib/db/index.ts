@@ -1,20 +1,32 @@
-import Database from "better-sqlite3";
-import { drizzle } from "drizzle-orm/better-sqlite3";
+import { createClient } from "@libsql/client";
+import { drizzle } from "drizzle-orm/libsql";
 import { existsSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import * as schema from "./schema";
 
-// Pfad zur lokalen SQLite-Datei. Liegt außerhalb von /src und ist gitignored.
-const DB_DIR = path.join(process.cwd(), "data");
-const DB_PATH = path.join(DB_DIR, "health.db");
+// Auf Vercel (oder wenn USE_TURSO=1) → remote Turso-DB. Lokal default → file-URL
+// auf data/health.db, damit Dev-Setup ohne Cloud-Roundtrip funktioniert.
+const useTurso = Boolean(process.env.VERCEL) || process.env.USE_TURSO === "1";
 
-if (!existsSync(DB_DIR)) {
-  mkdirSync(DB_DIR, { recursive: true });
+const url = useTurso
+  ? process.env.TURSO_DATABASE_URL
+  : `file:${path.join(process.cwd(), "data", "health.db")}`;
+
+if (!url) {
+  throw new Error(
+    "TURSO_DATABASE_URL fehlt — auf Vercel als Environment Variable setzen.",
+  );
 }
 
-const sqlite = new Database(DB_PATH);
-sqlite.pragma("journal_mode = WAL");
-sqlite.pragma("foreign_keys = ON");
+if (!useTurso) {
+  const dir = path.join(process.cwd(), "data");
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+}
 
-export const db = drizzle(sqlite, { schema });
+const client = createClient({
+  url,
+  authToken: useTurso ? process.env.TURSO_AUTH_TOKEN : undefined,
+});
+
+export const db = drizzle(client, { schema });
 export { schema };
