@@ -18,13 +18,16 @@ import path from "node:path";
 //
 // Nicht-destruktiv für lokale DB — liest nur. Turso-DB wird komplett überschrieben.
 
-const TURSO_URL = process.env.TURSO_DATABASE_URL;
-const TURSO_TOKEN = process.env.TURSO_AUTH_TOKEN;
 const LOCAL_PATH = `file:${path.join(process.cwd(), "data", "health.db")}`;
 
-if (!TURSO_URL || !TURSO_TOKEN) {
-  throw new Error("TURSO_DATABASE_URL und TURSO_AUTH_TOKEN müssen gesetzt sein.");
+function requireEnv(name: string): string {
+  const v = process.env[name];
+  if (!v) throw new Error(`${name} muss gesetzt sein.`);
+  return v;
 }
+
+const TURSO_URL = requireEnv("TURSO_DATABASE_URL");
+const TURSO_TOKEN = requireEnv("TURSO_AUTH_TOKEN");
 
 // Reihenfolge wichtig wegen Foreign Keys: parents vor children.
 const TABLES_IN_ORDER = [
