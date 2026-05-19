@@ -26,6 +26,7 @@ import type {
   WeightEntry,
 } from "@/lib/db/schema";
 import { cn } from "@/lib/utils";
+import { toLocalISODate } from "@/lib/utils/date";
 
 type Range = "1w" | "4w" | "8w" | "3m" | "max";
 
@@ -112,10 +113,14 @@ export function NutritionCorrelationView({ nutrition, weight, activity }: Props)
   // SMA-7 wird über die VOLLE Datenreihe gerechnet (vor Filterung), damit die
   // Linie am linken Rand nicht springt.
   const merged = useMemo<MergedPoint[]>(() => {
+    // Heutiger Tag wird ausgeschlossen: er enthält nur partielle Garmin-
+    // Daten, was die 7d-SMA der Verbrauchs-Linie an einem unvollständigen
+    // Tag enden lässt — optisch irreführend.
+    const today = toLocalISODate();
     const allDates = new Set<string>();
-    for (const n of nutrition) allDates.add(n.date);
-    for (const w of weight) allDates.add(w.date);
-    for (const a of activity) allDates.add(a.date);
+    for (const n of nutrition) if (n.date < today) allDates.add(n.date);
+    for (const w of weight) if (w.date < today) allDates.add(w.date);
+    for (const a of activity) if (a.date < today) allDates.add(a.date);
     const sorted = Array.from(allDates).sort();
 
     const nByDate = new Map(nutrition.map((n) => [n.date, n]));
