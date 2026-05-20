@@ -7,6 +7,7 @@ import { NewSessionDialog } from "@/components/hypertrophy/NewSessionDialog";
 import { WorkoutCards } from "@/components/hypertrophy/WorkoutCards";
 import { OverviewAvatarPanel } from "@/components/hypertrophy/avatar/OverviewAvatarPanel";
 import { AppShell } from "@/components/site/AppShell";
+import { SyncNowButton } from "@/components/site/SyncNowButton";
 import {
   getAllSessions,
   getAllTemplates,
@@ -51,6 +52,9 @@ export default async function HypertrophyPage() {
           <p className="max-w-xl text-sm text-muted-foreground">
             Drei Workouts, e1RM-Verlauf pro Satz, Garmin-Sync per `npm run db:sync:garmin`.
           </p>
+          <div className="pt-2">
+            <SyncNowButton />
+          </div>
         </div>
         <NewSessionDialog />
       </header>

@@ -208,5 +208,6 @@ export async function removePhase(id: number): Promise<{ ok: boolean }> {
 export async function syncNow(): Promise<SyncSummary> {
   const summary = await runAllSyncs();
   revalidatePath("/weight");
+  revalidatePath("/hypertrophy");
   return summary;
 }

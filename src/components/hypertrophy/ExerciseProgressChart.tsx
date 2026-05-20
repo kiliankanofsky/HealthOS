@@ -1,6 +1,5 @@
 "use client";
 
-import { useRouter } from "next/navigation";
 import { useMemo } from "react";
 import {
   CartesianGrid,
@@ -18,8 +17,6 @@ import { effectiveE1RM, round1 } from "@/lib/utils/strength";
 type Props = {
   sets: SetWithDate[];
   unilateral?: boolean;
-  // Slug des Workouts, damit wir bei Klick auf einen Punkt zur Session navigieren.
-  templateSlug: string;
 };
 
 // Eine Linie pro Satz-Position (Satz 1, Satz 2, ...). Je tiefer der Index,
@@ -38,8 +35,7 @@ type SetMeta = {
   weightMode: "per-side" | "summed";
 };
 
-export function ExerciseProgressChart({ sets, unilateral, templateSlug }: Props) {
-  const router = useRouter();
+export function ExerciseProgressChart({ sets, unilateral }: Props) {
   const { rows, maxSetNumber, metaByDateAndSet } = useMemo(() => {
     // Pro Datum: e1RM und Roh-Set-Werte je Satz-Position sammeln.
     // Score nutzt effectiveE1RM — bei summed-Mode halbiert sich's intern.
@@ -105,14 +101,6 @@ export function ExerciseProgressChart({ sets, unilateral, templateSlug }: Props)
           <LineChart
             data={rows}
             margin={{ top: 8, right: 16, bottom: 8, left: -16 }}
-            onClick={(state) => {
-              // Recharts liefert beim Klick auf den Plot-Bereich activeLabel = X-Wert.
-              const dateClicked = state?.activeLabel;
-              if (typeof dateClicked === "string" && /^\d{4}-\d{2}-\d{2}$/.test(dateClicked)) {
-                router.push(`/hypertrophy/${templateSlug}/${dateClicked}`);
-              }
-            }}
-            style={{ cursor: "pointer" }}
           >
             <CartesianGrid stroke="rgba(0,0,0,0.06)" vertical={false} />
             <XAxis

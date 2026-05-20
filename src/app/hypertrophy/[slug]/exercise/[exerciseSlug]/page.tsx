@@ -137,7 +137,6 @@ export default async function ExerciseProgressPage({
         <ExerciseProgressChart
           sets={sets}
           unilateral={row.exercise.unilateral}
-          templateSlug={template.slug}
         />
       </section>
 
