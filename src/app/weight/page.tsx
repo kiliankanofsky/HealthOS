@@ -2,6 +2,7 @@ import Link from "next/link";
 import { AppShell } from "@/components/site/AppShell";
 import { NutritionChartSection } from "@/components/nutrition/NutritionChartSection";
 import { NutritionCorrelationView } from "@/components/nutrition/NutritionCorrelationView";
+import { SyncNowButton } from "@/components/weight/SyncNowButton";
 import { WeightChartSection } from "@/components/weight/WeightChartSection";
 import { WeightEntryForm } from "@/components/weight/WeightEntryForm";
 import { WeightStatCards } from "@/components/weight/WeightStats";
@@ -36,6 +37,9 @@ export default async function WeightPage() {
         <p className="max-w-xl text-sm text-muted-foreground">
           Tägliche Messungen, Phasen, Tags.
         </p>
+        <div className="pt-2">
+          <SyncNowButton />
+        </div>
       </header>
 
       <WeightStatCards stats={stats} />
