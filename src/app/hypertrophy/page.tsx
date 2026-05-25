@@ -9,9 +9,9 @@ import { OverviewAvatarPanel } from "@/components/hypertrophy/avatar/OverviewAva
 import { AppShell } from "@/components/site/AppShell";
 import { SyncNowButton } from "@/components/site/SyncNowButton";
 import {
+  getAllDailyTags,
   getAllSessions,
   getAllTemplates,
-  getAllWeightEntries,
 } from "@/lib/db/queries";
 import type { WorkoutKind } from "@/lib/db/schema";
 
@@ -33,10 +33,10 @@ export default async function HypertrophyPage() {
     })
     .filter((m): m is CalendarMarker => m !== null);
 
-  // Cheat-Day / Alkohol kommen aus weight_entries (Single Source of Truth).
-  const tags: CalendarTag[] = (await getAllWeightEntries())
-    .filter((e) => e.cheatDay || e.alcohol)
-    .map((e) => ({ date: e.date, cheatDay: e.cheatDay, alcohol: e.alcohol }));
+  // Cheat-Day / Alkohol kommen aus daily_tags (Single Source of Truth).
+  const tags: CalendarTag[] = (await getAllDailyTags())
+    .filter((t) => t.cheatDay || t.alcohol)
+    .map((t) => ({ date: t.date, cheatDay: t.cheatDay, alcohol: t.alcohol }));
 
   return (
     <AppShell>

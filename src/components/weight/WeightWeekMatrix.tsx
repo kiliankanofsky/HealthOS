@@ -2,12 +2,13 @@
 
 import { Cookie, Wine } from "lucide-react";
 
-import type { WeightEntry } from "@/lib/db/schema";
+import type { DailyTag, WeightEntry } from "@/lib/db/schema";
 import { isoWeekMonday, isoWeeksInYear } from "@/lib/utils/iso-week";
 import { cn } from "@/lib/utils";
 
 type Props = {
   entries: WeightEntry[];
+  tags: DailyTag[];
   year: number;
   onOpenDay: (date: string) => void;
 };
@@ -38,7 +39,10 @@ type CellValue = {
   alcohol: boolean;
 };
 
-export function WeightWeekMatrix({ entries, year, onOpenDay }: Props) {
+export function WeightWeekMatrix({ entries, tags, year, onOpenDay }: Props) {
+  const tagByDate = new Map<string, DailyTag>();
+  for (const t of tags) tagByDate.set(t.date, t);
+
   // Index alle Einträge nach Woche und Wochentag.
   const byKey = new Map<string, CellValue>();
   for (const e of entries) {
@@ -46,10 +50,11 @@ export function WeightWeekMatrix({ entries, year, onOpenDay }: Props) {
     const { year: isoY, week } = isoWeekOf(d);
     if (isoY !== year) continue;
     const dayIdx = (d.getDay() + 6) % 7;
+    const tag = tagByDate.get(e.date);
     byKey.set(`${week}-${dayIdx}`, {
       weight: e.weightKg,
-      cheatDay: e.cheatDay,
-      alcohol: e.alcohol,
+      cheatDay: tag?.cheatDay ?? false,
+      alcohol: tag?.alcohol ?? false,
     });
   }
 

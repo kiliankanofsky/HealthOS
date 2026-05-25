@@ -6,13 +6,20 @@ import { useEffect, useState, useTransition } from "react";
 import { removeWeightEntry, updateDayDetails } from "@/app/weight/actions";
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
-import { type WeightEntry, weightSources } from "@/lib/db/schema";
+import {
+  type DailyTag,
+  type WeightEntry,
+  weightSources,
+} from "@/lib/db/schema";
 import { cn } from "@/lib/utils";
 
 type Props = {
   open: boolean;
   date: string | null;
   entry: WeightEntry | null;
+  // Tag-Daten (cheatDay/alcohol/cheatMeal/kcalTarget) leben jetzt in
+  // daily_tags und werden vom Aufrufer separat geladen.
+  tag: DailyTag | null;
   onClose: () => void;
 };
 
@@ -22,7 +29,13 @@ const SOURCE_LABELS: Record<(typeof weightSources)[number], string> = {
   garmin: "Garmin",
 };
 
-export function WeightDayDetailDialog({ open, date, entry, onClose }: Props) {
+export function WeightDayDetailDialog({
+  open,
+  date,
+  entry,
+  tag,
+  onClose,
+}: Props) {
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
 
@@ -40,14 +53,12 @@ export function WeightDayDetailDialog({ open, date, entry, onClose }: Props) {
     setError(null);
     setWeightInput(entry ? entry.weightKg.toFixed(1).replace(".", ",") : "");
     setSource(entry?.source ?? "manual");
-    setCheatDay(entry?.cheatDay ?? false);
-    setAlcohol(entry?.alcohol ?? false);
-    setCheatMeal(entry?.cheatMeal ?? false);
-    setKcalTargetInput(
-      entry?.kcalTarget != null ? String(entry.kcalTarget) : "",
-    );
+    setCheatDay(tag?.cheatDay ?? false);
+    setAlcohol(tag?.alcohol ?? false);
+    setCheatMeal(tag?.cheatMeal ?? false);
+    setKcalTargetInput(tag?.kcalTarget != null ? String(tag.kcalTarget) : "");
     setNotes(entry?.notes ?? "");
-  }, [open, entry]);
+  }, [open, entry, tag]);
 
   if (!date) return null;
 

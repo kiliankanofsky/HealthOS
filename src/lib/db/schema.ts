@@ -19,19 +19,36 @@ export const weightEntries = sqliteTable("weight_entries", {
   weightKg: real("weight_kg").notNull(),
   source: text("source", { enum: weightSources }).notNull().default("manual"),
   notes: text("notes"),
-  cheatDay: integer("cheat_day", { mode: "boolean" }).notNull().default(false),
-  alcohol: integer("alcohol", { mode: "boolean" }).notNull().default(false),
-  // Cheat Meal: einzelnes Meal getauscht/nicht getrackt, aber im Kalorienziel
-  // geblieben — fddb-Wert für den Tag wird beim Charten durch das Tagesziel
-  // ersetzt.
-  cheatMeal: integer("cheat_meal", { mode: "boolean" }).notNull().default(false),
-  // Tagesziel in kcal — manuell pro Tag pflegbar. Wird für die Aufgenommen-
-  // Linie bei einem Cheat-Meal-Tag eingesetzt.
-  kcalTarget: integer("kcal_target"),
   createdAt: text("created_at")
     .notNull()
     .default(sql`(CURRENT_TIMESTAMP)`),
 });
+
+// Tag-Metadaten pro Datum — bewusst getrennt von weight_entries, damit
+// (a) Tags auch an Tagen ohne Gewicht existieren können und (b) die
+// Tag-Übersicht auf /weight/tags nicht durch den Weight-Eintrag „versteckt"
+// wird. Single Source of Truth für cheatDay, alcohol, cheatMeal, kcalTarget.
+export const dailyTags = sqliteTable("daily_tags", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  date: text("date").notNull().unique(),
+  cheatDay: integer("cheat_day", { mode: "boolean" }).notNull().default(false),
+  alcohol: integer("alcohol", { mode: "boolean" }).notNull().default(false),
+  // Cheat Meal: einzelnes Meal getauscht/nicht getrackt, aber im Kalorienziel
+  // geblieben — fddb-Wert wird im Chart durch das Tagesziel ersetzt.
+  cheatMeal: integer("cheat_meal", { mode: "boolean" }).notNull().default(false),
+  // Tagesziel in kcal — manuell pro Tag pflegbar (für Cheat-Meal-Tage).
+  kcalTarget: integer("kcal_target"),
+  notes: text("notes"),
+  createdAt: text("created_at")
+    .notNull()
+    .default(sql`(CURRENT_TIMESTAMP)`),
+  updatedAt: text("updated_at")
+    .notNull()
+    .default(sql`(CURRENT_TIMESTAMP)`),
+});
+
+export type DailyTag = typeof dailyTags.$inferSelect;
+export type NewDailyTag = typeof dailyTags.$inferInsert;
 
 export type WeightEntry = typeof weightEntries.$inferSelect;
 export type NewWeightEntry = typeof weightEntries.$inferInsert;
@@ -371,3 +388,114 @@ export const garminTokens = sqliteTable("garmin_tokens", {
 
 export type GarminTokens = typeof garminTokens.$inferSelect;
 export type NewGarminTokens = typeof garminTokens.$inferInsert;
+
+// ============================================================
+// Endurance: Eine Zeile pro Lauf-Activity aus Garmin. Idempotent via
+// `garmin_activity_id` (UNIQUE). Mehrere Läufe pro Tag möglich, deshalb
+// kein UNIQUE auf `date`. Pace wird zur Schreib-Zeit aus duration/distance
+// abgeleitet, damit Range-Queries nicht jedes Mal rechnen müssen.
+// ============================================================
+export const runActivityTypes = [
+  "running",
+  "treadmill_running",
+  "trail_running",
+  "indoor_running",
+  "track_running",
+] as const;
+export type RunActivityType = (typeof runActivityTypes)[number];
+
+export const runSessions = sqliteTable(
+  "run_sessions",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    garminActivityId: integer("garmin_activity_id"),
+    // ISO-Date YYYY-MM-DD (lokaler Tag, abgeleitet aus startTimeLocal).
+    date: text("date").notNull(),
+    // ISO-Datetime (Garmin liefert lokale Zeit ohne Offset).
+    startTime: text("start_time").notNull(),
+    activityType: text("activity_type").notNull(),
+    distanceMeters: real("distance_meters").notNull(),
+    durationSeconds: real("duration_seconds").notNull(),
+    avgPaceSecPerKm: real("avg_pace_sec_per_km"),
+    avgHeartRate: integer("avg_heart_rate"),
+    maxHeartRate: integer("max_heart_rate"),
+    elevationGainMeters: real("elevation_gain_meters"),
+    caloriesKcal: real("calories_kcal"),
+    aerobicTrainingEffect: real("aerobic_training_effect"),
+    anaerobicTrainingEffect: real("anaerobic_training_effect"),
+    trainingLoad: real("training_load"),
+    vo2MaxRun: real("vo2_max_run"),
+    notes: text("notes"),
+    rawJson: text("raw_json"),
+    createdAt: text("created_at")
+      .notNull()
+      .default(sql`(CURRENT_TIMESTAMP)`),
+    updatedAt: text("updated_at")
+      .notNull()
+      .default(sql`(CURRENT_TIMESTAMP)`),
+  },
+  (table) => [
+    uniqueIndex("run_session_garmin_activity_unique").on(table.garminActivityId),
+    check("distance_non_negative", sql`${table.distanceMeters} >= 0`),
+    check("duration_non_negative", sql`${table.durationSeconds} >= 0`),
+  ],
+);
+
+export type RunSession = typeof runSessions.$inferSelect;
+export type NewRunSession = typeof runSessions.$inferInsert;
+
+// ============================================================
+// Garmin Daily Metrics — Tagesschnappschuss der Longevity- (RHR, HRV, Sleep)
+// und Performance-Werte (VO2 Max, Race Predictions, Training Status,
+// Lactate Threshold). Eine Zeile pro Tag (UNIQUE auf `date`), idempotent
+// upsertbar. Felder sind alle nullable — Garmin liefert nicht jeden Wert
+// jeden Tag.
+// ============================================================
+export const garminDailyMetrics = sqliteTable(
+  "garmin_daily_metrics",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    date: text("date").notNull().unique(),
+    restingHeartRate: integer("resting_heart_rate"),
+    hrvLastNight: integer("hrv_last_night"),
+    hrvStatus: text("hrv_status"),
+    sleepScore: integer("sleep_score"),
+    sleepDurationSec: integer("sleep_duration_sec"),
+    // Schlaf-Stadien in Sekunden — für das Balkendiagramm im Sleep-Popover.
+    deepSleepSec: integer("deep_sleep_sec"),
+    lightSleepSec: integer("light_sleep_sec"),
+    remSleepSec: integer("rem_sleep_sec"),
+    awakeSleepSec: integer("awake_sleep_sec"),
+    // ISO-Datetime des Sleep-Start/End (lokal) — für Schlafens-/Aufstehzeit.
+    sleepStartLocal: text("sleep_start_local"),
+    sleepEndLocal: text("sleep_end_local"),
+    // Garmin's freitextiges Quality-Feedback ("Good", "Poor", "Excellent", …).
+    sleepQuality: text("sleep_quality"),
+    // HRV-Baseline-Korridor (Garmin liefert das im hrvSummary.baseline).
+    // "balanced"-Bereich liegt zwischen balancedLow und balancedUpper.
+    hrvBaselineLowUpper: real("hrv_baseline_low_upper"),
+    hrvBaselineBalancedLow: real("hrv_baseline_balanced_low"),
+    hrvBaselineBalancedUpper: real("hrv_baseline_balanced_upper"),
+    hrvBaselineMarker: real("hrv_baseline_marker"),
+    // RHR 7-Tage-Durchschnitt (kommt direkt aus Garmin getHeartRate response).
+    restingHeartRate7dAvg: integer("resting_heart_rate_7d_avg"),
+    vo2MaxRunning: real("vo2_max_running"),
+    lactateThresholdHr: integer("lactate_threshold_hr"),
+    lactateThresholdPaceSecPerKm: real("lactate_threshold_pace_sec_per_km"),
+    trainingStatus: text("training_status"),
+    racePrediction5k: integer("race_prediction_5k"),
+    racePrediction10k: integer("race_prediction_10k"),
+    racePredictionHalfMarathon: integer("race_prediction_half_marathon"),
+    racePredictionMarathon: integer("race_prediction_marathon"),
+    rawJson: text("raw_json"),
+    createdAt: text("created_at")
+      .notNull()
+      .default(sql`(CURRENT_TIMESTAMP)`),
+    updatedAt: text("updated_at")
+      .notNull()
+      .default(sql`(CURRENT_TIMESTAMP)`),
+  },
+);
+
+export type GarminDailyMetrics = typeof garminDailyMetrics.$inferSelect;
+export type NewGarminDailyMetrics = typeof garminDailyMetrics.$inferInsert;

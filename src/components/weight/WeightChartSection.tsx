@@ -4,7 +4,11 @@ import { ChevronLeft, ChevronRight, Layers, Plus, Spline, Tag } from "lucide-rea
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { SegmentedControl } from "@/components/ui/segmented-control";
-import { type WeightEntry, type WeightPhase } from "@/lib/db/schema";
+import {
+  type DailyTag,
+  type WeightEntry,
+  type WeightPhase,
+} from "@/lib/db/schema";
 import { loessSmooth, recommendedSpan } from "@/lib/utils/loess";
 import { cn } from "@/lib/utils";
 
@@ -33,9 +37,13 @@ const DAYS_BY_RANGE: Record<Range, number | null> = {
 type Props = {
   entries: WeightEntry[];
   phases: WeightPhase[];
+  // Tags (cheatDay/alcohol/cheatMeal) leben seit Migration 0012 in einer
+  // eigenen Tabelle. Section bekommt sie als separates Prop und mergt sie
+  // pro Datum in den Chart-Point.
+  tags: DailyTag[];
 };
 
-export function WeightChartSection({ entries, phases }: Props) {
+export function WeightChartSection({ entries, phases, tags }: Props) {
   const [range, setRange] = useState<Range>("4w");
   // windowOffset in Tagen — verschiebt das sichtbare Fenster in die Vergangenheit.
   // 0 = aktuellster Zeitraum. Wird beim Range-Wechsel auf 0 resettet.
@@ -47,16 +55,25 @@ export function WeightChartSection({ entries, phases }: Props) {
   const [phaseDialogOpen, setPhaseDialogOpen] = useState(false);
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
 
+  const tagsByDate = useMemo(() => {
+    const m = new Map<string, DailyTag>();
+    for (const t of tags) m.set(t.date, t);
+    return m;
+  }, [tags]);
+
   const data = useMemo<ChartPoint[]>(
     () =>
-      entries.map((e) => ({
-        date: e.date,
-        weight: e.weightKg,
-        cheatDay: e.cheatDay,
-        alcohol: e.alcohol,
-        cheatMeal: e.cheatMeal,
-      })),
-    [entries],
+      entries.map((e) => {
+        const t = tagsByDate.get(e.date);
+        return {
+          date: e.date,
+          weight: e.weightKg,
+          cheatDay: t?.cheatDay ?? false,
+          alcohol: t?.alcohol ?? false,
+          cheatMeal: t?.cheatMeal ?? false,
+        };
+      }),
+    [entries, tagsByDate],
   );
 
   const entryByDate = useMemo(() => {
@@ -260,6 +277,7 @@ export function WeightChartSection({ entries, phases }: Props) {
         open={selectedDate !== null}
         date={selectedDate}
         entry={selectedDate ? entryByDate.get(selectedDate) ?? null : null}
+        tag={selectedDate ? tagsByDate.get(selectedDate) ?? null : null}
         onClose={() => setSelectedDate(null)}
       />
     </div>

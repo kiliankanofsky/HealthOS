@@ -4,11 +4,18 @@ import {
   type ActivitySource,
   dailyActivity,
   type DailyActivity,
+  type DailyTag,
+  dailyTags,
   exercises,
   type Exercise,
+  garminDailyMetrics,
+  type GarminDailyMetrics,
   garminTokens,
   type GarminTokens,
   type NewDailyActivity,
+  type NewDailyTag,
+  type NewGarminDailyMetrics,
+  type NewRunSession,
   type NewNutritionEntry,
   type NewSessionExerciseOverride,
   type NewWeightEntry,
@@ -18,6 +25,8 @@ import {
   type NutritionEntry,
   type NutritionSource,
   nutritionEntries,
+  type RunSession,
+  runSessions,
   sessionExerciseOverrides,
   type SessionExerciseOverride,
   type WeightEntry,
@@ -74,8 +83,8 @@ export async function getWeightEntryByDate(
 // Upsert: Pro Datum existiert nur ein Eintrag.
 // Felder, die NICHT im Input gesetzt sind (undefined), werden bei einem Konflikt
 // NICHT überschrieben — so können Sync-Pfade (z.B. Sheets) das Gewicht
-// updaten, ohne manuell gepflegte Tags (cheatDay/alcohol) oder Notizen
-// zu verlieren.
+// updaten, ohne manuell gepflegte Notizen zu verlieren. Tags wandern jetzt
+// in die `daily_tags`-Tabelle (siehe unten).
 export async function upsertWeightEntry(
   entry: NewWeightEntry,
 ): Promise<WeightEntry> {
@@ -84,10 +93,6 @@ export async function upsertWeightEntry(
     source: entry.source ?? "manual",
   };
   if (entry.notes !== undefined) set.notes = entry.notes;
-  if (entry.cheatDay !== undefined) set.cheatDay = entry.cheatDay;
-  if (entry.alcohol !== undefined) set.alcohol = entry.alcohol;
-  if (entry.cheatMeal !== undefined) set.cheatMeal = entry.cheatMeal;
-  if (entry.kcalTarget !== undefined) set.kcalTarget = entry.kcalTarget;
   const [row] = await db
     .insert(weightEntries)
     .values(entry)
@@ -99,16 +104,11 @@ export async function upsertWeightEntry(
   return row;
 }
 
-// Aktualisiert nur die Tagesmetadaten (notes, source, cheatDay, alcohol).
-// Der Eintrag muss bereits existieren — sonst no-op.
+// Aktualisiert nur die Notiz/Quelle eines Weight-Eintrags. Tags wurden in
+// `daily_tags` migriert — siehe upsertDailyTag.
 export async function updateWeightMetadata(
   date: string,
-  patch: Partial<
-    Pick<
-      WeightEntry,
-      "notes" | "source" | "cheatDay" | "alcohol" | "cheatMeal" | "kcalTarget"
-    >
-  >,
+  patch: Partial<Pick<WeightEntry, "notes" | "source">>,
 ): Promise<WeightEntry | undefined> {
   const [row] = await db
     .update(weightEntries)
@@ -128,6 +128,50 @@ export async function deleteWeightEntryByDate(date: string): Promise<void> {
 
 export async function clearAllWeightEntries(): Promise<void> {
   await db.delete(weightEntries).run();
+}
+
+// ---- Daily Tags (cheatDay / alcohol / cheatMeal / kcalTarget) ----
+// Bewusst getrennt von weight_entries: ein Tag kann existieren, ohne dass es
+// einen Weight-Eintrag gibt. Auch erleichtert die Trennung eine eigene
+// /weight/tags-Übersicht.
+
+export async function getAllDailyTags(): Promise<DailyTag[]> {
+  return db.select().from(dailyTags).orderBy(asc(dailyTags.date)).all();
+}
+
+// Tag-Map nach Datum — für Charts/Kalender, die Tags pro Tag brauchen.
+export async function getDailyTagsMap(): Promise<Map<string, DailyTag>> {
+  const rows = await getAllDailyTags();
+  return new Map(rows.map((r) => [r.date, r]));
+}
+
+export async function getDailyTagForDate(
+  date: string,
+): Promise<DailyTag | undefined> {
+  return db.select().from(dailyTags).where(eq(dailyTags.date, date)).get();
+}
+
+// Upsert: bestehende Tag-Zeile aktualisieren oder neue anlegen. Undefined-
+// Felder werden NICHT überschrieben.
+export async function upsertDailyTag(input: NewDailyTag): Promise<DailyTag> {
+  const set: Record<string, unknown> = {
+    updatedAt: sql`(CURRENT_TIMESTAMP)`,
+  };
+  if (input.cheatDay !== undefined) set.cheatDay = input.cheatDay;
+  if (input.alcohol !== undefined) set.alcohol = input.alcohol;
+  if (input.cheatMeal !== undefined) set.cheatMeal = input.cheatMeal;
+  if (input.kcalTarget !== undefined) set.kcalTarget = input.kcalTarget;
+  if (input.notes !== undefined) set.notes = input.notes;
+  const [row] = await db
+    .insert(dailyTags)
+    .values(input)
+    .onConflictDoUpdate({ target: dailyTags.date, set })
+    .returning();
+  return row;
+}
+
+export async function deleteDailyTag(date: string): Promise<void> {
+  await db.delete(dailyTags).where(eq(dailyTags.date, date)).run();
 }
 
 // ---- Phasen ----
@@ -683,6 +727,221 @@ export async function saveGarminTokens(
       },
     })
     .run();
+}
+
+// ============================================================
+// Endurance: Run-Sessions
+// ============================================================
+
+export async function getAllRunSessions(): Promise<RunSession[]> {
+  return db
+    .select()
+    .from(runSessions)
+    .orderBy(desc(runSessions.startTime))
+    .all();
+}
+
+export async function getRunSessionsBetween(
+  from: string,
+  to: string,
+): Promise<RunSession[]> {
+  return db
+    .select()
+    .from(runSessions)
+    .where(and(gte(runSessions.date, from), lte(runSessions.date, to)))
+    .orderBy(asc(runSessions.startTime))
+    .all();
+}
+
+export async function getRunSessionByDate(
+  date: string,
+): Promise<RunSession | undefined> {
+  return db
+    .select()
+    .from(runSessions)
+    .where(eq(runSessions.date, date))
+    .orderBy(desc(runSessions.startTime))
+    .get();
+}
+
+export async function getRunSessionsForDate(
+  date: string,
+): Promise<RunSession[]> {
+  return db
+    .select()
+    .from(runSessions)
+    .where(eq(runSessions.date, date))
+    .orderBy(asc(runSessions.startTime))
+    .all();
+}
+
+export async function getRunSessionByGarminId(
+  garminActivityId: number,
+): Promise<RunSession | undefined> {
+  return db
+    .select()
+    .from(runSessions)
+    .where(eq(runSessions.garminActivityId, garminActivityId))
+    .get();
+}
+
+export async function getLatestRunSession(): Promise<RunSession | undefined> {
+  return db
+    .select()
+    .from(runSessions)
+    .orderBy(desc(runSessions.startTime))
+    .limit(1)
+    .get();
+}
+
+// Upsert per Garmin-Activity-ID. Manuelle Notizen werden bewahrt (Notes
+// werden bei Konflikt NICHT überschrieben) — analog zu upsertWeightEntry.
+export async function upsertRunSession(
+  input: NewRunSession,
+): Promise<RunSession> {
+  const [row] = await db
+    .insert(runSessions)
+    .values(input)
+    .onConflictDoUpdate({
+      target: runSessions.garminActivityId,
+      set: {
+        date: input.date,
+        startTime: input.startTime,
+        activityType: input.activityType,
+        distanceMeters: input.distanceMeters,
+        durationSeconds: input.durationSeconds,
+        avgPaceSecPerKm: input.avgPaceSecPerKm ?? null,
+        avgHeartRate: input.avgHeartRate ?? null,
+        maxHeartRate: input.maxHeartRate ?? null,
+        elevationGainMeters: input.elevationGainMeters ?? null,
+        caloriesKcal: input.caloriesKcal ?? null,
+        aerobicTrainingEffect: input.aerobicTrainingEffect ?? null,
+        anaerobicTrainingEffect: input.anaerobicTrainingEffect ?? null,
+        trainingLoad: input.trainingLoad ?? null,
+        vo2MaxRun: input.vo2MaxRun ?? null,
+        rawJson: input.rawJson ?? null,
+        updatedAt: sql`(CURRENT_TIMESTAMP)`,
+      },
+    })
+    .returning();
+  return row;
+}
+
+// Liefert pro ISO-Wochenstart (Montag, lokal) die Summe km. Aggregiert
+// in SQL, damit die UI nicht alle Runs durchrechnen muss.
+export type WeeklyKm = { weekStartIso: string; km: number };
+
+export async function getWeeklyKmTotals(
+  fromIso: string,
+  toIso: string,
+): Promise<WeeklyKm[]> {
+  // SQLite: strftime('%w', date) → 0=Sonntag … 6=Samstag. Wir wollen Montag
+  // als Wochenstart, also: date('YYYY-MM-DD', '-((weekday+6)%7) days').
+  const rows = await db
+    .select({
+      weekStartIso: sql<string>`date(${runSessions.date}, '-' || ((cast(strftime('%w', ${runSessions.date}) as integer) + 6) % 7) || ' days')`,
+      meters: sql<number>`sum(${runSessions.distanceMeters})`,
+    })
+    .from(runSessions)
+    .where(
+      and(gte(runSessions.date, fromIso), lte(runSessions.date, toIso)),
+    )
+    .groupBy(
+      sql`date(${runSessions.date}, '-' || ((cast(strftime('%w', ${runSessions.date}) as integer) + 6) % 7) || ' days')`,
+    )
+    .orderBy(
+      sql`date(${runSessions.date}, '-' || ((cast(strftime('%w', ${runSessions.date}) as integer) + 6) % 7) || ' days') asc`,
+    )
+    .all();
+  return rows.map((r) => ({
+    weekStartIso: r.weekStartIso,
+    km: Number(r.meters ?? 0) / 1000,
+  }));
+}
+
+// ============================================================
+// Endurance: Garmin Daily Metrics
+// ============================================================
+
+export async function getDailyMetricsForDate(
+  date: string,
+): Promise<GarminDailyMetrics | undefined> {
+  return db
+    .select()
+    .from(garminDailyMetrics)
+    .where(eq(garminDailyMetrics.date, date))
+    .get();
+}
+
+export async function getDailyMetricsBetween(
+  from: string,
+  to: string,
+): Promise<GarminDailyMetrics[]> {
+  return db
+    .select()
+    .from(garminDailyMetrics)
+    .where(
+      and(
+        gte(garminDailyMetrics.date, from),
+        lte(garminDailyMetrics.date, to),
+      ),
+    )
+    .orderBy(asc(garminDailyMetrics.date))
+    .all();
+}
+
+export async function getLatestDailyMetrics(): Promise<
+  GarminDailyMetrics | undefined
+> {
+  return db
+    .select()
+    .from(garminDailyMetrics)
+    .orderBy(desc(garminDailyMetrics.date))
+    .limit(1)
+    .get();
+}
+
+export async function upsertDailyMetrics(
+  entry: NewGarminDailyMetrics,
+): Promise<GarminDailyMetrics> {
+  const [row] = await db
+    .insert(garminDailyMetrics)
+    .values(entry)
+    .onConflictDoUpdate({
+      target: garminDailyMetrics.date,
+      set: {
+        restingHeartRate: entry.restingHeartRate ?? null,
+        restingHeartRate7dAvg: entry.restingHeartRate7dAvg ?? null,
+        hrvLastNight: entry.hrvLastNight ?? null,
+        hrvStatus: entry.hrvStatus ?? null,
+        hrvBaselineLowUpper: entry.hrvBaselineLowUpper ?? null,
+        hrvBaselineBalancedLow: entry.hrvBaselineBalancedLow ?? null,
+        hrvBaselineBalancedUpper: entry.hrvBaselineBalancedUpper ?? null,
+        hrvBaselineMarker: entry.hrvBaselineMarker ?? null,
+        sleepScore: entry.sleepScore ?? null,
+        sleepDurationSec: entry.sleepDurationSec ?? null,
+        deepSleepSec: entry.deepSleepSec ?? null,
+        lightSleepSec: entry.lightSleepSec ?? null,
+        remSleepSec: entry.remSleepSec ?? null,
+        awakeSleepSec: entry.awakeSleepSec ?? null,
+        sleepStartLocal: entry.sleepStartLocal ?? null,
+        sleepEndLocal: entry.sleepEndLocal ?? null,
+        sleepQuality: entry.sleepQuality ?? null,
+        vo2MaxRunning: entry.vo2MaxRunning ?? null,
+        lactateThresholdHr: entry.lactateThresholdHr ?? null,
+        lactateThresholdPaceSecPerKm:
+          entry.lactateThresholdPaceSecPerKm ?? null,
+        trainingStatus: entry.trainingStatus ?? null,
+        racePrediction5k: entry.racePrediction5k ?? null,
+        racePrediction10k: entry.racePrediction10k ?? null,
+        racePredictionHalfMarathon: entry.racePredictionHalfMarathon ?? null,
+        racePredictionMarathon: entry.racePredictionMarathon ?? null,
+        rawJson: entry.rawJson ?? null,
+        updatedAt: sql`(CURRENT_TIMESTAMP)`,
+      },
+    })
+    .returning();
+  return row;
 }
 
 // Cycle-Nummer = wievielte Ausführung dieses Templates (chronologisch).

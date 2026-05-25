@@ -1,4 +1,6 @@
+import { Tag } from "lucide-react";
 import Link from "next/link";
+
 import { AppShell } from "@/components/site/AppShell";
 import { NutritionChartSection } from "@/components/nutrition/NutritionChartSection";
 import { NutritionCorrelationView } from "@/components/nutrition/NutritionCorrelationView";
@@ -7,6 +9,7 @@ import { WeightChartSection } from "@/components/weight/WeightChartSection";
 import { WeightEntryForm } from "@/components/weight/WeightEntryForm";
 import { WeightStatCards } from "@/components/weight/WeightStats";
 import {
+  getAllDailyTags,
   getAllPhases,
   getAllWeightEntries,
   getDailyActivityEntries,
@@ -20,6 +23,7 @@ export const dynamic = "force-dynamic";
 export default async function WeightPage() {
   const all = await getAllWeightEntries();
   const phases = await getAllPhases();
+  const tags = await getAllDailyTags();
   const stats = computeWeightStats(all);
   const nutrition = await getNutritionEntries({ source: "fddb" });
   const activity = await getDailyActivityEntries({ source: "garmin" });
@@ -37,15 +41,22 @@ export default async function WeightPage() {
         <p className="max-w-xl text-sm text-muted-foreground">
           Tägliche Messungen, Phasen, Tags.
         </p>
-        <div className="pt-2">
+        <div className="flex flex-wrap items-center gap-2 pt-2">
           <SyncNowButton />
+          <Link
+            href="/weight/tags"
+            className="inline-flex items-center gap-1.5 rounded-full bg-muted px-4 py-2 text-sm font-medium text-foreground transition hover:bg-muted/70 hover:-translate-y-0.5"
+          >
+            <Tag className="size-3.5" />
+            Tags
+          </Link>
         </div>
       </header>
 
       <WeightStatCards stats={stats} />
 
       <Section>
-        <WeightChartSection entries={all} phases={phases} />
+        <WeightChartSection entries={all} phases={phases} tags={tags} />
       </Section>
 
       <Section
@@ -97,6 +108,7 @@ export default async function WeightPage() {
         <NutritionChartSection
           entries={nutrition}
           weightEntries={all}
+          tags={tags}
           activity={activity}
         />
       </Section>
@@ -108,6 +120,7 @@ export default async function WeightPage() {
         <NutritionCorrelationView
           nutrition={nutrition}
           weight={all}
+          tags={tags}
           activity={activity}
         />
       </Section>

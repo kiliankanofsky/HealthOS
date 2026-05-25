@@ -18,7 +18,7 @@ import {
   getSetsBySession,
   getTemplateBySlug,
   getTemplateExercises,
-  getWeightEntryByDate,
+  getDailyTagForDate,
   previousDayIso,
 } from "@/lib/db/queries";
 import {
@@ -74,7 +74,8 @@ export default async function SessionPage({
   const cycle = await cycleNumberFor(template.id, date);
   // Cheat-Day / Alkohol vom Vortag — sie wirken auf das Training am Folgetag.
   const previousDay = previousDayIso(date);
-  const previousEntry = await getWeightEntryByDate(previousDay);
+  // Tags (Cheat-Day / Alkohol) wandern in daily_tags — siehe Migration 0012.
+  const previousEntry = await getDailyTagForDate(previousDay);
   const phase = await findPhaseFor(date);
   const colors = WORKOUT_COLORS[template.kind];
 

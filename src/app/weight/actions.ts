@@ -2,10 +2,13 @@
 
 import { revalidatePath } from "next/cache";
 import {
+  deleteDailyTag,
   deletePhase,
   deleteWeightEntry,
   deleteWeightEntryByDate,
+  getWeightEntryByDate,
   updateWeightMetadata,
+  upsertDailyTag,
   upsertPhase,
   upsertWeightEntry,
 } from "@/lib/db/queries";
@@ -124,36 +127,57 @@ export async function updateDayDetails(
           ? input.notes.trim()
           : null;
 
+  // Gewicht und Notiz wandern in weight_entries — Tags in daily_tags.
   if (input.weightKg !== undefined && input.weightKg !== null) {
     if (!Number.isFinite(input.weightKg) || input.weightKg <= 0 || input.weightKg > 500) {
       return { ok: false, error: "Gewicht außerhalb des gültigen Bereichs." };
     }
-    upsertWeightEntry({
+    await upsertWeightEntry({
       date: input.date,
       weightKg: Math.round(input.weightKg * 100) / 100,
       source: input.source ?? "manual",
       notes: cleanNotes ?? null,
-      cheatDay: input.cheatDay ?? false,
-      alcohol: input.alcohol ?? false,
-      cheatMeal: input.cheatMeal ?? false,
-      kcalTarget: input.kcalTarget ?? null,
     });
-  } else {
-    const updated = updateWeightMetadata(input.date, {
-      ...(input.source !== undefined && { source: input.source }),
+  } else if (
+    input.source !== undefined ||
+    cleanNotes !== undefined
+  ) {
+    // Nur Notiz/Quelle ändern — Eintrag muss existieren.
+    const exists = await getWeightEntryByDate(input.date);
+    if (!exists) {
+      // Wenn nur Tags geändert werden, ist das OK (siehe upsert unten).
+      // Wenn jedoch Quelle/Notiz geändert werden soll und kein Eintrag
+      // existiert, abbrechen.
+      if (input.source !== undefined || cleanNotes !== undefined) {
+        return { ok: false, error: "Kein Weight-Eintrag für dieses Datum." };
+      }
+    } else {
+      await updateWeightMetadata(input.date, {
+        ...(input.source !== undefined && { source: input.source }),
+        ...(cleanNotes !== undefined && { notes: cleanNotes }),
+      });
+    }
+  }
+
+  // Tag-Felder immer in daily_tags persistieren (auch ohne Weight-Eintrag).
+  if (
+    input.cheatDay !== undefined ||
+    input.alcohol !== undefined ||
+    input.cheatMeal !== undefined ||
+    input.kcalTarget !== undefined
+  ) {
+    await upsertDailyTag({
+      date: input.date,
       ...(input.cheatDay !== undefined && { cheatDay: input.cheatDay }),
       ...(input.alcohol !== undefined && { alcohol: input.alcohol }),
       ...(input.cheatMeal !== undefined && { cheatMeal: input.cheatMeal }),
       ...(input.kcalTarget !== undefined && { kcalTarget: input.kcalTarget }),
-      ...(cleanNotes !== undefined && { notes: cleanNotes }),
     });
-    if (!updated) {
-      return { ok: false, error: "Kein Eintrag für dieses Datum vorhanden." };
-    }
   }
 
   revalidatePath("/weight");
   revalidatePath("/weight/entries");
+  revalidatePath("/weight/tags");
   return { ok: true };
 }
 
@@ -210,4 +234,63 @@ export async function syncNow(): Promise<SyncSummary> {
   revalidatePath("/weight");
   revalidatePath("/hypertrophy");
   return summary;
+}
+
+// ---- Daily Tags (cheatDay / alcohol / cheatMeal / kcalTarget) ----
+
+export type DailyTagInput = {
+  date: string;
+  cheatDay?: boolean;
+  alcohol?: boolean;
+  cheatMeal?: boolean;
+  kcalTarget?: number | null;
+  notes?: string | null;
+};
+
+export async function saveDailyTag(
+  input: DailyTagInput,
+): Promise<{ ok: boolean; error?: string }> {
+  if (!DATE_REGEX.test(input.date)) {
+    return { ok: false, error: "Ungültiges Datum." };
+  }
+  if (
+    input.kcalTarget !== undefined &&
+    input.kcalTarget !== null &&
+    (!Number.isFinite(input.kcalTarget) ||
+      input.kcalTarget < 0 ||
+      input.kcalTarget > 10000)
+  ) {
+    return { ok: false, error: "Kalorienziel muss 0–10.000 sein." };
+  }
+
+  await upsertDailyTag({
+    date: input.date,
+    ...(input.cheatDay !== undefined && { cheatDay: input.cheatDay }),
+    ...(input.alcohol !== undefined && { alcohol: input.alcohol }),
+    ...(input.cheatMeal !== undefined && { cheatMeal: input.cheatMeal }),
+    ...(input.kcalTarget !== undefined && { kcalTarget: input.kcalTarget }),
+    ...(input.notes !== undefined && { notes: input.notes }),
+  });
+
+  revalidatePath("/weight");
+  revalidatePath("/weight/tags");
+  revalidatePath("/weight/entries");
+  revalidatePath("/endurance");
+  revalidatePath("/hypertrophy");
+  return { ok: true };
+}
+
+export async function removeDailyTag(
+  date: string,
+): Promise<{ ok: boolean; error?: string }> {
+  if (!DATE_REGEX.test(date)) {
+    return { ok: false, error: "Ungültiges Datum." };
+  }
+  await deleteDailyTag(date);
+  revalidatePath("/weight");
+  revalidatePath("/weight/tags");
+  revalidatePath("/weight/entries");
+  revalidatePath("/endurance");
+  revalidatePath("/hypertrophy");
+  return { ok: true };
 }

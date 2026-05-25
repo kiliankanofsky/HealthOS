@@ -3,7 +3,11 @@
 import { Cookie, Flame, Wine } from "lucide-react";
 
 import { Dialog } from "@/components/ui/dialog";
-import type { NutritionEntry, WeightEntry } from "@/lib/db/schema";
+import type {
+  DailyTag,
+  NutritionEntry,
+  WeightEntry,
+} from "@/lib/db/schema";
 import { cn } from "@/lib/utils";
 
 type Props = {
@@ -11,6 +15,7 @@ type Props = {
   date: string | null;
   nutrition: NutritionEntry | null;
   weight: WeightEntry | null;
+  tag: DailyTag | null;
   garminTotalKcal: number | null;
   onClose: () => void;
 };
@@ -20,6 +25,7 @@ export function NutritionDayDetailDialog({
   date,
   nutrition,
   weight,
+  tag,
   garminTotalKcal,
   onClose,
 }: Props) {
@@ -138,25 +144,27 @@ export function NutritionDayDetailDialog({
               </div>
             )}
 
-            {/* Gewicht + Tags vom Weight-Eintrag */}
-            {weight && (
+            {/* Gewicht + Tags (Tags kommen aus daily_tags, separat geladen). */}
+            {(weight || tag) && (
               <Field label="Tag im Weight-Logbuch">
                 <div className="space-y-2">
-                  <DetailRow
-                    label="Gewicht"
-                    value={`${weight.weightKg.toFixed(1).replace(".", ",")} kg`}
-                  />
-                  {(weight.cheatDay || weight.alcohol) && (
+                  {weight && (
+                    <DetailRow
+                      label="Gewicht"
+                      value={`${weight.weightKg.toFixed(1).replace(".", ",")} kg`}
+                    />
+                  )}
+                  {(tag?.cheatDay || tag?.alcohol) && (
                     <div className="flex flex-wrap gap-2">
-                      {weight.cheatDay && (
+                      {tag?.cheatDay && (
                         <TagBadge icon={<Cookie className="size-3" />} label="Cheat Day" />
                       )}
-                      {weight.alcohol && (
+                      {tag?.alcohol && (
                         <TagBadge icon={<Wine className="size-3" />} label="Alkohol" />
                       )}
                     </div>
                   )}
-                  {weight.notes && (
+                  {weight?.notes && (
                     <p className="rounded-lg bg-muted/60 px-3 py-2 text-xs text-muted-foreground">
                       {weight.notes}
                     </p>

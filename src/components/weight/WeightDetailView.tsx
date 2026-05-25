@@ -5,16 +5,17 @@ import { SegmentedControl } from "@/components/ui/segmented-control";
 import { WeightDayDetailDialog } from "./WeightDayDetailDialog";
 import { WeightDayList } from "./WeightDayList";
 import { WeightWeekMatrix } from "./WeightWeekMatrix";
-import type { WeightEntry } from "@/lib/db/schema";
+import type { DailyTag, WeightEntry } from "@/lib/db/schema";
 
 type View = "day" | "week";
 
 type Props = {
   entries: WeightEntry[];
+  tags: DailyTag[];
   matrixYear: number;
 };
 
-export function WeightDetailView({ entries, matrixYear }: Props) {
+export function WeightDetailView({ entries, tags, matrixYear }: Props) {
   const [view, setView] = useState<View>("week");
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
 
@@ -24,7 +25,14 @@ export function WeightDetailView({ entries, matrixYear }: Props) {
     return m;
   }, [entries]);
 
+  const tagByDate = useMemo(() => {
+    const m = new Map<string, DailyTag>();
+    for (const t of tags) m.set(t.date, t);
+    return m;
+  }, [tags]);
+
   const selectedEntry = selectedDate ? byDate.get(selectedDate) ?? null : null;
+  const selectedTag = selectedDate ? tagByDate.get(selectedDate) ?? null : null;
 
   return (
     <div className="space-y-6">
@@ -43,10 +51,15 @@ export function WeightDetailView({ entries, matrixYear }: Props) {
       </div>
 
       {view === "day" ? (
-        <WeightDayList entries={entries} onOpenDay={setSelectedDate} />
+        <WeightDayList
+          entries={entries}
+          tags={tags}
+          onOpenDay={setSelectedDate}
+        />
       ) : (
         <WeightWeekMatrix
           entries={entries}
+          tags={tags}
           year={matrixYear}
           onOpenDay={setSelectedDate}
         />
@@ -60,6 +73,7 @@ export function WeightDetailView({ entries, matrixYear }: Props) {
         open={selectedDate !== null}
         date={selectedDate}
         entry={selectedEntry}
+        tag={selectedTag}
         onClose={() => setSelectedDate(null)}
       />
     </div>

@@ -6,6 +6,8 @@ import {
 } from "@/lib/db/queries";
 import { fddbAdapter } from "@/lib/integrations/fddb";
 import { fetchDailyCalories } from "@/lib/integrations/garmin-calories";
+import { syncGarminDailyMetrics } from "@/lib/integrations/garmin-metrics";
+import { syncGarminRuns } from "@/lib/integrations/garmin-runs-import";
 import { getGarminClient } from "@/lib/integrations/garmin-strength";
 import { syncGarminStrength } from "@/lib/integrations/garmin-strength-import";
 import { sheetsAdapter } from "@/lib/integrations/sheets";
@@ -24,6 +26,8 @@ export type SyncSummary = {
     sheets: SyncResult;
     garminStrength: SyncResult;
     garminCalories: SyncResult;
+    garminRuns: SyncResult;
+    garminMetrics: SyncResult;
     nutrition: SyncResult;
   };
 };
@@ -110,6 +114,29 @@ async function syncCalories(): Promise<Record<string, unknown>> {
   return { days: entries.length, inserted, updated, skippedPartial };
 }
 
+async function syncRuns(): Promise<Record<string, unknown>> {
+  const client = await getGarminClient();
+  const result = await syncGarminRuns({
+    client,
+    since: isoDaysAgo(7),
+    maxPages: 3,
+  });
+  return {
+    scanned: result.scanned,
+    imported: result.imported,
+    updated: result.updated,
+    skipped: result.skipped,
+  };
+}
+
+async function syncMetrics(): Promise<Record<string, unknown>> {
+  const client = await getGarminClient();
+  // Heute + die letzten zwei Tage (manchmal kommen Sleep-/HRV-Werte verzögert).
+  const dates = [isoDaysAgo(2), isoDaysAgo(1), todayUtcIso()];
+  const result = await syncGarminDailyMetrics({ client, dates });
+  return { daysProcessed: result.daysProcessed };
+}
+
 async function syncNutrition(): Promise<Record<string, unknown>> {
   const since = isoDaysAgo(7);
   const entries = await fddbAdapter.fetchNutritionEntries({ since });
@@ -130,6 +157,8 @@ export async function runAllSyncs(): Promise<SyncSummary> {
     sheets: await safe(syncSheets),
     garminStrength: await safe(syncStrength),
     garminCalories: await safe(syncCalories),
+    garminRuns: await safe(syncRuns),
+    garminMetrics: await safe(syncMetrics),
     nutrition: await safe(syncNutrition),
   };
   const ok = Object.values(results).every((r) => r.ok);

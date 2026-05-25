@@ -22,6 +22,7 @@ import {
 import { SegmentedControl } from "@/components/ui/segmented-control";
 import type {
   DailyActivity,
+  DailyTag,
   NutritionEntry,
   WeightEntry,
 } from "@/lib/db/schema";
@@ -78,6 +79,7 @@ function trailingSMA(values: (number | null)[], window = 7, minCount = 4) {
 type Props = {
   nutrition: NutritionEntry[];
   weight: WeightEntry[];
+  tags: DailyTag[];
   activity: DailyActivity[];
 };
 
@@ -96,7 +98,12 @@ type MergedPoint = {
   alcohol: boolean;
 };
 
-export function NutritionCorrelationView({ nutrition, weight, activity }: Props) {
+export function NutritionCorrelationView({
+  nutrition,
+  weight,
+  tags,
+  activity,
+}: Props) {
   const [range, setRange] = useState<Range>("8w");
   const [windowOffset, setWindowOffset] = useState(0);
   const [layers, setLayers] = useState<Record<LayerKey, boolean>>({
@@ -121,19 +128,24 @@ export function NutritionCorrelationView({ nutrition, weight, activity }: Props)
     for (const n of nutrition) if (n.date < today) allDates.add(n.date);
     for (const w of weight) if (w.date < today) allDates.add(w.date);
     for (const a of activity) if (a.date < today) allDates.add(a.date);
+    // Tag-Tage einschließen, damit Cheat-Day-Marker auch ohne Weight/Nutrition
+    // sichtbar bleiben.
+    for (const t of tags) if (t.date < today) allDates.add(t.date);
     const sorted = Array.from(allDates).sort();
 
     const nByDate = new Map(nutrition.map((n) => [n.date, n]));
     const wByDate = new Map(weight.map((w) => [w.date, w]));
     const aByDate = new Map(activity.map((a) => [a.date, a]));
+    const tByDate = new Map(tags.map((t) => [t.date, t]));
 
     const base = sorted.map((date) => {
       const w = wByDate.get(date);
       const n = nByDate.get(date);
       const a = aByDate.get(date);
-      const cheatDay = w?.cheatDay ?? false;
-      const cheatMeal = w?.cheatMeal ?? false;
-      const target = w?.kcalTarget ?? null;
+      const t = tByDate.get(date);
+      const cheatDay = t?.cheatDay ?? false;
+      const cheatMeal = t?.cheatMeal ?? false;
+      const target = t?.kcalTarget ?? null;
       let kcalIn: number | null;
       if (cheatDay) {
         kcalIn = null;
@@ -151,13 +163,13 @@ export function NutritionCorrelationView({ nutrition, weight, activity }: Props)
         weight: w?.weightKg ?? null,
         cheatDay,
         cheatMeal,
-        alcohol: w?.alcohol ?? false,
+        alcohol: t?.alcohol ?? false,
       };
     });
 
     const smoothed = trailingSMA(base.map((p) => p.kcalOut));
     return base.map((p, i) => ({ ...p, kcalOutSmoothed: smoothed[i] }));
-  }, [nutrition, weight, activity]);
+  }, [nutrition, weight, tags, activity]);
 
   useEffect(() => {
     setWindowOffset(0);

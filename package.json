@@ -17,7 +17,9 @@
     "garmin:strength-list": "tsx scripts/garmin-strength-list.ts",
     "db:sync:garmin": "tsx scripts/sync-garmin-strength.ts",
     "db:sync:nutrition": "tsx scripts/sync-nutrition.ts",
-    "db:sync:garmin-calories": "tsx scripts/sync-garmin-calories.ts"
+    "db:sync:garmin-calories": "tsx scripts/sync-garmin-calories.ts",
+    "db:sync:garmin-runs": "tsx scripts/sync-garmin-runs.ts",
+    "db:sync:garmin-metrics": "tsx scripts/sync-garmin-metrics.ts"
   },
   "dependencies": {
     "@base-ui/react": "^1.4.1",

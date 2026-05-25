@@ -1,18 +1,27 @@
 "use client";
 
 import { Cookie, Wine } from "lucide-react";
-import type { WeightEntry } from "@/lib/db/schema";
+import { useMemo } from "react";
+
+import type { DailyTag, WeightEntry } from "@/lib/db/schema";
 import { cn } from "@/lib/utils";
 
 type Props = {
   // Erwartet chronologisch aufsteigende Sortierung; wir rendern absteigend.
   entries: WeightEntry[];
+  tags: DailyTag[];
   onOpenDay: (date: string) => void;
 };
 
 const WEEKDAY_LABELS = ["So", "Mo", "Di", "Mi", "Do", "Fr", "Sa"];
 
-export function WeightDayList({ entries, onOpenDay }: Props) {
+export function WeightDayList({ entries, tags, onOpenDay }: Props) {
+  const tagsByDate = useMemo(() => {
+    const m = new Map<string, DailyTag>();
+    for (const t of tags) m.set(t.date, t);
+    return m;
+  }, [tags]);
+
   if (entries.length === 0) {
     return (
       <p className="rounded-2xl bg-muted/40 px-6 py-12 text-center text-sm text-muted-foreground">
@@ -44,7 +53,15 @@ export function WeightDayList({ entries, onOpenDay }: Props) {
           {reversed.map((entry) => {
             const prev = previousDateWeight(byDate, entry.date);
             const delta = prev === null ? null : entry.weightKg - prev;
-            return <Row key={entry.id} entry={entry} delta={delta} onOpen={onOpenDay} />;
+            return (
+              <Row
+                key={entry.id}
+                entry={entry}
+                tag={tagsByDate.get(entry.date) ?? null}
+                delta={delta}
+                onOpen={onOpenDay}
+              />
+            );
           })}
         </tbody>
       </table>
@@ -54,10 +71,12 @@ export function WeightDayList({ entries, onOpenDay }: Props) {
 
 function Row({
   entry,
+  tag,
   delta,
   onOpen,
 }: {
   entry: WeightEntry;
+  tag: DailyTag | null;
   delta: number | null;
   onOpen: (date: string) => void;
 }) {
@@ -92,7 +111,7 @@ function Row({
       </Td>
       <Td className="text-center">
         <div className="inline-flex items-center justify-center gap-1">
-          {entry.cheatDay && (
+          {tag?.cheatDay && (
             <span
               aria-label="Cheat Day"
               className="inline-flex size-5 items-center justify-center rounded-full bg-muted text-rose-600"
@@ -100,7 +119,7 @@ function Row({
               <Cookie className="size-3" />
             </span>
           )}
-          {entry.alcohol && (
+          {tag?.alcohol && (
             <span
               aria-label="Alkohol"
               className="inline-flex size-5 items-center justify-center rounded-full bg-muted text-rose-600"

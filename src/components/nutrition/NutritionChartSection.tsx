@@ -4,7 +4,12 @@ import { ChevronLeft, ChevronRight, Spline, Tag } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { SegmentedControl } from "@/components/ui/segmented-control";
-import type { DailyActivity, NutritionEntry, WeightEntry } from "@/lib/db/schema";
+import type {
+  DailyActivity,
+  DailyTag,
+  NutritionEntry,
+  WeightEntry,
+} from "@/lib/db/schema";
 import { loessSmooth, recommendedSpan } from "@/lib/utils/loess";
 import { cn } from "@/lib/utils";
 
@@ -32,10 +37,16 @@ const DAYS_BY_RANGE: Record<Range, number | null> = {
 type Props = {
   entries: NutritionEntry[];
   weightEntries: WeightEntry[];
+  tags: DailyTag[];
   activity: DailyActivity[];
 };
 
-export function NutritionChartSection({ entries, weightEntries, activity }: Props) {
+export function NutritionChartSection({
+  entries,
+  weightEntries,
+  tags,
+  activity,
+}: Props) {
   const [range, setRange] = useState<Range>("4w");
   const [windowOffset, setWindowOffset] = useState(0);
   const [showSmoothing, setShowSmoothing] = useState(true);
@@ -48,6 +59,12 @@ export function NutritionChartSection({ entries, weightEntries, activity }: Prop
     for (const w of weightEntries) m.set(w.date, w);
     return m;
   }, [weightEntries]);
+
+  const tagByDate = useMemo(() => {
+    const m = new Map<string, DailyTag>();
+    for (const t of tags) m.set(t.date, t);
+    return m;
+  }, [tags]);
 
   const activityByDate = useMemo(() => {
     const m = new Map<string, DailyActivity>();
@@ -70,18 +87,20 @@ export function NutritionChartSection({ entries, weightEntries, activity }: Prop
   const data = useMemo<NutritionChartPoint[]>(() => {
     const allDates = new Set<string>();
     for (const e of entries) allDates.add(e.date);
-    for (const w of weightEntries) {
-      if (w.cheatDay || w.cheatMeal || w.alcohol) allDates.add(w.date);
+    // Tag-Tage einschließen, damit Cheat-Day-Marker auch ohne Nutrition-Eintrag
+    // sichtbar bleiben.
+    for (const t of tags) {
+      if (t.cheatDay || t.cheatMeal || t.alcohol) allDates.add(t.date);
     }
     const sorted = Array.from(allDates).sort();
     return sorted.map((date) => {
       const e = nutritionByDate.get(date);
-      const w = weightByDate.get(date);
-      const cheatDay = w?.cheatDay ?? false;
-      const cheatMeal = w?.cheatMeal ?? false;
-      const alcohol = w?.alcohol ?? false;
+      const t = tagByDate.get(date);
+      const cheatDay = t?.cheatDay ?? false;
+      const cheatMeal = t?.cheatMeal ?? false;
+      const alcohol = t?.alcohol ?? false;
       const rawKcal = e?.caloriesKcal ?? null;
-      const target = w?.kcalTarget ?? null;
+      const target = t?.kcalTarget ?? null;
       let value: number | null;
       if (cheatDay) {
         value = null;
@@ -100,7 +119,7 @@ export function NutritionChartSection({ entries, weightEntries, activity }: Prop
         alcohol,
       };
     });
-  }, [entries, weightEntries, nutritionByDate, weightByDate]);
+  }, [entries, tags, nutritionByDate, tagByDate]);
 
   useEffect(() => {
     setWindowOffset(0);
@@ -198,6 +217,7 @@ export function NutritionChartSection({ entries, weightEntries, activity }: Prop
   const selectedWeight = selectedDate
     ? weightByDate.get(selectedDate) ?? null
     : null;
+  const selectedTag = selectedDate ? tagByDate.get(selectedDate) ?? null : null;
 
   return (
     <div className="space-y-5">
@@ -271,6 +291,7 @@ export function NutritionChartSection({ entries, weightEntries, activity }: Prop
         date={selectedDate}
         nutrition={selectedNutrition}
         weight={selectedWeight}
+        tag={selectedTag}
         garminTotalKcal={selectedActivity?.totalKcal ?? null}
         onClose={() => setSelectedDate(null)}
       />

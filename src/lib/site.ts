@@ -77,11 +77,11 @@ export const modules: ModuleConfig[] = [
     href: "/endurance",
     hint: "Herzfrequenz, LT2, VO₂",
     description:
-      "Lauf- und Cardio-Daten aus Garmin Connect — kommt im nächsten Schritt.",
+      "Lauf-Volumen, Kalender und Garmin-Performance (RHR, HRV, Sleep, Race-Predictions).",
     image: "/heroes/endurance.jpg",
     gradientFrom: "#0b3d2e",
     gradientTo: "#16a34a",
-    available: false,
+    available: true,
   },
 ];
 
