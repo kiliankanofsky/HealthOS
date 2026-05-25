@@ -7,11 +7,11 @@
 
 Privates Self-Tracking-Tool für einen einzelnen Nutzer (kiliankanofsky). Drei Module:
 
-- **Weight** (Phase 1, live): Gewichtsverlauf aus Google Sheets, Trend, Phasen (cut/bulk/maintenance), Tagesmetadaten (Cheat-Day/Meal, Alkohol, kcal-Ziel)
+- **Weight** (Phase 1, live): Gewichtsverlauf aus Google Sheets, Trend, Phasen (cut/bulk/maintenance). Tag-Metadaten (Cheat-Day/Meal, Alkohol, kcal-Ziel) leben seit Migration 0012 in einer eigenen `daily_tags`-Tabelle.
 - **Hypertrophy** (Phase 2, live): Krafttrainings-Logger mit Templates (Upper-A / Lower / Upper-B), Sätze pro Übung, Garmin-Sync für Trainingsdaten, Per-Übung-Progress-Chart
-- **Endurance** (Phase 3, "soon"): noch nicht gebaut
+- **Endurance** (Phase 3, live seit 2026-05-25): Lauf-Daten aus Garmin (run_sessions), Daily-Metrics-Snapshots (RHR, HRV mit Baseline-Korridor, Sleep mit Stadien, VO₂ Max, Lactate Threshold, Race Predictions, Training Status). Klickbare Metric-Tiles mit Detail-Popovern + 8-Wochen-Trend-Charts.
 
-Zusatz: **Nutrition** (FDDB-Sync, Tageskalorien + Makros) und **Daily Activity** (Garmin-Gesamtkalorien) als Erweiterungen.
+Zusatz: **Nutrition** (FDDB-Sync, Tageskalorien + Makros), **Daily Activity** (Garmin-Gesamtkalorien) und **Tags** (Cheat/Alkohol-Übersicht unter `/weight/tags`) als Erweiterungen.
 
 ## 2. Tech-Stack
 
@@ -70,7 +70,7 @@ Heißt: lokales `npm run dev` läuft gegen die lokale SQLite-Datei. Wenn man lok
 
 ### Cron-Job
 
-`vercel.json` definiert: `0 4 * * *` UTC (= 05:00/06:00 lokal je nach Sommer/Winter) → `GET /api/cron/sync`. Vercel sendet `Authorization: Bearer ${CRON_SECRET}`. Endpoint führt 4 Syncs hintereinander aus (sheets, garmin-strength, garmin-calories, nutrition) und gibt ein Summary-JSON zurück.
+`vercel.json` definiert: `0 4 * * *` UTC (= 05:00/06:00 lokal je nach Sommer/Winter) → `GET /api/cron/sync`. Vercel sendet `Authorization: Bearer ${CRON_SECRET}`. Endpoint führt 6 Syncs hintereinander aus (sheets, garmin-strength, garmin-calories, garmin-runs, garmin-metrics, nutrition) und gibt ein Summary-JSON zurück.
 
 ## 4. Datei-Index
 
@@ -80,17 +80,22 @@ Heißt: lokales `npm run dev` läuft gegen die lokale SQLite-Datei. Wenn man lok
 |---|---|---|
 | `layout.tsx` | RSC | Root-Layout, Fonts, globaler `AppShell` |
 | `page.tsx` | RSC | Homescreen — Hero-Grid + PulseSection (Live-Stats Weight/Hypertrophy) |
-| `weight/page.tsx` | RSC | Weight-Dashboard: Chart, Stats, Phasen, Day-Detail |
+| `weight/page.tsx` | RSC | Weight-Dashboard: Chart, Stats, Phasen, Day-Detail, Buttons (Sync / Tags) |
 | `weight/entries/page.tsx` | RSC | Tabelle aller Weight-Einträge |
-| `weight/actions.ts` | Server Action | upsert/delete/updateMetadata für Weight + Phasen |
+| `weight/tags/page.tsx` | RSC | Tag-Übersicht (Cheat-Day/Alkohol/Cheat-Meal) mit Editor — auch für Tage ohne Weight-Eintrag |
+| `weight/actions.ts` | Server Action | upsert/delete Weight + Phasen + Tags (saveDailyTag / removeDailyTag) |
 | `hypertrophy/page.tsx` | RSC | Templates-Übersicht + Kalender + Workout-Cards |
 | `hypertrophy/[slug]/page.tsx` | RSC | Template-Detail (alle Sessions) |
 | `hypertrophy/[slug]/[date]/page.tsx` | RSC | Session-Detail mit Sets-Logger |
 | `hypertrophy/[slug]/exercise/[exerciseSlug]/page.tsx` | RSC | Per-Übung-Progress-Chart |
 | `hypertrophy/actions.ts` | Server Action | createSession / upsertSet / updateNotes / overrides |
 | `nutrition/page.tsx` | RSC | Nutrition-Chart + Korrelation mit Weight |
-| `endurance/page.tsx` | RSC | Stub-Page „Soon" |
-| `api/cron/sync/route.ts` | Route Handler | **GET** mit Bearer-Auth, führt alle 4 Syncs aus |
+| `endurance/page.tsx` | RSC | Endurance-Hauptseite: Kilometergrafik + RunCalendar + MetricsDashboard + TrainingsSection |
+| `endurance/[date]/page.tsx` | RSC | Lauf-Detail (Pace, HR, Höhenmeter, Training Effect) |
+| `endurance/recommendations/page.tsx` | RSC | Placeholder: empfohlene Trainings (Phase 4) |
+| `endurance/history/page.tsx` | RSC | Placeholder: historische Trainings-Liste |
+| `endurance/{longevity,performance}/{recommendations,history}/page.tsx` | RSC | Vier Sub-Placeholder (alt — verweist auf die unified Routes oben) |
+| `api/cron/sync/route.ts` | Route Handler | **GET** mit Bearer-Auth, führt 6 Syncs aus (sheets/strength/calories/runs/metrics/nutrition) |
 
 ### 4.2 Komponenten (`src/components/`)
 
@@ -98,10 +103,11 @@ Nach Modul gruppiert. **RSC** = Server Component, **CC** = Client Component (`"u
 
 - `site/` — `AppShell` (Wrapper), `SiteHeader`, `SiteFooter`
 - `home/` — `HeroGrid`, `PromoBar`, `PulseSection` (RSC, lädt Live-Stats), `SectionHero`, `Topbar`
-- `weight/` — `WeightChart`/`Chart Section` (Recharts, CC), `WeightStats`, `WeightTable`, `WeightWeekMatrix`, `WeightDayList`, `WeightDayDetailDialog` (CC), `WeightDetailView`, `WeightEntryForm` (CC), `PhaseEditDialog` (CC)
+- `weight/` — `WeightChart`/`Chart Section` (Recharts, CC), `WeightStats`, `WeightTable`, `WeightWeekMatrix`, `WeightDayList`, `WeightDayDetailDialog` (CC, nimmt jetzt `tag`-Prop), `WeightDetailView`, `WeightEntryForm` (CC), `PhaseEditDialog` (CC), `TagEditor` (CC, Tag-Übersicht + Edit-Dialog)
 - `hypertrophy/` — `Calendar`, `SessionLogger` (CC), `NewSessionDialog` (CC), `DeleteSessionButton` (CC), `OpenOrCreateSessionButton` (CC), `ExerciseProgressChart` (CC), `WorkoutCards` (RSC), `WorkoutOverviewChart`, `SiblingNavButtons`/`SiblingSwipe`
 - `hypertrophy/avatar/` — `MuscleAvatar` (SVG-Bodymap), `OverviewAvatarPanel`, `WorkoutAvatarPanel`, `MuscleExerciseList`, `anatomy-paths.ts` (SVG-Pfade)
-- `nutrition/` — `NutritionChart` + `ChartSection`, `NutritionCorrelationView` (Streudiagramm Weight×Kalorien), `NutritionDayDetailDialog`
+- `endurance/` — `KmGraphSection` (CC, Recharts AreaChart wöchentliches Volumen), `RunCalendar` (CC, Adaption des Hypertrophy-Kalenders mit Double-Day-Indikator), `MetricsDashboard` (CC, sieben klickbare Tiles mit Detail-Popovern: RHR, HRV, Sleep, Race-Predictions, Training Status, VO₂, Lactate Threshold), `TrainingsSection` (RSC, zwei Cards für Empfohlen/Historisch), `PerformanceDashboard` (legacy, nicht mehr benutzt — bei Cleanup entfernen)
+- `nutrition/` — `NutritionChart` + `ChartSection`, `NutritionCorrelationView` (Streudiagramm Weight×Kalorien), `NutritionDayDetailDialog` (alle drei nehmen jetzt `tags`-Prop)
 - `ui/` — shadcn-Primitives: `button`, `card`, `dialog`, `input`, `label`, `popover`, `segmented-control`, `table`
 - `ComingSoon.tsx` — Placeholder
 
@@ -115,17 +121,20 @@ Nach Modul gruppiert. **RSC** = Server Component, **CC** = Client Component (`"u
 | `migrate.ts` | One-Shot-Migration-Runner. `npm run db:migrate` lokal, oder `USE_TURSO=1` gegen Turso |
 
 **Tabellen** (in `schema.ts`):
-- `weight_entries` — Gewicht pro Tag + Tags (cheatDay, alcohol, cheatMeal, kcalTarget)
+- `weight_entries` — **nur noch** Gewicht pro Tag (date, weight_kg, source, notes). Tag-Spalten wurden in Migration 0012 entfernt und in `daily_tags` migriert.
 - `weight_phases` — cut/bulk/maintenance-Zeiträume
+- `daily_tags` — Cheat-Day / Alkohol / Cheat-Meal / kcal-Ziel / notes pro Datum (UNIQUE auf `date`). Single Source of Truth seit Migration 0012; existiert unabhängig von Weight-Einträgen.
 - `exercises` — Stamm-Übungen mit Aliases (für Garmin-Mapping) und Muskelgruppen
 - `workout_templates` — Upper-A / Lower / Upper-B
 - `workout_template_exercises` — Slots pro Template (Position, Default-Reps)
-- `workout_sessions` — eine Trainings-Instanz (Template + Datum)
+- `workout_sessions` — eine Trainings-Instanz (Template + Datum) + garminActivityId für Idempotenz
 - `workout_sets` — einzelne Sätze pro Session (sessionId, templateExerciseId, setNumber, weight, reps)
 - `session_exercise_overrides` — alternative Übung pro Slot pro Session (wenn Gerät besetzt war)
 - `nutrition_entries` — Tageskalorien + Makros aus FDDB
 - `daily_activity` — Tagesgesamtkalorien aus Garmin (total/aktiv/BMR/Schritte)
 - `garmin_tokens` — OAuth1+OAuth2-Tokens (single-row, id=1) — **ersetzt File-Cache**
+- `run_sessions` — eine Zeile pro Lauf-Activity aus Garmin (Distanz, Dauer, Pace, HR, Höhenmeter, Training Effect, VO₂). Idempotent via garminActivityId.
+- `garmin_daily_metrics` — Tagesschnappschuss (UNIQUE auf `date`): RHR + 7d-Avg, HRV + Baseline-Korridor + Status, Sleep (Score, Stadien deep/light/rem/awake, Start/End-Lokalzeit, Quality), VO₂ Max, Lactate Threshold (HR + Pace sec/km), Training Status, Race Predictions (5k/10k/HM/M in Sekunden).
 
 ### 4.4 Integrationen (`src/lib/integrations/`)
 
@@ -137,6 +146,9 @@ Nach Modul gruppiert. **RSC** = Server Component, **CC** = Client Component (`"u
 | `garmin-strength.ts` | **`getGarminClient()`** — authentifizierter GarminConnect-Client, Tokens in DB |
 | `garmin-strength-import.ts` | `syncGarminStrength()` — Activities → WorkoutSessions+Sets, mit Alias-Mapping |
 | `garmin-calories.ts` | `fetchDailyCalories(client, {since,until})` → DailyActivity |
+| `garmin-runs-import.ts` | `syncGarminRuns({since,until,maxPages})` — paginierter Lauf-Import → run_sessions, idempotent via garminActivityId |
+| `garmin-metrics.ts` | `syncGarminDailyMetrics({dates})` — RHR/HRV/Sleep aus offiziellen Methoden + VO₂/Race/LT aus undokumentierten Endpoints (`metrics-service/maxmet/latest/{date}`, `metrics-service/racepredictions/latest/{displayName}`, `biometric-service/biometric/latestLactateThreshold`) |
+| `sync-all.ts` | `runAllSyncs()` — orchestriert alle 6 Syncs sequenziell mit safe()-Wrapper, vom Cron + UI-Sync-Button benutzt |
 | `types.ts` | gemeinsame `SyncableAdapter`-Schnittstelle |
 
 ### 4.5 Utilities & Hypertrophy-Lib (`src/lib/`)
@@ -167,14 +179,17 @@ Nach Modul gruppiert. **RSC** = Server Component, **CC** = Client Component (`"u
 | `npm run db:sync:garmin` | `scripts/sync-garmin-strength.ts` | Manueller Garmin-Strength-Sync |
 | `npm run db:sync:garmin-calories` | `scripts/sync-garmin-calories.ts` | Manueller Garmin-Calories-Sync |
 | `npm run db:sync:nutrition` | `scripts/sync-nutrition.ts` | Manueller FDDB-Sync |
+| `npm run db:sync:garmin-runs` | `scripts/sync-garmin-runs.ts` | Garmin-Lauf-Sync. Flags: `--since=YYYY-MM-DD`, `--until=…`, `--dry-run`, `--max-pages=N` |
+| `npm run db:sync:garmin-metrics` | `scripts/sync-garmin-metrics.ts` | Garmin-Daily-Metrics-Sync (RHR/HRV/Sleep/VO₂/LT/Race/Training-Status). Flags: `--days=N` (max 365), `--date=YYYY-MM-DD`, `--dry-run` |
 | `npm run garmin:login-check` | `scripts/garmin-login-check.ts` | Garmin-Login testen |
 | `npm run garmin:strength-list` | `scripts/garmin-strength-list.ts` | Garmin-Strength-Activities listen |
 | `npx tsx scripts/migrate-to-turso.ts` | `scripts/migrate-to-turso.ts` | One-Shot: lokale DB → Turso kopieren |
 | `npx tsx scripts/garmin-calories-probe.ts` | `scripts/garmin-calories-probe.ts` | Garmin-Calories-Endpoint debuggen |
+| `npx tsx scripts/check-turso.ts` | `scripts/check-turso.ts` | Turso-Status-Check (Zeilen pro Endurance-Tabelle, Spalten) — env vorher laden: `set -a && source .env.local && set +a && …` |
 
 ### 4.7 Migrationen (`drizzle/`)
 
-Sequenz `0000` → `0009`. **Nicht editieren** — Drizzle hält im `meta/_journal.json` einen Hash; geänderte Migrationen führen zu Fehlern. Neue Schema-Änderungen → `npm run db:generate` erzeugt das nächste File.
+Sequenz `0000` → `0012`. **Nicht editieren** — Drizzle hält im `meta/_journal.json` einen Hash; geänderte Migrationen führen zu Fehlern. Neue Schema-Änderungen → `npm run db:generate` erzeugt das nächste File.
 
 | Migration | Inhalt |
 |---|---|
@@ -185,6 +200,9 @@ Sequenz `0000` → `0009`. **Nicht editieren** — Drizzle hält im `meta/_journ
 | `0007` | `daily_activity` |
 | `0008` | `weight_entries.cheat_meal` + `kcal_target` |
 | `0009` | `garmin_tokens` |
+| `0010` | `run_sessions` + `garmin_daily_metrics` (Endurance) |
+| `0011` | `garmin_daily_metrics`-Erweiterung: Sleep-Stadien, HRV-Baseline, RHR-7d-Avg |
+| `0012` | `daily_tags`-Tabelle, Tag-Daten aus `weight_entries` rüberkopiert, `cheat_day`/`alcohol`/`cheat_meal`/`kcal_target` aus `weight_entries` entfernt — **manuell editiert** (INSERT vor DROP), nicht regenerieren |
 
 ### 4.8 Konfig-Files (Root)
 
@@ -208,10 +226,16 @@ Alle Funktionen sind `async` und liefern `Promise<T>`. Wenn etwas fehlt, gehört
 - `getAllWeightEntries()` — alle, chronologisch
 - `getRecentWeightEntries(limit=10)`
 - `getWeightEntryByDate(date)`
-- `upsertWeightEntry(entry)` — Konflikt auf `date`, behält undefined-Felder
-- `updateWeightMetadata(date, patch)` — nur Tags
+- `upsertWeightEntry(entry)` — Konflikt auf `date`, behält undefined-Felder. Schreibt nur weight/source/notes (Tags wandern in daily_tags).
+- `updateWeightMetadata(date, patch)` — nur notes/source
 - `deleteWeightEntry(id)` / `deleteWeightEntryByDate(date)` / `clearAllWeightEntries()`
 - `previousDayIso(iso)` — pure date util (sync)
+
+**Daily Tags:**
+- `getAllDailyTags()` / `getDailyTagsMap()` — Map<date, DailyTag>
+- `getDailyTagForDate(date)`
+- `upsertDailyTag(input)` — Konflikt auf `date`, undefined-Felder bleiben unverändert
+- `deleteDailyTag(date)`
 
 **Phasen:**
 - `getAllPhases()` / `upsertPhase()` / `deletePhase(id)` / `clearAllPhases()`
@@ -253,6 +277,19 @@ Alle Funktionen sind `async` und liefern `Promise<T>`. Wenn etwas fehlt, gehört
 - `getGarminTokens()` — single row id=1
 - `saveGarminTokens(oauth1Json, oauth2Json)`
 
+**Endurance — Run-Sessions:**
+- `getAllRunSessions()` / `getRunSessionsBetween(from, to)` / `getRunSessionsForDate(date)`
+- `getRunSessionByDate(date)` (jüngster Lauf des Tages) / `getRunSessionByGarminId(id)` (Idempotenz)
+- `getLatestRunSession()` (Preview für Cards)
+- `upsertRunSession(input)` — Konflikt auf `garminActivityId`
+- `getWeeklyKmTotals(fromIso, toIso)` — SQL-Aggregation, Montags-Wochenstart, liefert `{ weekStartIso, km }`
+
+**Endurance — Garmin Daily Metrics:**
+- `getDailyMetricsForDate(date)`
+- `getDailyMetricsBetween(from, to)` — für 8-Wochen-Trend-Charts
+- `getLatestDailyMetrics()` — Tile-Preview
+- `upsertDailyMetrics(entry)` — Konflikt auf `date`
+
 ## 6. Dev-Workflow
 
 ### Setup nach `git clone`
@@ -273,10 +310,13 @@ npm run dev                 # http://localhost:3000
 
 ### Tests vor Push
 ```bash
-node_modules/.bin/tsc --noEmit    # tsc clean? Vercel-Build hängt sonst
+node_modules/.bin/tsc --noEmit    # tsc clean? (reicht NICHT alleine — siehe Gotcha §7)
+npm run build                      # **Pflicht** — Vercels Build ist strenger als tsc --noEmit
 npm run lint                       # ESLint
 npm run dev                        # smoke-test
 ```
+
+> **Wichtig:** `tsc --noEmit` allein reicht nicht. Vercels `next build` prüft mit strikterer Konfig und erwischt Type-Probleme in Files, die `tsc` lokal überspringt (z.B. Scripts in `scripts/`). Erfahrung: Commit 6800aa0 — lokal clean, Vercel-Build failed.
 
 ### Push-Flow
 ```bash
@@ -298,4 +338,12 @@ USE_TURSO=1 npm run dev
 - **Recharts** wirft im Dev manchmal `width(-1) and height(-1)`-Warnings beim SSR — harmlos, layout greift im Client.
 - **`@gooin/garmin-connect`** verwendet OAuth-Tokens; bei MFA-aktiviertem Garmin-Account funktioniert die Library aktuell nicht. Tokens leben jetzt in `garmin_tokens`-Tabelle (siehe Migration 0009).
 - **FDDB-Cookie** läuft regelmäßig ab; wenn der Cron-Job fehlschlägt mit „Unauthorized" → Cookie aus Browser neu kopieren und in `FDDB_COOKIE` (Vercel + lokal) updaten.
-- **Vercel Hobby-Plan**: Cron läuft max. 1x/Tag, Endpoint-Timeout max. 60s. 4 sequenzielle Syncs sollten in <30s durchlaufen; wenn nicht, in `maxDuration` ggf. erhöhen oder Syncs parallelisieren (`Promise.allSettled`).
+- **Vercel Hobby-Plan**: Cron läuft max. 1x/Tag, Endpoint-Timeout max. 60s. 6 sequenzielle Syncs sollten in <50s durchlaufen; wenn nicht, in `maxDuration` ggf. erhöhen oder Syncs parallelisieren (`Promise.allSettled`).
+- **Vercel-Build > tsc**: Vercels `next build` ist strenger als `node_modules/.bin/tsc --noEmit`. Vor jedem Push immer **zusätzlich** `npm run build` lokal laufen lassen — sonst kann ein Type-Error in `scripts/` o.ä. erst beim Deploy auffallen (passiert in Commit 6800aa0).
+- **Migrate-Script lädt nur `.env`, nicht `.env.local`**: Für `USE_TURSO=1 npm run db:migrate` müssen Turso-Vars vorab exportiert werden: `set -a && source .env.local && set +a && USE_TURSO=1 npm run db:migrate`. Gleiches gilt für `npx tsx scripts/check-turso.ts`.
+- **Garmin-Endpoints für Endurance** sind undokumentiert und haben unterschiedliche Pfad-Patterns:
+  - `metrics-service/metrics/maxmet/latest/{YYYY-MM-DD}` (VO₂ Max) — **Datum** als Suffix
+  - `metrics-service/metrics/racepredictions/latest/{displayName}` — **displayName** als Suffix
+  - `biometric-service/biometric/latestLactateThreshold` — keine Pfad-Parameter, liefert Array mit Einträgen für `speed` und `hearRate` (Garmin-Tippfehler: tatsächlich ohne „t"). LT-Pace = `1000 / (speed × 10)` — die Skalierung mit ×10 ist empirisch korrigiert, weil Garmin's `speed`-Wert um eine Größenordnung zu klein kommt.
+- **Drizzle SQLite DROP COLUMN**: `npm run db:generate` produziert bei Spalten-Entfernung `ALTER TABLE … DROP COLUMN` ohne Datenmigration. Wenn die alten Daten erhalten bleiben sollen (wie bei Migration 0012 für Tags), die generierte `.sql`-Datei **manuell** um eine `INSERT INTO neu SELECT … FROM alt …`-Anweisung VOR dem DROP erweitern.
+- **Tag-Refactor (Migration 0012)**: Tag-Felder (cheatDay/alcohol/cheatMeal/kcalTarget) leben jetzt in `daily_tags`, NICHT mehr in `weight_entries`. Alle Komponenten, die Tags pro Datum brauchen, holen sich einen separaten `tags`-Prop (siehe WeightChartSection, NutritionChartSection, NutritionCorrelationView). Tag-Bearbeitung via Day-Detail-Dialog im Weight-Chart ODER Tag-Editor auf `/weight/tags`.
