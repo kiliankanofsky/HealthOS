@@ -31,11 +31,11 @@ async function main() {
   console.log("garmin_daily_metrics row count:", metrics.rows[0].n);
   console.log(
     "weight_entries cols:",
-    we.rows.map((r: { name: unknown }) => r.name).join(", "),
+    we.rows.map((r) => (r as Record<string, unknown>).name).join(", "),
   );
   console.log(
     "daily_tags cols:",
-    dt.rows.map((r: { name: unknown }) => r.name).join(", "),
+    dt.rows.map((r) => (r as Record<string, unknown>).name).join(", "),
   );
 
   const breakdown = await client.execute(
