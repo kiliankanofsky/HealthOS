@@ -499,3 +499,280 @@ export const garminDailyMetrics = sqliteTable(
 
 export type GarminDailyMetrics = typeof garminDailyMetrics.$inferSelect;
 export type NewGarminDailyMetrics = typeof garminDailyMetrics.$inferInsert;
+
+// ============================================================
+// Endurance Phase 4 — Training Plans
+//
+// Modell:
+//   training_plans (1) ──< training_plan_weeks (n)
+//   training_plans (1) ──< training_plan_sessions (n)
+//   training_plan_sessions (1) ──< training_plan_blocks (n)
+//   training_plan_sessions.alternativeOfId → training_plan_sessions.id (self-FK)
+//
+// Eine Session = ein Slot an einem Tag. Die "Option 2" aus dem Referenzplan
+// wird als eigene Session-Zeile mit `alternativeOfId = primarySessionId`
+// gespeichert — so kann sie eigene Blocks haben, separat editiert und im
+// Detail-View angeboten werden.
+//
+// Strukturierte Intervalle leben in `training_plan_blocks.segmentsJson` als
+// JSON-Array. Das hält das Schema flexibel für alle Intervall-Muster aus dem
+// Referenzplan (simple Läufe, n×Wdh, Progressionen, Criss-Cross, Mixed Long Run).
+// ============================================================
+
+export const trainingPlanGoalTypes = ["race", "general"] as const;
+export type TrainingPlanGoalType = (typeof trainingPlanGoalTypes)[number];
+
+export const trainingPlanStatuses = ["draft", "active", "completed", "archived"] as const;
+export type TrainingPlanStatus = (typeof trainingPlanStatuses)[number];
+
+export const trainingPlanPhases = ["base", "build", "peak", "taper", "race"] as const;
+export type TrainingPlanPhase = (typeof trainingPlanPhases)[number];
+
+export const trainingPlanSessionTypes = [
+  "recovery",
+  "easy",
+  "long",
+  "tempo",
+  "threshold",
+  "intervals",
+  "hills",
+  "race_simulation",
+  "strides",
+  "progression",
+  "criss_cross",
+  "race",
+  "rest",
+] as const;
+export type TrainingPlanSessionType = (typeof trainingPlanSessionTypes)[number];
+
+export const trainingPlanSessionStatuses = [
+  "planned",
+  "completed",
+  "skipped",
+  "modified",
+] as const;
+export type TrainingPlanSessionStatus =
+  (typeof trainingPlanSessionStatuses)[number];
+
+// Eine Trainingsphase = ein Plan. Aktuell ein aktiver Plan zur Zeit gedacht
+// (status="active"), Phase 1 = BMW Berlin Marathon 27.9.26 Sub-3.
+// Pace-Zonen werden als JSON gespeichert (5 Zonen je min/max Pace), damit
+// sie pro Plan individuell sein können. `referencePdfText` ist der extrahierte
+// Volltext aus der hochgeladenen Referenz-PDF (Option c: kein File-Storage).
+export const trainingPlans = sqliteTable(
+  "training_plans",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    name: text("name").notNull(),
+    goalType: text("goal_type", { enum: trainingPlanGoalTypes })
+      .notNull()
+      .default("race"),
+    raceName: text("race_name"),
+    // ISO-Date YYYY-MM-DD. Plan rechnet rückwärts von hier.
+    raceDate: text("race_date"),
+    raceDistanceKm: real("race_distance_km"),
+    // Zielzeit in Sekunden (z.B. 10800 = 3:00:00).
+    targetTimeSeconds: integer("target_time_seconds"),
+    // Ziel-Pace in Sekunden pro Kilometer (z.B. 255 = 4:15/km).
+    targetPaceSecPerKm: real("target_pace_sec_per_km"),
+    // Peak-Wochenvolumen (Regler in der Goal-Race-Plan-Card).
+    targetWeeklyKmPeak: real("target_weekly_km_peak"),
+    sessionsPerWeek: integer("sessions_per_week"),
+    // Berechnet aus raceDate - totalWeeks*7, explizit gespeichert für schnelle Queries.
+    planStartDate: text("plan_start_date").notNull(),
+    totalWeeks: integer("total_weeks").notNull(),
+    status: text("status", { enum: trainingPlanStatuses })
+      .notNull()
+      .default("draft"),
+    // Pace-Zonen als JSON, Struktur:
+    //   { z1: { minSec, maxSec }, z2: {…}, z3: {…}, z4: {…}, z5: {…} }
+    // Sec = Sekunden pro Kilometer.
+    paceZonesJson: text("pace_zones_json", { mode: "json" }).$type<{
+      z1: { minSec: number; maxSec: number };
+      z2: { minSec: number; maxSec: number };
+      z3: { minSec: number; maxSec: number };
+      z4: { minSec: number; maxSec: number };
+      z5: { minSec: number; maxSec: number };
+    } | null>(),
+    // Extrahierter Volltext aus der hochgeladenen Referenz-PDF.
+    referencePdfText: text("reference_pdf_text"),
+    referencePdfName: text("reference_pdf_name"),
+    notes: text("notes"),
+    createdAt: text("created_at")
+      .notNull()
+      .default(sql`(CURRENT_TIMESTAMP)`),
+    updatedAt: text("updated_at")
+      .notNull()
+      .default(sql`(CURRENT_TIMESTAMP)`),
+  },
+  (table) => [
+    check("total_weeks_positive", sql`${table.totalWeeks} >= 1`),
+    check(
+      "target_pace_non_negative",
+      sql`${table.targetPaceSecPerKm} IS NULL OR ${table.targetPaceSecPerKm} >= 0`,
+    ),
+  ],
+);
+
+export type TrainingPlan = typeof trainingPlans.$inferSelect;
+export type NewTrainingPlan = typeof trainingPlans.$inferInsert;
+
+// Eine Zeile pro Trainingswoche. weekNumber zählt von 1 (Plan-Start) bis
+// totalWeeks (Race-Woche). Phase ist die Periodisierungs-Phase, die der
+// Nutzer in der Goal-Race-Plan-Card definiert (KI darf NICHT periodisieren).
+export const trainingPlanWeeks = sqliteTable(
+  "training_plan_weeks",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    planId: integer("plan_id")
+      .notNull()
+      .references(() => trainingPlans.id, { onDelete: "cascade" }),
+    weekNumber: integer("week_number").notNull(),
+    // ISO-Date Montag der Woche.
+    startDate: text("start_date").notNull(),
+    // ISO-Date Sonntag der Woche.
+    endDate: text("end_date").notNull(),
+    phase: text("phase", { enum: trainingPlanPhases }).notNull(),
+    // Ziel-Wochenvolumen in km (optional; Regler oder KI-Empfehlung).
+    targetVolumeKm: real("target_volume_km"),
+    notes: text("notes"),
+    createdAt: text("created_at")
+      .notNull()
+      .default(sql`(CURRENT_TIMESTAMP)`),
+  },
+  (table) => [
+    uniqueIndex("plan_week_unique").on(table.planId, table.weekNumber),
+    check("week_number_positive", sql`${table.weekNumber} >= 1`),
+  ],
+);
+
+export type TrainingPlanWeek = typeof trainingPlanWeeks.$inferSelect;
+export type NewTrainingPlanWeek = typeof trainingPlanWeeks.$inferInsert;
+
+// Eine Trainingseinheit. Mehrere Sessions pro Tag möglich (Double-Days);
+// `dayOrder` regelt die Reihenfolge.
+// `alternativeOfId` zeigt auf eine andere Session: ist es gesetzt, ist DIESE
+// Zeile die Alternative ("Option 2") zur Primär-Session.
+// `runSessionId` verlinkt zum tatsächlich absolvierten Garmin-Lauf (S5/S6).
+// `aiLocked` = true → KI darf diese Session NICHT mehr anfassen.
+export const trainingPlanSessions = sqliteTable(
+  "training_plan_sessions",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    planId: integer("plan_id")
+      .notNull()
+      .references(() => trainingPlans.id, { onDelete: "cascade" }),
+    weekId: integer("week_id")
+      .notNull()
+      .references(() => trainingPlanWeeks.id, { onDelete: "cascade" }),
+    // ISO-Date YYYY-MM-DD.
+    date: text("date").notNull(),
+    dayOrder: integer("day_order").notNull().default(1),
+    sessionType: text("session_type", { enum: trainingPlanSessionTypes }).notNull(),
+    title: text("title").notNull(),
+    description: text("description"),
+    // Ziel-Dauer in Sekunden über alle Blocks (vereinfacht Filter/Statistiken).
+    targetDurationSec: integer("target_duration_sec"),
+    targetDistanceMeters: real("target_distance_meters"),
+    // Dominante Pace-Zone (1..5). Für Charts/Filter — Detail steht in Blocks.
+    primaryZone: integer("primary_zone"),
+    status: text("status", { enum: trainingPlanSessionStatuses })
+      .notNull()
+      .default("planned"),
+    aiLocked: integer("ai_locked", { mode: "boolean" }).notNull().default(false),
+    // Self-FK: wenn gesetzt, ist DIES eine Alternative zu der referenzierten Session.
+    alternativeOfId: integer("alternative_of_id"),
+    // Welche Variante hat der Nutzer/die KI zuletzt gewählt? Nur auf der Primär-
+    // Session relevant (auf der Alternative ist es typischerweise NULL).
+    selectedAlternativeId: integer("selected_alternative_id"),
+    // Verlinkt zur absolvierten Garmin-Activity, sobald der Lauf gemacht ist.
+    runSessionId: integer("run_session_id").references(() => runSessions.id, {
+      onDelete: "set null",
+    }),
+    createdAt: text("created_at")
+      .notNull()
+      .default(sql`(CURRENT_TIMESTAMP)`),
+    updatedAt: text("updated_at")
+      .notNull()
+      .default(sql`(CURRENT_TIMESTAMP)`),
+  },
+  (table) => [
+    uniqueIndex("plan_session_date_order_unique").on(
+      table.planId,
+      table.date,
+      table.dayOrder,
+      table.alternativeOfId,
+    ),
+    check("day_order_positive", sql`${table.dayOrder} >= 1`),
+    check(
+      "primary_zone_range",
+      sql`${table.primaryZone} IS NULL OR (${table.primaryZone} >= 1 AND ${table.primaryZone} <= 5)`,
+    ),
+  ],
+);
+
+export type TrainingPlanSession = typeof trainingPlanSessions.$inferSelect;
+export type NewTrainingPlanSession = typeof trainingPlanSessions.$inferInsert;
+
+// Strukturierte Intervalle einer Session.
+// `repetitions` = wie oft wird das Block-Muster wiederholt (z.B. 3 für "3×12min Z3").
+// `segmentsJson` = JSON-Array von Sub-Segmenten innerhalb einer Wiederholung,
+// jedes mit Art (work/recovery/warmup/cooldown), Dauer/Distanz, Zone, Pace, HF.
+//
+// Beispiele:
+//  - "60 min Z1-2"            → 1 Block, reps=1, segments=[{kind:"work", durationSec:3600, zoneMin:1, zoneMax:2}]
+//  - "3×12 min Z3, 3 min rec" → 1 Block, reps=3, segments=[{kind:"work",720,z3},{kind:"recovery",180,z1}]
+//  - "15min Z2 → 15min Z3"    → 2 Blocks, reps=1, je 1 segment
+//  - "6×6 min Z3/Z4 alt"      → 1 Block, reps=6, segments=[{kind:"work",180,z3},{kind:"work",180,z4}]
+export type TrainingPlanBlockSegmentKind =
+  | "warmup"
+  | "work"
+  | "recovery"
+  | "cooldown";
+
+export type TrainingPlanBlockSegment = {
+  kind: TrainingPlanBlockSegmentKind;
+  durationSec?: number;
+  distanceMeters?: number;
+  // Eine fixe Zone (1..5) oder eine Range (z.B. Z1-Z2 = {min:1, max:2}).
+  zone?: number;
+  zoneMin?: number;
+  zoneMax?: number;
+  // Optional explizite Pace-Range (Sekunden pro Kilometer).
+  paceMinSec?: number;
+  paceMaxSec?: number;
+  // Optional explizite HR-Range (bpm).
+  hrMin?: number;
+  hrMax?: number;
+  description?: string;
+};
+
+export const trainingPlanBlocks = sqliteTable(
+  "training_plan_blocks",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    sessionId: integer("session_id")
+      .notNull()
+      .references(() => trainingPlanSessions.id, { onDelete: "cascade" }),
+    blockOrder: integer("block_order").notNull(),
+    repetitions: integer("repetitions").notNull().default(1),
+    segmentsJson: text("segments_json", { mode: "json" })
+      .$type<TrainingPlanBlockSegment[]>()
+      .notNull(),
+    description: text("description"),
+    createdAt: text("created_at")
+      .notNull()
+      .default(sql`(CURRENT_TIMESTAMP)`),
+  },
+  (table) => [
+    uniqueIndex("block_session_order_unique").on(
+      table.sessionId,
+      table.blockOrder,
+    ),
+    check("repetitions_positive", sql`${table.repetitions} >= 1`),
+    check("block_order_positive", sql`${table.blockOrder} >= 1`),
+  ],
+);
+
+export type TrainingPlanBlock = typeof trainingPlanBlocks.$inferSelect;
+export type NewTrainingPlanBlock = typeof trainingPlanBlocks.$inferInsert;

@@ -135,6 +135,10 @@ Nach Modul gruppiert. **RSC** = Server Component, **CC** = Client Component (`"u
 - `garmin_tokens` — OAuth1+OAuth2-Tokens (single-row, id=1) — **ersetzt File-Cache**
 - `run_sessions` — eine Zeile pro Lauf-Activity aus Garmin (Distanz, Dauer, Pace, HR, Höhenmeter, Training Effect, VO₂). Idempotent via garminActivityId.
 - `garmin_daily_metrics` — Tagesschnappschuss (UNIQUE auf `date`): RHR + 7d-Avg, HRV + Baseline-Korridor + Status, Sleep (Score, Stadien deep/light/rem/awake, Start/End-Lokalzeit, Quality), VO₂ Max, Lactate Threshold (HR + Pace sec/km), Training Status, Race Predictions (5k/10k/HM/M in Sekunden).
+- `training_plans` — Endurance-Phase-4 Top-Level (Race-Datum, Ziel-Pace, Peak-km/Woche, Sessions/Woche, totalWeeks, planStartDate, paceZonesJson, **referencePdfText** als extrahierter Volltext, Status draft/active/completed/archived).
+- `training_plan_weeks` — eine Zeile pro Plan-Woche mit weekNumber, startDate/endDate, phase (base/build/peak/taper/race), targetVolumeKm. UNIQUE(planId, weekNumber).
+- `training_plan_sessions` — eine Zeile pro Plan-Slot. Self-FK `alternativeOfId` macht eine Zeile zur Alternative ("Option 2") einer Primär-Session. `aiLocked` = KI-Sperre. `runSessionId` (FK → run_sessions, ON DELETE SET NULL) verlinkt zum tatsächlich absolvierten Lauf. UNIQUE(planId, date, dayOrder, alternativeOfId) erlaubt Double-Days und unabhängige Alternativen.
+- `training_plan_blocks` — strukturierte Intervalle pro Session. `repetitions` × `segmentsJson` (TS-Typ `TrainingPlanBlockSegment[]` mit kind work/recovery/warmup/cooldown, durationSec/distanceMeters, zone/zoneMin/zoneMax, paceMinSec/paceMaxSec, hrMin/hrMax). UNIQUE(sessionId, blockOrder).
 
 ### 4.4 Integrationen (`src/lib/integrations/`)
 
@@ -203,6 +207,7 @@ Sequenz `0000` → `0012`. **Nicht editieren** — Drizzle hält im `meta/_journ
 | `0010` | `run_sessions` + `garmin_daily_metrics` (Endurance) |
 | `0011` | `garmin_daily_metrics`-Erweiterung: Sleep-Stadien, HRV-Baseline, RHR-7d-Avg |
 | `0012` | `daily_tags`-Tabelle, Tag-Daten aus `weight_entries` rüberkopiert, `cheat_day`/`alcohol`/`cheat_meal`/`kcal_target` aus `weight_entries` entfernt — **manuell editiert** (INSERT vor DROP), nicht regenerieren |
+| `0013` | Endurance Phase 4: `training_plans` + `training_plan_weeks` + `training_plan_sessions` + `training_plan_blocks`. Self-FK auf `alternative_of_id` (kein DB-Constraint, App-Logik), FK auf `run_sessions.id` mit ON DELETE SET NULL. |
 
 ### 4.8 Konfig-Files (Root)
 
@@ -289,6 +294,12 @@ Alle Funktionen sind `async` und liefern `Promise<T>`. Wenn etwas fehlt, gehört
 - `getDailyMetricsBetween(from, to)` — für 8-Wochen-Trend-Charts
 - `getLatestDailyMetrics()` — Tile-Preview
 - `upsertDailyMetrics(entry)` — Konflikt auf `date`
+
+**Endurance Phase 4 — Training Plans:**
+- Plans: `getAllTrainingPlans()`, `getTrainingPlanById(id)`, `getActiveTrainingPlan()`, `createTrainingPlan(input)`, `updateTrainingPlan(id, patch)`, `setTrainingPlanStatus(id, status)`, `deleteTrainingPlan(id)`
+- Weeks: `getWeeksForPlan(planId)`, `getWeekByNumber(planId, n)`, `getWeekForDate(planId, date)`, `createPlanWeek(input)`, `updatePlanWeek(id, patch)`
+- Sessions: `getSessionsForPlan(planId)` (primary only), `getPlanSessionsForWeek(weekId)`, `getPlanSessionsForDateRange(planId, from, to)`, `getPlanSessionById(id)`, `getNextPlanSession(planId, todayIso)`, `getAlternativesForPlanSession(primaryId)`, `createPlanSession(input)`, `updatePlanSession(id, patch)`, `updatePlanSessionDate(id, newDate, dayOrder?)`, `setPlanSessionAiLocked(id, locked)`, `linkPlanSessionToRun(id, runSessionId)`, `deletePlanSession(id)`
+- Blocks: `getBlocksForPlanSession(sessionId)`, `createPlanBlock(input)`, `replacePlanBlocksForSession(sessionId, blocks[])` (atomarer Ersatz aller Blocks einer Session), `deletePlanBlock(id)`
 
 ## 6. Dev-Workflow
 

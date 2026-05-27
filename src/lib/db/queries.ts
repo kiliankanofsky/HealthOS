@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gte, lte, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, isNull, lte, sql } from "drizzle-orm";
 import { db } from "./index";
 import {
   type ActivitySource,
@@ -18,6 +18,10 @@ import {
   type NewRunSession,
   type NewNutritionEntry,
   type NewSessionExerciseOverride,
+  type NewTrainingPlan,
+  type NewTrainingPlanBlock,
+  type NewTrainingPlanSession,
+  type NewTrainingPlanWeek,
   type NewWeightEntry,
   type NewWeightPhase,
   type NewWorkoutSession,
@@ -29,6 +33,15 @@ import {
   runSessions,
   sessionExerciseOverrides,
   type SessionExerciseOverride,
+  type TrainingPlan,
+  type TrainingPlanBlock,
+  type TrainingPlanSession,
+  type TrainingPlanStatus,
+  type TrainingPlanWeek,
+  trainingPlanBlocks,
+  trainingPlanSessions,
+  trainingPlanWeeks,
+  trainingPlans,
   type WeightEntry,
   type WeightPhase,
   type WorkoutKind,
@@ -961,4 +974,327 @@ export async function cycleNumberFor(
     )
     .get();
   return Number(row?.count ?? 0);
+}
+
+// ============================================================
+// Training Plans (Endurance Phase 4)
+// ============================================================
+
+export async function getAllTrainingPlans(): Promise<TrainingPlan[]> {
+  return db
+    .select()
+    .from(trainingPlans)
+    .orderBy(desc(trainingPlans.createdAt))
+    .all();
+}
+
+export async function getTrainingPlanById(
+  id: number,
+): Promise<TrainingPlan | undefined> {
+  return db.select().from(trainingPlans).where(eq(trainingPlans.id, id)).get();
+}
+
+// Aktuell aktiver Plan (jüngster mit status="active"). Wir gehen für den
+// User von einem aktiven Plan zur Zeit aus — die Card "Goal-Race-Plan" zeigt
+// genau diesen an.
+export async function getActiveTrainingPlan(): Promise<TrainingPlan | undefined> {
+  return db
+    .select()
+    .from(trainingPlans)
+    .where(eq(trainingPlans.status, "active"))
+    .orderBy(desc(trainingPlans.createdAt))
+    .get();
+}
+
+export async function createTrainingPlan(
+  input: NewTrainingPlan,
+): Promise<TrainingPlan> {
+  const [row] = await db.insert(trainingPlans).values(input).returning();
+  return row;
+}
+
+export async function updateTrainingPlan(
+  id: number,
+  patch: Partial<NewTrainingPlan>,
+): Promise<TrainingPlan | undefined> {
+  const [row] = await db
+    .update(trainingPlans)
+    .set({ ...patch, updatedAt: sql`(CURRENT_TIMESTAMP)` })
+    .where(eq(trainingPlans.id, id))
+    .returning();
+  return row;
+}
+
+export async function setTrainingPlanStatus(
+  id: number,
+  status: TrainingPlanStatus,
+): Promise<TrainingPlan | undefined> {
+  return updateTrainingPlan(id, { status });
+}
+
+export async function deleteTrainingPlan(id: number): Promise<void> {
+  await db.delete(trainingPlans).where(eq(trainingPlans.id, id));
+}
+
+// ============================================================
+// Training Plan Weeks
+// ============================================================
+
+export async function getWeeksForPlan(
+  planId: number,
+): Promise<TrainingPlanWeek[]> {
+  return db
+    .select()
+    .from(trainingPlanWeeks)
+    .where(eq(trainingPlanWeeks.planId, planId))
+    .orderBy(asc(trainingPlanWeeks.weekNumber))
+    .all();
+}
+
+export async function getWeekByNumber(
+  planId: number,
+  weekNumber: number,
+): Promise<TrainingPlanWeek | undefined> {
+  return db
+    .select()
+    .from(trainingPlanWeeks)
+    .where(
+      and(
+        eq(trainingPlanWeeks.planId, planId),
+        eq(trainingPlanWeeks.weekNumber, weekNumber),
+      ),
+    )
+    .get();
+}
+
+export async function getWeekForDate(
+  planId: number,
+  date: string,
+): Promise<TrainingPlanWeek | undefined> {
+  return db
+    .select()
+    .from(trainingPlanWeeks)
+    .where(
+      and(
+        eq(trainingPlanWeeks.planId, planId),
+        lte(trainingPlanWeeks.startDate, date),
+        gte(trainingPlanWeeks.endDate, date),
+      ),
+    )
+    .get();
+}
+
+export async function createPlanWeek(
+  input: NewTrainingPlanWeek,
+): Promise<TrainingPlanWeek> {
+  const [row] = await db.insert(trainingPlanWeeks).values(input).returning();
+  return row;
+}
+
+export async function updatePlanWeek(
+  id: number,
+  patch: Partial<NewTrainingPlanWeek>,
+): Promise<TrainingPlanWeek | undefined> {
+  const [row] = await db
+    .update(trainingPlanWeeks)
+    .set(patch)
+    .where(eq(trainingPlanWeeks.id, id))
+    .returning();
+  return row;
+}
+
+// ============================================================
+// Training Plan Sessions
+//
+// Konvention: "primary" Sessions sind die, wo alternativeOfId NULL ist.
+// "alternatives" hängen mit alternativeOfId an einer primary Session.
+// ============================================================
+
+// Alle primary Sessions eines Plans, chronologisch.
+export async function getSessionsForPlan(
+  planId: number,
+): Promise<TrainingPlanSession[]> {
+  return db
+    .select()
+    .from(trainingPlanSessions)
+    .where(
+      and(
+        eq(trainingPlanSessions.planId, planId),
+        isNull(trainingPlanSessions.alternativeOfId),
+      ),
+    )
+    .orderBy(asc(trainingPlanSessions.date), asc(trainingPlanSessions.dayOrder))
+    .all();
+}
+
+// Sessions einer einzelnen Woche (primary only).
+export async function getPlanSessionsForWeek(
+  weekId: number,
+): Promise<TrainingPlanSession[]> {
+  return db
+    .select()
+    .from(trainingPlanSessions)
+    .where(
+      and(
+        eq(trainingPlanSessions.weekId, weekId),
+        isNull(trainingPlanSessions.alternativeOfId),
+      ),
+    )
+    .orderBy(asc(trainingPlanSessions.date), asc(trainingPlanSessions.dayOrder))
+    .all();
+}
+
+// Für den Kalender: Sessions in einem Datumsbereich (primary only).
+export async function getPlanSessionsForDateRange(
+  planId: number,
+  fromIso: string,
+  toIso: string,
+): Promise<TrainingPlanSession[]> {
+  return db
+    .select()
+    .from(trainingPlanSessions)
+    .where(
+      and(
+        eq(trainingPlanSessions.planId, planId),
+        gte(trainingPlanSessions.date, fromIso),
+        lte(trainingPlanSessions.date, toIso),
+        isNull(trainingPlanSessions.alternativeOfId),
+      ),
+    )
+    .orderBy(asc(trainingPlanSessions.date), asc(trainingPlanSessions.dayOrder))
+    .all();
+}
+
+export async function getPlanSessionById(
+  id: number,
+): Promise<TrainingPlanSession | undefined> {
+  return db
+    .select()
+    .from(trainingPlanSessions)
+    .where(eq(trainingPlanSessions.id, id))
+    .get();
+}
+
+// Die anstehende nächste Session ab heute (für die "Nächste Session"-Card).
+// Nur primary Sessions; nur status="planned".
+export async function getNextPlanSession(
+  planId: number,
+  todayIso: string,
+): Promise<TrainingPlanSession | undefined> {
+  return db
+    .select()
+    .from(trainingPlanSessions)
+    .where(
+      and(
+        eq(trainingPlanSessions.planId, planId),
+        gte(trainingPlanSessions.date, todayIso),
+        eq(trainingPlanSessions.status, "planned"),
+        isNull(trainingPlanSessions.alternativeOfId),
+      ),
+    )
+    .orderBy(asc(trainingPlanSessions.date), asc(trainingPlanSessions.dayOrder))
+    .get();
+}
+
+// Alle Alternativen ("Option 2") einer Primär-Session.
+export async function getAlternativesForPlanSession(
+  primarySessionId: number,
+): Promise<TrainingPlanSession[]> {
+  return db
+    .select()
+    .from(trainingPlanSessions)
+    .where(eq(trainingPlanSessions.alternativeOfId, primarySessionId))
+    .orderBy(asc(trainingPlanSessions.id))
+    .all();
+}
+
+export async function createPlanSession(
+  input: NewTrainingPlanSession,
+): Promise<TrainingPlanSession> {
+  const [row] = await db.insert(trainingPlanSessions).values(input).returning();
+  return row;
+}
+
+export async function updatePlanSession(
+  id: number,
+  patch: Partial<NewTrainingPlanSession>,
+): Promise<TrainingPlanSession | undefined> {
+  const [row] = await db
+    .update(trainingPlanSessions)
+    .set({ ...patch, updatedAt: sql`(CURRENT_TIMESTAMP)` })
+    .where(eq(trainingPlanSessions.id, id))
+    .returning();
+  return row;
+}
+
+// Für Drag-and-Drop im Kalender: nur Datum/dayOrder ändern.
+export async function updatePlanSessionDate(
+  id: number,
+  newDate: string,
+  dayOrder = 1,
+): Promise<TrainingPlanSession | undefined> {
+  return updatePlanSession(id, { date: newDate, dayOrder });
+}
+
+export async function setPlanSessionAiLocked(
+  id: number,
+  aiLocked: boolean,
+): Promise<TrainingPlanSession | undefined> {
+  return updatePlanSession(id, { aiLocked });
+}
+
+// Verlinkt eine Plan-Session mit einem absolvierten Garmin-Lauf.
+// `status` wird auf "completed" gesetzt.
+export async function linkPlanSessionToRun(
+  id: number,
+  runSessionId: number,
+): Promise<TrainingPlanSession | undefined> {
+  return updatePlanSession(id, { runSessionId, status: "completed" });
+}
+
+export async function deletePlanSession(id: number): Promise<void> {
+  await db.delete(trainingPlanSessions).where(eq(trainingPlanSessions.id, id));
+}
+
+// ============================================================
+// Training Plan Blocks
+// ============================================================
+
+export async function getBlocksForPlanSession(
+  sessionId: number,
+): Promise<TrainingPlanBlock[]> {
+  return db
+    .select()
+    .from(trainingPlanBlocks)
+    .where(eq(trainingPlanBlocks.sessionId, sessionId))
+    .orderBy(asc(trainingPlanBlocks.blockOrder))
+    .all();
+}
+
+export async function createPlanBlock(
+  input: NewTrainingPlanBlock,
+): Promise<TrainingPlanBlock> {
+  const [row] = await db.insert(trainingPlanBlocks).values(input).returning();
+  return row;
+}
+
+// Atomic-Ersatz: alle Blocks einer Session löschen und neu setzen.
+// Wird genutzt, wenn die KI eine Session überarbeitet oder der Nutzer im
+// Edit-Dialog die Intervallstruktur ändert.
+export async function replacePlanBlocksForSession(
+  sessionId: number,
+  blocks: Omit<NewTrainingPlanBlock, "sessionId">[],
+): Promise<TrainingPlanBlock[]> {
+  await db
+    .delete(trainingPlanBlocks)
+    .where(eq(trainingPlanBlocks.sessionId, sessionId));
+  if (blocks.length === 0) return [];
+  return db
+    .insert(trainingPlanBlocks)
+    .values(blocks.map((b) => ({ ...b, sessionId })))
+    .returning();
+}
+
+export async function deletePlanBlock(id: number): Promise<void> {
+  await db.delete(trainingPlanBlocks).where(eq(trainingPlanBlocks.id, id));
 }
