@@ -92,7 +92,9 @@ Heißt: lokales `npm run dev` läuft gegen die lokale SQLite-Datei. Wenn man lok
 | `nutrition/page.tsx` | RSC | Nutrition-Chart + Korrelation mit Weight |
 | `endurance/page.tsx` | RSC | Endurance-Hauptseite: Kilometergrafik + RunCalendar + MetricsDashboard + TrainingsSection |
 | `endurance/[date]/page.tsx` | RSC | Lauf-Detail (Pace, HR, Höhenmeter, Training Effect) |
-| `endurance/recommendations/page.tsx` | RSC | Placeholder: empfohlene Trainings (Phase 4) |
+| `endurance/recommendations/page.tsx` | RSC | Phase 4 Übersicht — EmptyState mit "Plan anlegen"-CTA wenn kein Plan, sonst Plan-Summary-Card + Wochen-Grid (volles 4-Card-Layout folgt in Sprint 4). Nutzt `getCurrentTrainingPlan()` (draft+active). |
+| `endurance/recommendations/setup/page.tsx` | RSC | Plan-Setup-Formular: Race-Daten, Volumen, Pace-Zonen (auto/manuell), Drag-and-Drop-PDF-Upload. Submit ruft `createPlanFromSettings` (actions.ts). |
+| `endurance/recommendations/actions.ts` | Server Action | `createPlanFromSettings(prev, formData)` — validiert Form, extrahiert PDF-Text, archiviert vorhandenen aktiven Plan, schreibt training_plans + 16 Wochen-Slots, redirected zu /endurance/recommendations. |
 | `endurance/history/page.tsx` | RSC | Placeholder: historische Trainings-Liste |
 | `endurance/{longevity,performance}/{recommendations,history}/page.tsx` | RSC | Vier Sub-Placeholder (alt — verweist auf die unified Routes oben) |
 | `api/cron/sync/route.ts` | Route Handler | **GET** mit Bearer-Auth, führt 6 Syncs aus (sheets/strength/calories/runs/metrics/nutrition) |
@@ -106,7 +108,7 @@ Nach Modul gruppiert. **RSC** = Server Component, **CC** = Client Component (`"u
 - `weight/` — `WeightChart`/`Chart Section` (Recharts, CC), `WeightStats`, `WeightTable`, `WeightWeekMatrix`, `WeightDayList`, `WeightDayDetailDialog` (CC, nimmt jetzt `tag`-Prop), `WeightDetailView`, `WeightEntryForm` (CC), `PhaseEditDialog` (CC), `TagEditor` (CC, Tag-Übersicht + Edit-Dialog)
 - `hypertrophy/` — `Calendar`, `SessionLogger` (CC), `NewSessionDialog` (CC), `DeleteSessionButton` (CC), `OpenOrCreateSessionButton` (CC), `ExerciseProgressChart` (CC), `WorkoutCards` (RSC), `WorkoutOverviewChart`, `SiblingNavButtons`/`SiblingSwipe`
 - `hypertrophy/avatar/` — `MuscleAvatar` (SVG-Bodymap), `OverviewAvatarPanel`, `WorkoutAvatarPanel`, `MuscleExerciseList`, `anatomy-paths.ts` (SVG-Pfade)
-- `endurance/` — `KmGraphSection` (CC, Recharts AreaChart wöchentliches Volumen), `RunCalendar` (CC, Adaption des Hypertrophy-Kalenders mit Double-Day-Indikator), `MetricsDashboard` (CC, sieben klickbare Tiles mit Detail-Popovern: RHR, HRV, Sleep, Race-Predictions, Training Status, VO₂, Lactate Threshold), `TrainingsSection` (RSC, zwei Cards für Empfohlen/Historisch), `PerformanceDashboard` (legacy, nicht mehr benutzt — bei Cleanup entfernen)
+- `endurance/` — `KmGraphSection` (CC, Recharts AreaChart wöchentliches Volumen), `RunCalendar` (CC, Adaption des Hypertrophy-Kalenders mit Double-Day-Indikator), `MetricsDashboard` (CC, sieben klickbare Tiles mit Detail-Popovern: RHR, HRV, Sleep, Race-Predictions, Training Status, VO₂, Lactate Threshold), `TrainingsSection` (RSC, zwei Cards für Empfohlen/Historisch), `PlanSetupForm` (CC, Phase 4: Form mit Live-Pace-Berechnung, Pace-Zone-Auto-Ableitung mit Manual-Override, Drag-and-Drop-PDF-Upload), `PerformanceDashboard` (legacy, nicht mehr benutzt — bei Cleanup entfernen)
 - `nutrition/` — `NutritionChart` + `ChartSection`, `NutritionCorrelationView` (Streudiagramm Weight×Kalorien), `NutritionDayDetailDialog` (alle drei nehmen jetzt `tags`-Prop)
 - `ui/` — shadcn-Primitives: `button`, `card`, `dialog`, `input`, `label`, `popover`, `segmented-control`, `table`
 - `ComingSoon.tsx` — Placeholder
@@ -169,6 +171,8 @@ Nach Modul gruppiert. **RSC** = Server Component, **CC** = Client Component (`"u
 | `utils/weight-stats.ts` | Trend, Schwankung, Δ7d/Δ30d |
 | `hypertrophy/muscles.ts` | Muskelgruppen-Definitionen |
 | `hypertrophy/workouts.ts` | Template-Konfiguration (Cycle-Berechnung u.ä.) |
+| `endurance/plan.ts` | Phase 4: `derivePaceZones`, `computePlanWeeks` (16w rückwärts vom Race), Pace/Zeit-Formatter (`formatPace`, `parseHmsToSeconds`, `formatSecondsAsHms`). Phasen-Verteilung skaliert auf totalWeeks (Default 16: 4-base, 5-build, 3-peak, 3-taper, 1-race). |
+| `endurance/pdf-extract.ts` | Phase 4: `extractPdfText(file)` via `pdf-parse` v2 (`PDFParse`-Klasse). Server-only, dynamischer Import. |
 
 ### 4.6 Scripts (`scripts/`) — alle als `tsx` lokal, **nicht** in Vercel verfügbar
 
@@ -296,7 +300,7 @@ Alle Funktionen sind `async` und liefern `Promise<T>`. Wenn etwas fehlt, gehört
 - `upsertDailyMetrics(entry)` — Konflikt auf `date`
 
 **Endurance Phase 4 — Training Plans:**
-- Plans: `getAllTrainingPlans()`, `getTrainingPlanById(id)`, `getActiveTrainingPlan()`, `createTrainingPlan(input)`, `updateTrainingPlan(id, patch)`, `setTrainingPlanStatus(id, status)`, `deleteTrainingPlan(id)`
+- Plans: `getAllTrainingPlans()`, `getTrainingPlanById(id)`, `getActiveTrainingPlan()` (nur status=active), `getCurrentTrainingPlan()` (active **oder** draft — für UI), `createTrainingPlan(input)`, `updateTrainingPlan(id, patch)`, `setTrainingPlanStatus(id, status)`, `deleteTrainingPlan(id)`
 - Weeks: `getWeeksForPlan(planId)`, `getWeekByNumber(planId, n)`, `getWeekForDate(planId, date)`, `createPlanWeek(input)`, `updatePlanWeek(id, patch)`
 - Sessions: `getSessionsForPlan(planId)` (primary only), `getPlanSessionsForWeek(weekId)`, `getPlanSessionsForDateRange(planId, from, to)`, `getPlanSessionById(id)`, `getNextPlanSession(planId, todayIso)`, `getAlternativesForPlanSession(primaryId)`, `createPlanSession(input)`, `updatePlanSession(id, patch)`, `updatePlanSessionDate(id, newDate, dayOrder?)`, `setPlanSessionAiLocked(id, locked)`, `linkPlanSessionToRun(id, runSessionId)`, `deletePlanSession(id)`
 - Blocks: `getBlocksForPlanSession(sessionId)`, `createPlanBlock(input)`, `replacePlanBlocksForSession(sessionId, blocks[])` (atomarer Ersatz aller Blocks einer Session), `deletePlanBlock(id)`

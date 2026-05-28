@@ -995,13 +995,26 @@ export async function getTrainingPlanById(
 }
 
 // Aktuell aktiver Plan (jüngster mit status="active"). Wir gehen für den
-// User von einem aktiven Plan zur Zeit aus — die Card "Goal-Race-Plan" zeigt
-// genau diesen an.
+// User von einem aktiven Plan zur Zeit aus.
 export async function getActiveTrainingPlan(): Promise<TrainingPlan | undefined> {
   return db
     .select()
     .from(trainingPlans)
     .where(eq(trainingPlans.status, "active"))
+    .orderBy(desc(trainingPlans.createdAt))
+    .get();
+}
+
+// "Aktueller" Plan für die UI: liefert den jüngsten Plan mit status=draft
+// ODER active. Wird auf der Goal-Race-Plan-Card genutzt, damit der User seinen
+// frisch angelegten (noch Session-losen) Plan sieht, bevor S3 ihn aktiviert.
+export async function getCurrentTrainingPlan(): Promise<TrainingPlan | undefined> {
+  return db
+    .select()
+    .from(trainingPlans)
+    .where(
+      sql`${trainingPlans.status} = 'active' OR ${trainingPlans.status} = 'draft'`,
+    )
     .orderBy(desc(trainingPlans.createdAt))
     .get();
 }
