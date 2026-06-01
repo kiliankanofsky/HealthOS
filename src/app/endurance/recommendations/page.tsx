@@ -1,12 +1,20 @@
 import { ArrowRight, Calendar, Target } from "lucide-react";
 import Link from "next/link";
 
+import { PlanGeneratorButton } from "@/components/endurance/PlanGeneratorButton";
 import { AppShell } from "@/components/site/AppShell";
-import { getCurrentTrainingPlan, getWeeksForPlan } from "@/lib/db/queries";
+import {
+  getCurrentTrainingPlan,
+  getSessionsForPlan,
+  getWeeksForPlan,
+} from "@/lib/db/queries";
 import type { TrainingPlan } from "@/lib/db/schema";
 import { formatPace, formatSecondsAsHms } from "@/lib/endurance/plan";
 
 export const dynamic = "force-dynamic";
+// Server-Action `generatePlanSessions` ruft Claude in 4 Chunks auf — bis ~50s
+// pro Plan. Vercel-Hobby maxDuration auf 60s setzen.
+export const maxDuration = 60;
 
 export default async function EnduranceRecommendationsPage() {
   const plan = await getCurrentTrainingPlan();
@@ -54,7 +62,12 @@ function EmptyState() {
 }
 
 async function ActivePlanCard({ plan }: { plan: TrainingPlan }) {
-  const weeks = await getWeeksForPlan(plan.id);
+  const [weeks, sessions] = await Promise.all([
+    getWeeksForPlan(plan.id),
+    getSessionsForPlan(plan.id),
+  ]);
+  const isDraftWithoutSessions =
+    plan.status === "draft" && sessions.length === 0;
 
   const targetTime = formatSecondsAsHms(plan.targetTimeSeconds);
   const targetPace = formatPace(plan.targetPaceSecPerKm, { withUnit: true });
@@ -95,6 +108,12 @@ async function ActivePlanCard({ plan }: { plan: TrainingPlan }) {
         </div>
       </div>
 
+      {isDraftWithoutSessions && (
+        <div className="rounded-3xl bg-card p-6 ring-1 ring-black/5 shadow-sm lg:p-8">
+          <PlanGeneratorButton planId={plan.id} />
+        </div>
+      )}
+
       <div className="rounded-3xl bg-card p-6 ring-1 ring-black/5 shadow-sm lg:p-8">
         <div className="mb-4 flex items-center justify-between">
           <div>
@@ -102,7 +121,10 @@ async function ActivePlanCard({ plan }: { plan: TrainingPlan }) {
               Wochenstruktur
             </h3>
             <p className="mt-1 text-sm text-muted-foreground">
-              {weeks.length} Wochen angelegt — Sessions kommen in Sprint 3.
+              {weeks.length} Wochen angelegt ·{" "}
+              {sessions.length > 0
+                ? `${sessions.length} Sessions generiert`
+                : "Sessions noch nicht generiert"}
             </p>
           </div>
           <Calendar className="size-5 text-muted-foreground" />

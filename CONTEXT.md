@@ -301,9 +301,22 @@ Alle Funktionen sind `async` und liefern `Promise<T>`. Wenn etwas fehlt, gehört
 
 **Endurance Phase 4 — Training Plans:**
 - Plans: `getAllTrainingPlans()`, `getTrainingPlanById(id)`, `getActiveTrainingPlan()` (nur status=active), `getCurrentTrainingPlan()` (active **oder** draft — für UI), `createTrainingPlan(input)`, `updateTrainingPlan(id, patch)`, `setTrainingPlanStatus(id, status)`, `deleteTrainingPlan(id)`
-- Weeks: `getWeeksForPlan(planId)`, `getWeekByNumber(planId, n)`, `getWeekForDate(planId, date)`, `createPlanWeek(input)`, `updatePlanWeek(id, patch)`
-- Sessions: `getSessionsForPlan(planId)` (primary only), `getPlanSessionsForWeek(weekId)`, `getPlanSessionsForDateRange(planId, from, to)`, `getPlanSessionById(id)`, `getNextPlanSession(planId, todayIso)`, `getAlternativesForPlanSession(primaryId)`, `createPlanSession(input)`, `updatePlanSession(id, patch)`, `updatePlanSessionDate(id, newDate, dayOrder?)`, `setPlanSessionAiLocked(id, locked)`, `linkPlanSessionToRun(id, runSessionId)`, `deletePlanSession(id)`
-- Blocks: `getBlocksForPlanSession(sessionId)`, `createPlanBlock(input)`, `replacePlanBlocksForSession(sessionId, blocks[])` (atomarer Ersatz aller Blocks einer Session), `deletePlanBlock(id)`
+- Weeks: `getWeeksForPlan(planId)`, `getWeekByNumber(planId, n)`, `getWeekForDate(planId, date)`, `createPlanWeek(input)`, `insertPlanWeeks(weeks[])` (Bulk-Insert), `updatePlanWeek(id, patch)`
+- Sessions: `getSessionsForPlan(planId)` (primary only), `getPlanSessionsForWeek(weekId)`, `getPlanSessionsForDateRange(planId, from, to)`, `getPlanSessionById(id)`, `getNextPlanSession(planId, todayIso)`, `getAlternativesForPlanSession(primaryId)`, `createPlanSession(input)`, `insertPlanSessions(sessions[])` (Bulk für KI-Generierung), `updatePlanSession(id, patch)`, `updatePlanSessionDate(id, newDate, dayOrder?)`, `setPlanSessionAiLocked(id, locked)`, `linkPlanSessionToRun(id, runSessionId)`, `deletePlanSession(id)`
+- Blocks: `getBlocksForPlanSession(sessionId)`, `createPlanBlock(input)`, `insertPlanBlocks(blocks[])` (Bulk), `replacePlanBlocksForSession(sessionId, blocks[])` (atomarer Ersatz aller Blocks einer Session), `deletePlanBlock(id)`
+
+### Endurance Phase 4 — KI-Plan-Generierung (Sprint 3)
+
+- `src/lib/endurance/ai-schema.ts` — Tool-Use-Schema `CREATE_TRAINING_CHUNK_TOOL` (Anthropic.Tool) + TS-Typen `AiSession`/`AiSessionBlock`/`AiChunkOutput`
+- `src/lib/endurance/ai-prompts.ts` — `SYSTEM_METHODOLOGY` (stabiler System-Prompt) + `buildPlanContextBlock(plan)` (Plan-Settings + Pace-Zonen + Referenz-PDF, **cached** via cache_control) + `buildChunkUserMessage(weeks, ctx)`
+- `src/lib/endurance/ai-generator.ts` — `generateChunk(plan, weeks, model)`: Claude-Call mit `tool_choice: {type: "tool"}` (forciert strukturierten Output), Modell-Switching `sonnet` (`claude-sonnet-4-6`) ↔ `opus` (`claude-opus-4-8`). `chunkWeeks(weeks)` schneidet in 4er-Päckchen. **Wichtig:** `thinking` ist mit forced tool-use inkompatibel → wird nicht gesetzt.
+- Server Action `generatePlanSessions(planId, options?)` in `src/app/endurance/recommendations/actions.ts` — orchestriert: validiert draft+leer → für jeden Chunk Claude-Call → Bulk-Insert primary Sessions + Blocks + Alternativen → Status auf `active`. **maxDuration=60 lebt auf der page.tsx** (nicht im "use server"-File, da nur async Exports erlaubt).
+- UI-Trigger: `src/components/endurance/PlanGeneratorButton.tsx` (Client) mit Modell-Wahl, Pending-State, Result-Box. Sichtbar wenn `status=draft && sessions.length === 0`.
+
+**Bekannte Limits Sprint 3:**
+- **Vercel 60s Action-Timeout vs. ~3-4min Gesamtzeit für 16 Wochen / 4 Chunks** → lokal OK, Production-Deploy braucht client-orchestriertes Chunking (mehrere Action-Calls). TODO vor Production-Deploy.
+- **`dayOfWeek=0` von KI nicht abgefangen** → kann zu Session-Datum 1 Tag vor Plan-Start führen. Bisher nur lokal beobachtet (1 von 121 Sessions). Server-Validierung in Sprint 4 (Edit-Session-Logik) nachrüsten.
+- **Migration 0013 muss vor S3-Production-Deploy auch gegen Turso laufen** (`USE_TURSO=1 npm run db:migrate`).
 
 ## 6. Dev-Workflow
 

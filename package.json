@@ -22,6 +22,7 @@
     "db:sync:garmin-metrics": "tsx scripts/sync-garmin-metrics.ts"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.100.1",
     "@base-ui/react": "^1.4.1",
     "@gooin/garmin-connect": "^1.7.6",
     "@libsql/client": "^0.17.3",

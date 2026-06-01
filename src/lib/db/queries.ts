@@ -1237,6 +1237,15 @@ export async function createPlanSession(
   return row;
 }
 
+// Bulk-Insert für die KI-Plan-Generierung in Sprint 3 — eine Query für alle
+// primary Sessions eines Chunks (statt N Round-Trips, wichtig für Turso-Latenz).
+export async function insertPlanSessions(
+  sessions: NewTrainingPlanSession[],
+): Promise<TrainingPlanSession[]> {
+  if (sessions.length === 0) return [];
+  return db.insert(trainingPlanSessions).values(sessions).returning().all();
+}
+
 export async function updatePlanSession(
   id: number,
   patch: Partial<NewTrainingPlanSession>,
@@ -1298,6 +1307,14 @@ export async function createPlanBlock(
 ): Promise<TrainingPlanBlock> {
   const [row] = await db.insert(trainingPlanBlocks).values(input).returning();
   return row;
+}
+
+// Bulk-Insert für Blocks (analog insertPlanSessions).
+export async function insertPlanBlocks(
+  blocks: NewTrainingPlanBlock[],
+): Promise<TrainingPlanBlock[]> {
+  if (blocks.length === 0) return [];
+  return db.insert(trainingPlanBlocks).values(blocks).returning().all();
 }
 
 // Atomic-Ersatz: alle Blocks einer Session löschen und neu setzen.
