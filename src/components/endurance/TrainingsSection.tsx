@@ -2,6 +2,7 @@ import { ArrowRight, Footprints, Target } from "lucide-react";
 import Link from "next/link";
 
 import type { RunSession } from "@/lib/db/schema";
+import { formatPace } from "@/lib/endurance/plan";
 
 type Props = {
   latestRun: RunSession | undefined;
@@ -174,9 +175,3 @@ function formatDe(iso: string): string {
   return d.toLocaleDateString("de-DE", { day: "2-digit", month: "short" });
 }
 
-function formatPace(secPerKm: number | null): string {
-  if (secPerKm === null) return "—";
-  const m = Math.floor(secPerKm / 60);
-  const s = Math.round(secPerKm % 60);
-  return `${m}:${String(s).padStart(2, "0")}`;
-}

@@ -3,9 +3,9 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import {
-  createPlanWeek,
   createTrainingPlan,
   getActiveTrainingPlan,
+  insertPlanWeeks,
   setTrainingPlanStatus,
 } from "@/lib/db/queries";
 import {
@@ -18,7 +18,9 @@ import { extractPdfText } from "@/lib/endurance/pdf-extract";
 
 const DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
 // Cap, damit kein riesiges PDF die DB sprengt. ~500k Zeichen ≈ 100+ Seiten Text,
-// genug für Marathon-Pläne mit Begleittext.
+// genug für Marathon-Pläne mit Begleittext. Bei Überschreitung wird die
+// Action mit Fehler abgelehnt (statt silent zu truncaten) — Nutzer muss das
+// PDF kürzen oder nur den relevanten Teil hochladen.
 const PDF_TEXT_MAX_CHARS = 500_000;
 
 export type CreatePlanState = {
@@ -96,6 +98,20 @@ export async function createPlanFromSettings(
   // Pace-Zonen: aus Form lesen, sonst auto-derived.
   const paceZones = readPaceZonesFromForm(formData) ?? derivePaceZones(targetPaceSecPerKm);
 
+  // Sanity-Check: pro Zone muss minSec ≤ maxSec sein. Auto-derived ist immer
+  // korrekt; nur bei manuell überschriebenen Werten kann das schiefgehen.
+  const zoneLabels = ["Z1", "Z2", "Z3", "Z4", "Z5"] as const;
+  for (let i = 0; i < zoneLabels.length; i++) {
+    const key = `z${i + 1}` as keyof PaceZones;
+    const z = paceZones[key];
+    if (z.minSec > z.maxSec) {
+      return {
+        ok: false,
+        error: `${zoneLabels[i]}: schnellere Pace (Min) muss ≤ langsamere Pace (Max) sein.`,
+      };
+    }
+  }
+
   // ---- Wochen vorab berechnen (Race-Datum rückwärts) ----
   let computed: ReturnType<typeof computePlanWeeks>;
   try {
@@ -111,8 +127,15 @@ export async function createPlanFromSettings(
   if (pdfFile instanceof File && pdfFile.size > 0) {
     try {
       const text = await extractPdfText(pdfFile);
-      referencePdfText =
-        text.length > PDF_TEXT_MAX_CHARS ? text.slice(0, PDF_TEXT_MAX_CHARS) : text;
+      if (text.length > PDF_TEXT_MAX_CHARS) {
+        // Hartes Reject statt silent truncate — sonst weiß die KI in S3 nicht,
+        // dass ihr Kontext beschnitten wurde.
+        return {
+          ok: false,
+          error: `PDF-Text ist ${text.length.toLocaleString("de-DE")} Zeichen — Limit ist ${PDF_TEXT_MAX_CHARS.toLocaleString("de-DE")}. Bitte kürze das PDF oder lade nur den relevanten Teil hoch.`,
+        };
+      }
+      referencePdfText = text;
       referencePdfName = pdfFile.name;
     } catch (e) {
       return { ok: false, error: `PDF konnte nicht gelesen werden: ${(e as Error).message}` };
@@ -144,15 +167,15 @@ export async function createPlanFromSettings(
     referencePdfName,
   });
 
-  for (const w of computed.weeks) {
-    await createPlanWeek({
+  await insertPlanWeeks(
+    computed.weeks.map((w) => ({
       planId: plan.id,
       weekNumber: w.weekNumber,
       startDate: w.startDate,
       endDate: w.endDate,
       phase: w.phase,
-    });
-  }
+    })),
+  );
 
   revalidatePath("/endurance/recommendations");
   revalidatePath("/endurance");

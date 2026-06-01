@@ -1,4 +1,5 @@
 import type { TrainingPlanPhase } from "@/lib/db/schema";
+import { toLocalISODate } from "@/lib/utils/date";
 
 // ============================================================
 // Pace-Zonen aus dem Marathon-Ziel-Pace ableiten.
@@ -35,11 +36,18 @@ export function derivePaceZones(targetPaceSecPerKm: number): PaceZones {
   };
 }
 
-// Wandelt Sekunden pro Kilometer in "m:ss/km" für die Anzeige.
-export function formatPace(secPerKm: number): string {
-  const minutes = Math.floor(secPerKm / 60);
-  const seconds = Math.round(secPerKm % 60);
-  return `${minutes}:${String(seconds).padStart(2, "0")}/km`;
+// Wandelt Sekunden pro Kilometer in "m:ss" (oder "m:ss/km" mit withUnit).
+// Akzeptiert null/undefined und liefert dann "—" — die Endurance-Stats werden
+// oft aus optionalen Daten gefüttert (Garmin-Felder können null sein).
+export function formatPace(
+  secPerKm: number | null | undefined,
+  options: { withUnit?: boolean } = {},
+): string {
+  if (secPerKm == null) return "—";
+  const m = Math.floor(secPerKm / 60);
+  const s = Math.round(secPerKm % 60);
+  const base = `${m}:${String(s).padStart(2, "0")}`;
+  return options.withUnit ? `${base}/km` : base;
 }
 
 // "hh:mm:ss" oder "h:mm:ss" → Sekunden. Wirft bei ungültigem Format.
@@ -59,7 +67,10 @@ export function parseHmsToSeconds(input: string): number {
   throw new Error("Zeit muss als h:mm:ss oder m:ss vorliegen.");
 }
 
-export function formatSecondsAsHms(totalSec: number): string {
+// Sekunden → "h:mm:ss" (oder "m:ss" wenn unter einer Stunde).
+// Akzeptiert null/undefined → "—" (gleiche Begründung wie formatPace).
+export function formatSecondsAsHms(totalSec: number | null | undefined): string {
+  if (totalSec == null) return "—";
   const h = Math.floor(totalSec / 3600);
   const m = Math.floor((totalSec % 3600) / 60);
   const s = Math.round(totalSec % 60);
@@ -89,10 +100,6 @@ export type PlanWeekSlot = {
   endDate: string; // ISO YYYY-MM-DD, Sonntag
   phase: TrainingPlanPhase;
 };
-
-function isoDate(d: Date): string {
-  return d.toISOString().slice(0, 10);
-}
 
 // Verschiebt ein Datum so, dass es auf den Montag derselben (ISO-)Woche zeigt.
 function mondayOf(date: Date): Date {
@@ -141,8 +148,8 @@ export function computePlanWeeks(
     sunday.setDate(monday.getDate() + 6);
     weeks.push({
       weekNumber: n,
-      startDate: isoDate(monday),
-      endDate: isoDate(sunday),
+      startDate: toLocalISODate(monday),
+      endDate: toLocalISODate(sunday),
       phase: phaseForWeek(n, totalWeeks),
     });
   }

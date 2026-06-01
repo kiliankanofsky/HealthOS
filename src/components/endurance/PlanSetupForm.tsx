@@ -19,6 +19,13 @@ import {
 
 const DEFAULT_TOTAL_WEEKS = 16;
 const DEFAULT_DISTANCE = 42.195;
+const ZONE_LABELS = [
+  "Z1 Recovery",
+  "Z2 Endurance",
+  "Z3 Marathon",
+  "Z4 Threshold",
+  "Z5 VO2 Max",
+] as const;
 
 export function PlanSetupForm() {
   const [state, action] = useActionState<CreatePlanState | undefined, FormData>(
@@ -48,6 +55,11 @@ export function PlanSetupForm() {
     () => (targetPaceSec ? derivePaceZones(targetPaceSec) : null),
     [targetPaceSec],
   );
+
+  function handleDragOver(e: React.DragEvent<HTMLLabelElement>) {
+    e.preventDefault();
+    setDragActive(true);
+  }
 
   function onDrop(e: React.DragEvent<HTMLLabelElement>) {
     e.preventDefault();
@@ -131,7 +143,7 @@ export function PlanSetupForm() {
               <p className="text-xs text-muted-foreground">
                 Ergibt Ziel-Pace{" "}
                 <span className="font-medium text-foreground">
-                  {formatPace(targetPaceSec)}
+                  {formatPace(targetPaceSec, { withUnit: true })}
                 </span>
               </p>
             )}
@@ -204,10 +216,9 @@ export function PlanSetupForm() {
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-5">
           {(["z1", "z2", "z3", "z4", "z5"] as const).map((zKey, idx) => {
             const z = zones?.[zKey];
-            const labels = ["Z1 Recovery", "Z2 Endurance", "Z3 Marathon", "Z4 Threshold", "Z5 VO2 Max"];
             return (
               <div key={zKey} className="space-y-2 rounded-xl bg-muted/40 p-3">
-                <p className="text-xs font-medium text-foreground">{labels[idx]}</p>
+                <p className="text-xs font-medium text-foreground">{ZONE_LABELS[idx]}</p>
                 {manualZones ? (
                   <>
                     <Input
@@ -229,7 +240,9 @@ export function PlanSetupForm() {
                   </>
                 ) : (
                   <p className="text-sm text-foreground">
-                    {z ? `${formatPace(z.minSec)} – ${formatPace(z.maxSec)}` : "—"}
+                    {z
+                      ? `${formatPace(z.minSec)} – ${formatPace(z.maxSec, { withUnit: true })}`
+                      : "—"}
                   </p>
                 )}
               </div>
@@ -249,14 +262,8 @@ export function PlanSetupForm() {
         </p>
         <label
           htmlFor="pdf-input"
-          onDragEnter={(e) => {
-            e.preventDefault();
-            setDragActive(true);
-          }}
-          onDragOver={(e) => {
-            e.preventDefault();
-            setDragActive(true);
-          }}
+          onDragEnter={handleDragOver}
+          onDragOver={handleDragOver}
           onDragLeave={() => setDragActive(false)}
           onDrop={onDrop}
           className={`flex cursor-pointer flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed p-8 transition ${

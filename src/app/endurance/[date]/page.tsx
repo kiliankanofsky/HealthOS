@@ -5,6 +5,7 @@ import { notFound } from "next/navigation";
 import { AppShell } from "@/components/site/AppShell";
 import { getRunSessionsForDate } from "@/lib/db/queries";
 import type { RunSession } from "@/lib/db/schema";
+import { formatPace, formatSecondsAsHms } from "@/lib/endurance/plan";
 
 export const dynamic = "force-dynamic";
 
@@ -70,7 +71,7 @@ function RunCard({ run }: { run: RunSession }) {
       </div>
 
       <dl className="mt-6 grid grid-cols-2 gap-x-6 gap-y-4 sm:grid-cols-3">
-        <Stat label="Zeit" value={formatDuration(run.durationSeconds)} />
+        <Stat label="Zeit" value={formatSecondsAsHms(run.durationSeconds)} />
         <Stat
           label="Pace"
           value={formatPace(run.avgPaceSecPerKm)}
@@ -174,19 +175,3 @@ function formatActivityType(t: string): string {
   return map[t] ?? t;
 }
 
-function formatDuration(totalSeconds: number): string {
-  const h = Math.floor(totalSeconds / 3600);
-  const m = Math.floor((totalSeconds % 3600) / 60);
-  const s = Math.round(totalSeconds % 60);
-  if (h > 0) {
-    return `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
-  }
-  return `${m}:${String(s).padStart(2, "0")}`;
-}
-
-function formatPace(secPerKm: number | null): string {
-  if (secPerKm === null) return "—";
-  const m = Math.floor(secPerKm / 60);
-  const s = Math.round(secPerKm % 60);
-  return `${m}:${String(s).padStart(2, "0")}`;
-}

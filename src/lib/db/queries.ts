@@ -1104,6 +1104,15 @@ export async function createPlanWeek(
   return row;
 }
 
+// Bulk-Insert für die initiale Plan-Generierung (16 Wochen in einer Query
+// statt 16 sequenzieller Round-Trips — sparen ~1–3s Action-Laufzeit).
+export async function insertPlanWeeks(
+  weeks: NewTrainingPlanWeek[],
+): Promise<TrainingPlanWeek[]> {
+  if (weeks.length === 0) return [];
+  return db.insert(trainingPlanWeeks).values(weeks).returning().all();
+}
+
 export async function updatePlanWeek(
   id: number,
   patch: Partial<NewTrainingPlanWeek>,

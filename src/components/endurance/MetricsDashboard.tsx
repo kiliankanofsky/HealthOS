@@ -31,6 +31,7 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import type { GarminDailyMetrics } from "@/lib/db/schema";
+import { formatPace, formatSecondsAsHms } from "@/lib/endurance/plan";
 import { cn } from "@/lib/utils";
 
 type Props = {
@@ -756,7 +757,7 @@ function RacePredictionTile({
 
   // Preview = die kürzeste Distanz mit Wert, sonst "—".
   const preview = rows.find((r) => r.sec !== null);
-  const previewValue = preview?.sec ? formatDuration(preview.sec) : "—";
+  const previewValue = formatSecondsAsHms(preview?.sec);
 
   return (
     <MetricTile
@@ -777,7 +778,7 @@ function RacePredictionTile({
           >
             <p className="text-[11px] text-muted-foreground">{r.label}</p>
             <p className="mt-0.5 font-heading text-lg font-semibold tabular-nums">
-              {r.sec !== null ? formatDuration(r.sec) : "—"}
+              {formatSecondsAsHms(r.sec)}
             </p>
           </div>
         ))}
@@ -1130,22 +1131,8 @@ function formatDeLong(iso: string): string {
   });
 }
 
-function formatDuration(totalSeconds: number): string {
-  const h = Math.floor(totalSeconds / 3600);
-  const m = Math.floor((totalSeconds % 3600) / 60);
-  const s = Math.round(totalSeconds % 60);
-  if (h > 0)
-    return `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
-  return `${m}:${String(s).padStart(2, "0")}`;
-}
-
-function formatPace(secPerKm: number | null): string {
-  if (secPerKm === null) return "—";
-  const m = Math.floor(secPerKm / 60);
-  const s = Math.round(secPerKm % 60);
-  return `${m}:${String(s).padStart(2, "0")}`;
-}
-
+// formatPace/formatSecondsAsHms leben jetzt in @/lib/endurance/plan (Reuse-Dedup).
+// formatHm bleibt lokal — andere Signatur ("h MMm" statt "h:mm:ss").
 function formatHm(sec: number): string {
   const h = Math.floor(sec / 3600);
   const m = Math.round((sec % 3600) / 60);

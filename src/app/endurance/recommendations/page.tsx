@@ -56,12 +56,8 @@ function EmptyState() {
 async function ActivePlanCard({ plan }: { plan: TrainingPlan }) {
   const weeks = await getWeeksForPlan(plan.id);
 
-  const targetTime = plan.targetTimeSeconds
-    ? formatSecondsAsHms(plan.targetTimeSeconds)
-    : "—";
-  const targetPace = plan.targetPaceSecPerKm
-    ? formatPace(plan.targetPaceSecPerKm)
-    : "—";
+  const targetTime = formatSecondsAsHms(plan.targetTimeSeconds);
+  const targetPace = formatPace(plan.targetPaceSecPerKm, { withUnit: true });
 
   return (
     <section className="space-y-6">
@@ -75,9 +71,7 @@ async function ActivePlanCard({ plan }: { plan: TrainingPlan }) {
               {plan.name}
             </h2>
           </div>
-          <span className="rounded-full bg-muted px-3 py-1 text-xs font-medium uppercase tracking-wider">
-            {plan.status}
-          </span>
+          <StatusBadge status={plan.status} />
         </div>
 
         <div className="mt-6 grid grid-cols-2 gap-4 sm:grid-cols-4">
@@ -145,6 +139,24 @@ async function ActivePlanCard({ plan }: { plan: TrainingPlan }) {
         </Link>
       </p>
     </section>
+  );
+}
+
+// Visuell unterscheiden, damit User auf einen Blick sieht, ob der Plan
+// schon "live" ist (active) oder noch in Bearbeitung (draft).
+function StatusBadge({ status }: { status: TrainingPlan["status"] }) {
+  const tone: Record<TrainingPlan["status"], string> = {
+    draft: "bg-amber-100 text-amber-900",
+    active: "bg-emerald-100 text-emerald-900",
+    completed: "bg-sky-100 text-sky-900",
+    archived: "bg-muted text-muted-foreground",
+  };
+  return (
+    <span
+      className={`rounded-full px-3 py-1 text-xs font-medium uppercase tracking-wider ${tone[status]}`}
+    >
+      {status}
+    </span>
   );
 }
 
