@@ -26,11 +26,14 @@ const MODEL_IDS: Record<AiModel, string> = {
 // ============================================================
 // Chunking
 // ============================================================
-// Vercel-Constraint: 60s Action-Timeout. Pro Chunk ~4 Wochen ≈ 24 Sessions
-// ≈ 5-15s Claude-Call (je nach Modell + Caching). 4 Chunks à 4 Wochen für
-// einen 16-Wochen-Plan passen sequenziell in ein 60s-Fenster, wenn
-// Prompt-Caching greift.
-const WEEKS_PER_CHUNK = 4;
+// Vercel-Hobby-Constraint: 60s pro Server-Action. Mit Referenz-PDF (~20k
+// Zeichen Kontext) braucht ein 4-Wochen-Chunk mit ~24 Sessions ~60s. Zu
+// nah am Limit (Production-Test 2026-06-02: timeout bei 60125ms).
+//
+// Deshalb 2 Wochen pro Chunk → ~12 Sessions/Call → ~25-30s. Sicher unter
+// dem Limit auch bei Cold-Start + warmer PDF-Cache fängt das ab Chunk 2 ab.
+// Trade-off: 8 statt 4 Chunks (~4 statt ~3 Min total), aber funktioniert.
+const WEEKS_PER_CHUNK = 2;
 
 export function chunkWeeks(
   weeks: TrainingPlanWeek[],

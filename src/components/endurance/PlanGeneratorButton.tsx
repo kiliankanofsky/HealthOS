@@ -107,8 +107,9 @@ export function PlanGeneratorButton({
             Plan mit KI generieren
           </h3>
           <p className="text-sm text-muted-foreground">
-            Claude generiert die Sessions in 4 Chunks à 4 Wochen — jeder Chunk
-            ist ein separater API-Call (Vercel-60s-Limit). Insgesamt ca. 2–4 Min.
+            Claude generiert die Sessions in Chunks à 2 Wochen — jeder Chunk ist
+            ein separater API-Call (wegen Vercel-60s-Limit). Insgesamt ca. 3–5
+            Min, je nach Modell und PDF-Größe.
           </p>
         </div>
       </div>
