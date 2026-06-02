@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import {
   createTrainingPlan,
+  deleteAllPlanSessionsForPlan,
   getSessionsForPlan,
   getTrainingPlanById,
   getActiveTrainingPlan,
@@ -206,17 +207,31 @@ export async function createPlanFromSettings(
 }
 
 // ============================================================
-// KI-Plan-Generierung (Sprint 3)
+// KI-Plan-Generierung (Sprint 3 + Production-Fix)
 // ============================================================
+// Vercel-Hobby hat 60s Action-Timeout. Ein Sonnet-Call mit ~24 Sessions
+// braucht 30-60s — gefährlich nah am Limit, das Cumulative-Risiko über 4
+// sequenzielle Chunks ist garantiert >60s.
+//
+// Deshalb: Action macht EINEN Chunk pro Call. Der Client (PlanGeneratorButton)
+// ruft sie sequenziell auf — jeder einzelne Call bleibt unter 60s.
+//
+// Die Action ist idempotent pro Chunk: wenn der Chunk schon Sessions hat,
+// wird er nicht doppelt generiert (sondern abgelehnt).
 
-export type GeneratePlanState = {
+export type GenerateChunkState = {
   ok: boolean;
   error?: string;
+  // Immer gesetzt (auch bei Fehler ab Validation), damit der Client die
+  // Schleife korrekt steuern kann.
+  totalChunks?: number;
+  chunkIndex?: number;
+  isLast?: boolean;
+  // Stats, nur bei ok=true.
   generated?: {
     sessions: number;
     alternatives: number;
-    chunks: number;
-    totalCacheReadTokens: number;
+    cacheReadTokens: number;
   };
 };
 
@@ -261,8 +276,9 @@ function dateForDayOfWeek(weekStartIso: string, dayOfWeek: number): string {
 
 export async function generatePlanSessions(
   planId: number,
-  options: { model?: AiModel } = {},
-): Promise<GeneratePlanState> {
+  options: { model?: AiModel; chunkIndex: number },
+): Promise<GenerateChunkState> {
+  // ---- Plan + Wochen laden, validieren ----
   const plan = await getTrainingPlanById(planId);
   if (!plan) return { ok: false, error: "Plan nicht gefunden." };
   if (plan.status !== "draft") {
@@ -271,82 +287,143 @@ export async function generatePlanSessions(
       error: `Plan-Status ist "${plan.status}". KI-Generierung läuft nur auf draft.`,
     };
   }
-
-  const existing = await getSessionsForPlan(planId);
-  if (existing.length > 0) {
-    return {
-      ok: false,
-      error: `Plan hat bereits ${existing.length} Sessions. Erst löschen oder neuen Plan anlegen.`,
-    };
-  }
-
   const weeks = await getWeeksForPlan(planId);
   if (weeks.length === 0) {
     return { ok: false, error: "Plan hat keine Wochen — Setup nicht abgeschlossen." };
   }
 
-  const model = options.model ?? "sonnet";
+  // ---- Chunks deterministisch berechnen ----
   const chunks = chunkWeeks(weeks);
+  const ci = options.chunkIndex;
+  if (ci < 0 || ci >= chunks.length) {
+    return {
+      ok: false,
+      error: `chunkIndex ${ci} ist außerhalb des erlaubten Bereichs (0..${chunks.length - 1}).`,
+      totalChunks: chunks.length,
+    };
+  }
+  const chunkWeeksData = chunks[ci];
+  const chunkWeekIds = new Set(chunkWeeksData.map((w) => w.id));
+  const isLast = ci === chunks.length - 1;
 
-  let totalSessions = 0;
-  let totalAlternatives = 0;
-  let totalCacheRead = 0;
+  // ---- Idempotenz: schon Sessions für DIESEN Chunk vorhanden? Skip & next. ----
+  const existingSessions = await getSessionsForPlan(planId);
+  const sessionsInThisChunk = existingSessions.filter((s) =>
+    chunkWeekIds.has(s.weekId),
+  );
+  if (sessionsInThisChunk.length > 0) {
+    // Wenn DIES der letzte Chunk war und er schon Sessions hat → Plan ist
+    // de facto fertig, aber wir wurden mit altem Status aufgerufen.
+    if (isLast && plan.status === "draft") {
+      await setTrainingPlanStatus(plan.id, "active");
+    }
+    return {
+      ok: true,
+      totalChunks: chunks.length,
+      chunkIndex: ci,
+      isLast,
+      generated: {
+        sessions: 0, // 0 = nichts neu generiert, war schon da
+        alternatives: 0,
+        cacheReadTokens: 0,
+      },
+    };
+  }
 
-  // Pro Chunk: KI-Call → DB-Inserts. Sequenziell, damit Prompt-Caching greift
-  // (zweiter und folgende Calls lesen den PDF-Block aus dem Cache).
-  for (const chunk of chunks) {
-    let result;
-    try {
-      result = await generateChunk(plan, chunk, model);
-    } catch (e) {
+  const model = options.model ?? "sonnet";
+
+  // ---- Claude-Call für genau diesen Chunk ----
+  let result;
+  try {
+    result = await generateChunk(plan, chunkWeeksData, model);
+  } catch (e) {
+    return {
+      ok: false,
+      error: `KI-Call fehlgeschlagen (Chunk ${ci + 1}/${chunks.length}, Wochen ${chunkWeeksData[0].weekNumber}-${chunkWeeksData[chunkWeeksData.length - 1].weekNumber}): ${(e as Error).message}`,
+      totalChunks: chunks.length,
+      chunkIndex: ci,
+    };
+  }
+
+  // ---- DB-Mapping: primary Sessions sammeln ----
+  const primaryRows: NewTrainingPlanSession[] = [];
+  type PendingMap = { aiSession: AiSession; weekId: number };
+  const pending: PendingMap[] = [];
+
+  for (const aiWeek of result.output.weeks) {
+    const dbWeek = weeks.find((w) => w.weekNumber === aiWeek.weekNumber);
+    if (!dbWeek) {
       return {
         ok: false,
-        error: `KI-Call fehlgeschlagen (Chunk Wochen ${chunk[0].weekNumber}-${chunk[chunk.length - 1].weekNumber}): ${(e as Error).message}`,
+        error: `KI hat ungültige Wochennummer ${aiWeek.weekNumber} zurückgegeben.`,
+        totalChunks: chunks.length,
+        chunkIndex: ci,
       };
     }
-    totalCacheRead += result.usage.cacheReadInputTokens;
-
-    // ---- Primary Sessions sammeln (Bulk-Insert) ----
-    const primaryRows: NewTrainingPlanSession[] = [];
-    // Index = Position in primaryRows, Value = { aiSession, weekId } für Block-Mapping nach Insert.
-    type PendingMap = {
-      aiSession: AiSession;
-      weekId: number;
-    };
-    const pending: PendingMap[] = [];
-
-    for (const aiWeek of result.output.weeks) {
-      const dbWeek = weeks.find((w) => w.weekNumber === aiWeek.weekNumber);
-      if (!dbWeek) {
-        return {
-          ok: false,
-          error: `KI hat ungültige Wochennummer ${aiWeek.weekNumber} zurückgegeben.`,
-        };
-      }
-      for (const aiSession of aiWeek.sessions) {
-        primaryRows.push(
-          aiSessionToRow(aiSession, {
-            planId,
-            weekId: dbWeek.id,
-            date: dateForDayOfWeek(dbWeek.startDate, aiSession.dayOfWeek),
-            dayOrder: aiSession.dayOrder ?? 1,
-            alternativeOfId: null,
-          }),
-        );
-        pending.push({ aiSession, weekId: dbWeek.id });
-      }
+    for (const aiSession of aiWeek.sessions) {
+      primaryRows.push(
+        aiSessionToRow(aiSession, {
+          planId,
+          weekId: dbWeek.id,
+          date: dateForDayOfWeek(dbWeek.startDate, aiSession.dayOfWeek),
+          dayOrder: aiSession.dayOrder ?? 1,
+          alternativeOfId: null,
+        }),
+      );
+      pending.push({ aiSession, weekId: dbWeek.id });
     }
+  }
 
-    const insertedPrimary = await insertPlanSessions(primaryRows);
-    totalSessions += insertedPrimary.length;
+  const insertedPrimary = await insertPlanSessions(primaryRows);
 
-    // ---- Primary-Blocks sammeln (Bulk-Insert) ----
-    const primaryBlocks: NewTrainingPlanBlock[] = [];
-    for (let i = 0; i < insertedPrimary.length; i++) {
-      const sessionId = insertedPrimary[i].id;
-      const aiSession = pending[i].aiSession;
-      for (const block of aiSession.blocks) {
-        primaryBlocks.push({
+  // ---- Primary-Blocks (Bulk) ----
+  const primaryBlocks: NewTrainingPlanBlock[] = [];
+  for (let i = 0; i < insertedPrimary.length; i++) {
+    const sessionId = insertedPrimary[i].id;
+    const aiSession = pending[i].aiSession;
+    for (const block of aiSession.blocks) {
+      primaryBlocks.push({
+        sessionId,
+        blockOrder: block.blockOrder,
+        repetitions: block.repetitions,
+        segmentsJson: block.segments,
+        description: block.description ?? null,
+      });
+    }
+  }
+  await insertPlanBlocks(primaryBlocks);
+
+  // ---- Alternativen + ihre Blocks ----
+  const altRows: NewTrainingPlanSession[] = [];
+  type AltPending = { altSpec: AiSessionAlternative };
+  const altPending: AltPending[] = [];
+
+  for (let i = 0; i < insertedPrimary.length; i++) {
+    const primary = insertedPrimary[i];
+    const aiSession = pending[i].aiSession;
+    if (!aiSession.alternative) continue;
+    altRows.push(
+      aiSessionToRow(aiSession.alternative, {
+        planId,
+        weekId: pending[i].weekId,
+        date: primary.date,
+        dayOrder: primary.dayOrder,
+        alternativeOfId: primary.id,
+      }),
+    );
+    altPending.push({ altSpec: aiSession.alternative });
+  }
+
+  let alternativeCount = 0;
+  if (altRows.length > 0) {
+    const insertedAlt = await insertPlanSessions(altRows);
+    alternativeCount = insertedAlt.length;
+    const altBlocks: NewTrainingPlanBlock[] = [];
+    for (let i = 0; i < insertedAlt.length; i++) {
+      const sessionId = insertedAlt[i].id;
+      const altSpec = altPending[i].altSpec;
+      for (const block of altSpec.blocks) {
+        altBlocks.push({
           sessionId,
           blockOrder: block.blockOrder,
           repetitions: block.repetitions,
@@ -355,74 +432,50 @@ export async function generatePlanSessions(
         });
       }
     }
-    await insertPlanBlocks(primaryBlocks);
-
-    // ---- Alternativen sammeln (Bulk-Insert mit alternativeOfId) ----
-    const altRows: NewTrainingPlanSession[] = [];
-    type AltPending = {
-      altSpec: AiSessionAlternative;
-      primarySessionId: number;
-    };
-    const altPending: AltPending[] = [];
-
-    for (let i = 0; i < insertedPrimary.length; i++) {
-      const primary = insertedPrimary[i];
-      const aiSession = pending[i].aiSession;
-      if (!aiSession.alternative) continue;
-      altRows.push(
-        aiSessionToRow(aiSession.alternative, {
-          planId,
-          weekId: pending[i].weekId,
-          date: primary.date,
-          dayOrder: primary.dayOrder,
-          alternativeOfId: primary.id,
-        }),
-      );
-      altPending.push({
-        altSpec: aiSession.alternative,
-        primarySessionId: primary.id,
-      });
-    }
-
-    if (altRows.length > 0) {
-      const insertedAlt = await insertPlanSessions(altRows);
-      totalAlternatives += insertedAlt.length;
-
-      const altBlocks: NewTrainingPlanBlock[] = [];
-      for (let i = 0; i < insertedAlt.length; i++) {
-        const sessionId = insertedAlt[i].id;
-        const altSpec = altPending[i].altSpec;
-        for (const block of altSpec.blocks) {
-          altBlocks.push({
-            sessionId,
-            blockOrder: block.blockOrder,
-            repetitions: block.repetitions,
-            segmentsJson: block.segments,
-            description: block.description ?? null,
-          });
-        }
-      }
-      await insertPlanBlocks(altBlocks);
-    }
+    await insertPlanBlocks(altBlocks);
   }
 
-  // Plan ist jetzt fertig generiert → status auf "active".
-  await setTrainingPlanStatus(plan.id, "active");
-  // Generierungs-Modell + Zeitpunkt in notes vermerken (Plan-Metadata-Light).
-  await updateTrainingPlan(plan.id, {
-    notes: `KI-generiert mit ${model === "opus" ? "Opus 4.8" : "Sonnet 4.6"} am ${new Date().toISOString().slice(0, 10)}.`,
-  });
+  // ---- Last-Chunk-Finalisierung: Status auf active + Notes ----
+  if (isLast) {
+    await setTrainingPlanStatus(plan.id, "active");
+    await updateTrainingPlan(plan.id, {
+      notes: `KI-generiert mit ${model === "opus" ? "Opus 4.8" : "Sonnet 4.6"} am ${new Date().toISOString().slice(0, 10)}.`,
+    });
+  }
 
   revalidatePath("/endurance/recommendations");
   revalidatePath("/endurance");
 
   return {
     ok: true,
+    totalChunks: chunks.length,
+    chunkIndex: ci,
+    isLast,
     generated: {
-      sessions: totalSessions,
-      alternatives: totalAlternatives,
-      chunks: chunks.length,
-      totalCacheReadTokens: totalCacheRead,
+      sessions: insertedPrimary.length,
+      alternatives: alternativeCount,
+      cacheReadTokens: result.usage.cacheReadInputTokens,
     },
   };
+}
+
+// Reset-Action: alle Sessions+Blocks eines Plans löschen + status auf draft.
+// Für Retry-Flow nach Chunk-Fehler.
+export type WipePlanState = { ok: boolean; error?: string };
+
+export async function wipePlanSessions(planId: number): Promise<WipePlanState> {
+  const plan = await getTrainingPlanById(planId);
+  if (!plan) return { ok: false, error: "Plan nicht gefunden." };
+  if (plan.status === "completed") {
+    return { ok: false, error: "Completed Plan kann nicht zurückgesetzt werden." };
+  }
+  // Blocks cascaden via FK ON DELETE CASCADE.
+  await deleteAllPlanSessionsForPlan(planId);
+  // Falls Plan schon mal active war (z.B. lokal generiert), zurück auf draft.
+  if (plan.status !== "draft") {
+    await setTrainingPlanStatus(planId, "draft");
+  }
+  revalidatePath("/endurance/recommendations");
+  revalidatePath("/endurance");
+  return { ok: true };
 }

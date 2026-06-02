@@ -1287,6 +1287,17 @@ export async function deletePlanSession(id: number): Promise<void> {
   await db.delete(trainingPlanSessions).where(eq(trainingPlanSessions.id, id));
 }
 
+// Alle Sessions eines Plans löschen — Blocks cascaden via FK ON DELETE CASCADE.
+// Wird für Reset-Flow in der KI-Plan-Generierung gebraucht (wenn ein Chunk
+// schiefging und der User von vorne anfangen will).
+export async function deleteAllPlanSessionsForPlan(
+  planId: number,
+): Promise<void> {
+  await db
+    .delete(trainingPlanSessions)
+    .where(eq(trainingPlanSessions.planId, planId));
+}
+
 // ============================================================
 // Training Plan Blocks
 // ============================================================

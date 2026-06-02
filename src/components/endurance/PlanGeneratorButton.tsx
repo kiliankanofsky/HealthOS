@@ -1,29 +1,100 @@
 "use client";
 
-import { Sparkles } from "lucide-react";
+import { RotateCcw, Sparkles } from "lucide-react";
 import { useState, useTransition } from "react";
 
 import {
   generatePlanSessions,
-  type GeneratePlanState,
+  wipePlanSessions,
 } from "@/app/endurance/recommendations/actions";
 import { Button } from "@/components/ui/button";
 import type { AiModel } from "@/lib/endurance/ai-generator";
 
 type Props = {
   planId: number;
+  // Aktueller Stand der Sessions im Plan — wird zum Resume genutzt.
+  existingPrimarySessionCount: number;
 };
 
-export function PlanGeneratorButton({ planId }: Props) {
-  const [model, setModel] = useState<AiModel>("sonnet");
-  const [pending, startTransition] = useTransition();
-  const [result, setResult] = useState<GeneratePlanState | null>(null);
+type RunProgress = {
+  doneChunks: number;
+  totalChunks: number | null;
+  totalSessions: number;
+  totalAlternatives: number;
+  cacheReadTokens: number;
+};
 
-  function onClick() {
-    setResult(null);
+type Status =
+  | { phase: "idle" }
+  | { phase: "running"; progress: RunProgress; currentChunk: number }
+  | { phase: "done"; progress: RunProgress }
+  | { phase: "error"; error: string; progress: RunProgress | null };
+
+const INITIAL_PROGRESS: RunProgress = {
+  doneChunks: 0,
+  totalChunks: null,
+  totalSessions: 0,
+  totalAlternatives: 0,
+  cacheReadTokens: 0,
+};
+
+export function PlanGeneratorButton({
+  planId,
+  existingPrimarySessionCount,
+}: Props) {
+  const [model, setModel] = useState<AiModel>("sonnet");
+  const [status, setStatus] = useState<Status>({ phase: "idle" });
+  const [pending, startTransition] = useTransition();
+
+  function runGeneration() {
     startTransition(async () => {
-      const state = await generatePlanSessions(planId, { model });
-      setResult(state);
+      let progress: RunProgress = { ...INITIAL_PROGRESS };
+      let chunkIndex = 0;
+
+      while (true) {
+        setStatus({ phase: "running", progress, currentChunk: chunkIndex });
+        const r = await generatePlanSessions(planId, { model, chunkIndex });
+
+        if (!r.ok) {
+          setStatus({
+            phase: "error",
+            error: r.error ?? "Unbekannter Fehler.",
+            progress: { ...progress, totalChunks: r.totalChunks ?? progress.totalChunks },
+          });
+          return;
+        }
+
+        progress = {
+          doneChunks: chunkIndex + 1,
+          totalChunks: r.totalChunks ?? progress.totalChunks,
+          totalSessions: progress.totalSessions + (r.generated?.sessions ?? 0),
+          totalAlternatives:
+            progress.totalAlternatives + (r.generated?.alternatives ?? 0),
+          cacheReadTokens:
+            progress.cacheReadTokens + (r.generated?.cacheReadTokens ?? 0),
+        };
+
+        if (r.isLast) {
+          setStatus({ phase: "done", progress });
+          return;
+        }
+        chunkIndex++;
+      }
+    });
+  }
+
+  function runReset() {
+    startTransition(async () => {
+      const r = await wipePlanSessions(planId);
+      if (!r.ok) {
+        setStatus({
+          phase: "error",
+          error: r.error ?? "Reset fehlgeschlagen.",
+          progress: null,
+        });
+        return;
+      }
+      setStatus({ phase: "idle" });
     });
   }
 
@@ -36,8 +107,8 @@ export function PlanGeneratorButton({ planId }: Props) {
             Plan mit KI generieren
           </h3>
           <p className="text-sm text-muted-foreground">
-            Claude erstellt aus deinem Referenz-PDF + Plan-Settings die
-            Sessions für alle Wochen. Dauert je nach Modell ca. 30–60 Sek.
+            Claude generiert die Sessions in 4 Chunks à 4 Wochen — jeder Chunk
+            ist ein separater API-Call (Vercel-60s-Limit). Insgesamt ca. 2–4 Min.
           </p>
         </div>
       </div>
@@ -64,26 +135,73 @@ export function PlanGeneratorButton({ planId }: Props) {
         </div>
       </div>
 
-      <div className="flex items-center gap-3">
-        <Button onClick={onClick} disabled={pending}>
-          {pending ? "Generiere… (kann bis 60s dauern)" : "Plan generieren"}
+      <div className="flex flex-wrap items-center gap-3">
+        <Button onClick={runGeneration} disabled={pending}>
+          {pending && status.phase === "running"
+            ? `Generiere Chunk ${status.currentChunk + 1}${status.progress.totalChunks ? ` / ${status.progress.totalChunks}` : ""}…`
+            : existingPrimarySessionCount > 0
+              ? "Generierung fortsetzen"
+              : "Plan generieren"}
         </Button>
+        {(existingPrimarySessionCount > 0 || status.phase === "error" || status.phase === "done") && (
+          <Button
+            variant="outline"
+            onClick={runReset}
+            disabled={pending}
+            className="inline-flex items-center gap-1.5"
+          >
+            <RotateCcw className="size-3.5" />
+            Sessions löschen
+          </Button>
+        )}
       </div>
 
-      {result?.ok && result.generated && (
+      {status.phase === "running" && (
+        <ProgressBox progress={status.progress} currentChunk={status.currentChunk} />
+      )}
+      {status.phase === "done" && (
         <div className="rounded-xl bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
-          ✓ {result.generated.sessions} Sessions +{" "}
-          {result.generated.alternatives} Alternativen generiert in{" "}
-          {result.generated.chunks} Chunks. Cache-Reads:{" "}
-          {result.generated.totalCacheReadTokens.toLocaleString("de-DE")}{" "}
-          Tokens.
+          ✓ {status.progress.totalSessions} Sessions +{" "}
+          {status.progress.totalAlternatives} Alternativen über{" "}
+          {status.progress.doneChunks} Chunks generiert. Cache-Reads:{" "}
+          {status.progress.cacheReadTokens.toLocaleString("de-DE")} Tokens.
         </div>
       )}
-      {result && !result.ok && result.error && (
+      {status.phase === "error" && (
         <div className="rounded-xl bg-red-50 px-4 py-3 text-sm text-red-900">
-          ✕ {result.error}
+          <p>✕ {status.error}</p>
+          {status.progress && status.progress.doneChunks > 0 && (
+            <p className="mt-1 text-xs">
+              {status.progress.doneChunks} von{" "}
+              {status.progress.totalChunks ?? "?"} Chunks waren bereits
+              erfolgreich. Du kannst über „Generierung fortsetzen" weitermachen
+              oder „Sessions löschen" und neu starten.
+            </p>
+          )}
         </div>
       )}
+    </div>
+  );
+}
+
+function ProgressBox({
+  progress,
+  currentChunk,
+}: {
+  progress: RunProgress;
+  currentChunk: number;
+}) {
+  const total = progress.totalChunks ?? "?";
+  return (
+    <div className="rounded-xl bg-amber-50 px-4 py-3 text-sm text-amber-900">
+      <p className="font-medium">
+        Generiere Chunk {currentChunk + 1} / {total}…
+      </p>
+      <p className="mt-1 text-xs">
+        {progress.totalSessions} Sessions + {progress.totalAlternatives}{" "}
+        Alternativen bisher fertig. Bleib auf der Seite — bei Wegklicken
+        läuft's im Hintergrund aber die UI verliert den Fortschritt.
+      </p>
     </div>
   );
 }

@@ -66,8 +66,9 @@ async function ActivePlanCard({ plan }: { plan: TrainingPlan }) {
     getWeeksForPlan(plan.id),
     getSessionsForPlan(plan.id),
   ]);
-  const isDraftWithoutSessions =
-    plan.status === "draft" && sessions.length === 0;
+  // Button immer zeigen wenn draft — egal ob Sessions schon teilweise da sind.
+  // Der Button unterscheidet selbst zwischen "neu" und "fortsetzen".
+  const showGenerator = plan.status === "draft";
 
   const targetTime = formatSecondsAsHms(plan.targetTimeSeconds);
   const targetPace = formatPace(plan.targetPaceSecPerKm, { withUnit: true });
@@ -108,9 +109,12 @@ async function ActivePlanCard({ plan }: { plan: TrainingPlan }) {
         </div>
       </div>
 
-      {isDraftWithoutSessions && (
+      {showGenerator && (
         <div className="rounded-3xl bg-card p-6 ring-1 ring-black/5 shadow-sm lg:p-8">
-          <PlanGeneratorButton planId={plan.id} />
+          <PlanGeneratorButton
+            planId={plan.id}
+            existingPrimarySessionCount={sessions.length}
+          />
         </div>
       )}
 
