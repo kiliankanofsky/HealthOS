@@ -5,14 +5,31 @@ import { redirect } from "next/navigation";
 import {
   createTrainingPlan,
   deleteAllPlanSessionsForPlan,
+  getBlocksForPlanSession,
+  getPlanSessionById,
+  getPlanSessionsForDateRange,
   getSessionsForPlan,
   getTrainingPlanById,
   getActiveTrainingPlan,
+  getWeekForDate,
   getWeeksForPlan,
   insertPlanWeeks,
+  replacePlanBlocksForSession,
   setTrainingPlanStatus,
+  updatePlanSession,
+  updatePlanSessionDate,
   updateTrainingPlan,
 } from "@/lib/db/queries";
+import {
+  type TrainingPlanBlock,
+  type TrainingPlanBlockSegment,
+  type TrainingPlanBlockSegmentKind,
+  type TrainingPlanSession,
+  type TrainingPlanSessionStatus,
+  type TrainingPlanSessionType,
+  trainingPlanSessionStatuses,
+  trainingPlanSessionTypes,
+} from "@/lib/db/schema";
 import {
   type AiModel,
   chunkWeeks,
@@ -352,6 +369,209 @@ export async function wipePlanSessions(planId: number): Promise<WipePlanState> {
   if (plan.status !== "draft") {
     await setTrainingPlanStatus(planId, "draft");
   }
+  revalidatePath("/endurance/recommendations");
+  revalidatePath("/endurance");
+  return { ok: true };
+}
+
+// ============================================================
+// Sprint 4 — Kalender-Drag & Edit-Session-Dialog
+// ============================================================
+
+export type MoveSessionState = { ok: boolean; error?: string };
+
+// Verschiebt eine Session per Drag-and-Drop auf einen anderen Tag.
+// Aktualisiert auch die Wochen-Zuordnung (weekId), damit die Übersicht
+// pro Woche korrekt bleibt. Ablage außerhalb des Plan-Zeitraums wird
+// abgelehnt (es gibt dort keine Woche).
+export async function movePlanSession(
+  sessionId: number,
+  newDateIso: string,
+): Promise<MoveSessionState> {
+  if (!DATE_REGEX.test(newDateIso)) {
+    return { ok: false, error: "Ungültiges Datum." };
+  }
+  const session = await getPlanSessionById(sessionId);
+  if (!session) return { ok: false, error: "Session nicht gefunden." };
+  if (session.date === newDateIso) return { ok: true }; // No-op (gleicher Tag)
+
+  const week = await getWeekForDate(session.planId, newDateIso);
+  if (!week) {
+    return {
+      ok: false,
+      error: "Dieser Tag liegt außerhalb des Plan-Zeitraums.",
+    };
+  }
+
+  // Double-Day-Kollision vermeiden: liegt am Zieltag schon eine Session,
+  // hängt die verschobene als nächste dayOrder hintendran (UNIQUE-Constraint
+  // ist (planId, date, dayOrder, alternativeOfId)).
+  const sameDay = await getPlanSessionsForDateRange(
+    session.planId,
+    newDateIso,
+    newDateIso,
+  );
+  const others = sameDay.filter((s) => s.id !== sessionId);
+  const dayOrder =
+    others.length === 0 ? 1 : Math.max(...others.map((s) => s.dayOrder)) + 1;
+
+  await updatePlanSessionDate(sessionId, newDateIso, dayOrder);
+  // weekId getrennt nachziehen (updatePlanSessionDate setzt nur date/dayOrder).
+  if (week.id !== session.weekId) {
+    await updatePlanSession(sessionId, { weekId: week.id });
+  }
+
+  revalidatePath("/endurance/recommendations");
+  revalidatePath("/endurance");
+  return { ok: true };
+}
+
+// ---- Detail nachladen für den Edit-Dialog ----
+// Der Dialog ist eine Client-Komponente und kann nicht selbst die DB lesen;
+// beim Öffnen ruft er diese Action, statt dass die Seite alle 264 Blocks
+// vorab in den Client-Payload packt.
+export type SessionDetail = {
+  session: TrainingPlanSession;
+  blocks: TrainingPlanBlock[];
+};
+
+export async function loadSessionDetail(
+  sessionId: number,
+): Promise<SessionDetail | null> {
+  const session = await getPlanSessionById(sessionId);
+  if (!session) return null;
+  const blocks = await getBlocksForPlanSession(sessionId);
+  return { session, blocks };
+}
+
+// ---- Session speichern (Felder + Intervall-Struktur) ----
+// Titel/Typ/Status sind direkt editierbar. Distanz, Dauer und primaryZone
+// ergeben sich aus den Intervallen und werden serverseitig neu berechnet,
+// damit die Anzeige konsistent bleibt.
+
+export type EditSegmentInput = {
+  kind: TrainingPlanBlockSegmentKind;
+  // Genau eines von beiden gesetzt (Dauer ODER Distanz).
+  durationSec?: number | null;
+  distanceMeters?: number | null;
+  zone: number;
+};
+
+export type EditBlockInput = {
+  repetitions: number;
+  description?: string | null;
+  segments: EditSegmentInput[];
+};
+
+export type SaveSessionEditsInput = {
+  sessionId: number;
+  title: string;
+  sessionType: TrainingPlanSessionType;
+  status: TrainingPlanSessionStatus;
+  blocks: EditBlockInput[];
+};
+
+export type SaveSessionState = { ok: boolean; error?: string };
+
+const SEGMENT_KINDS: readonly TrainingPlanBlockSegmentKind[] = [
+  "warmup",
+  "work",
+  "recovery",
+  "cooldown",
+];
+
+export async function saveSessionEdits(
+  input: SaveSessionEditsInput,
+): Promise<SaveSessionState> {
+  const session = await getPlanSessionById(input.sessionId);
+  if (!session) return { ok: false, error: "Session nicht gefunden." };
+
+  const title = input.title.trim();
+  if (title.length < 1) return { ok: false, error: "Titel fehlt." };
+  if (!trainingPlanSessionTypes.includes(input.sessionType)) {
+    return { ok: false, error: "Unbekannter Trainingstyp." };
+  }
+  if (!trainingPlanSessionStatuses.includes(input.status)) {
+    return { ok: false, error: "Unbekannter Status." };
+  }
+  if (input.blocks.length === 0) {
+    return { ok: false, error: "Mindestens ein Block erforderlich." };
+  }
+
+  // ---- Blocks validieren + Segmente säubern ----
+  const cleanBlocks: Omit<TrainingPlanBlock, "id" | "sessionId" | "createdAt">[] = [];
+  let totalDurationSec = 0;
+  let totalDistanceMeters = 0;
+  let dominant: { zone: number; weight: number } | null = null;
+
+  for (let bi = 0; bi < input.blocks.length; bi++) {
+    const b = input.blocks[bi];
+    const reps = Math.round(b.repetitions);
+    if (!Number.isFinite(reps) || reps < 1) {
+      return { ok: false, error: `Block ${bi + 1}: Wiederholungen müssen ≥ 1 sein.` };
+    }
+    if (b.segments.length === 0) {
+      return { ok: false, error: `Block ${bi + 1}: mindestens ein Segment.` };
+    }
+
+    const segments: TrainingPlanBlockSegment[] = [];
+    for (let si = 0; si < b.segments.length; si++) {
+      const s = b.segments[si];
+      if (!SEGMENT_KINDS.includes(s.kind)) {
+        return { ok: false, error: `Block ${bi + 1}, Segment ${si + 1}: ungültige Art.` };
+      }
+      const zone = Math.round(s.zone);
+      if (!Number.isFinite(zone) || zone < 1 || zone > 5) {
+        return { ok: false, error: `Block ${bi + 1}, Segment ${si + 1}: Zone muss 1–5 sein.` };
+      }
+      const dur = s.durationSec ?? null;
+      const dist = s.distanceMeters ?? null;
+      if ((dur == null || dur <= 0) && (dist == null || dist <= 0)) {
+        return {
+          ok: false,
+          error: `Block ${bi + 1}, Segment ${si + 1}: Dauer oder Distanz angeben.`,
+        };
+      }
+      // Genau ein Maß speichern (Distanz hat Vorrang, falls beide gesetzt sind).
+      const seg: TrainingPlanBlockSegment = { kind: s.kind, zone };
+      if (dist != null && dist > 0) {
+        seg.distanceMeters = Math.round(dist);
+      } else if (dur != null && dur > 0) {
+        seg.durationSec = Math.round(dur);
+      }
+      segments.push(seg);
+
+      // Totals + dominante Zone (härtestes Work-Segment prägt den Charakter).
+      const segDur = seg.durationSec ?? 0;
+      totalDurationSec += segDur * reps;
+      totalDistanceMeters += (seg.distanceMeters ?? 0) * reps;
+      if (seg.kind === "work") {
+        const weight = segDur > 0 ? segDur : (seg.distanceMeters ?? 0);
+        if (!dominant || zone > dominant.zone) {
+          dominant = { zone, weight };
+        }
+      }
+    }
+
+    cleanBlocks.push({
+      blockOrder: bi + 1,
+      repetitions: reps,
+      segmentsJson: segments,
+      description: b.description?.trim() || null,
+    });
+  }
+
+  // ---- Schreiben ----
+  await updatePlanSession(input.sessionId, {
+    title,
+    sessionType: input.sessionType,
+    status: input.status,
+    targetDurationSec: totalDurationSec > 0 ? totalDurationSec : null,
+    targetDistanceMeters: totalDistanceMeters > 0 ? totalDistanceMeters : null,
+    primaryZone: dominant?.zone ?? null,
+  });
+  await replacePlanBlocksForSession(input.sessionId, cleanBlocks);
+
   revalidatePath("/endurance/recommendations");
   revalidatePath("/endurance");
   return { ok: true };
