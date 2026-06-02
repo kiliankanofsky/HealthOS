@@ -9,25 +9,16 @@ import {
   getTrainingPlanById,
   getActiveTrainingPlan,
   getWeeksForPlan,
-  insertPlanBlocks,
-  insertPlanSessions,
   insertPlanWeeks,
   setTrainingPlanStatus,
   updateTrainingPlan,
 } from "@/lib/db/queries";
-import type {
-  NewTrainingPlanBlock,
-  NewTrainingPlanSession,
-} from "@/lib/db/schema";
 import {
   type AiModel,
   chunkWeeks,
   generateChunk,
 } from "@/lib/endurance/ai-generator";
-import type {
-  AiSession,
-  AiSessionAlternative,
-} from "@/lib/endurance/ai-schema";
+import { persistChunkOutput } from "@/lib/endurance/ai-persist";
 import {
   computePlanWeeks,
   derivePaceZones,
@@ -235,45 +226,6 @@ export type GenerateChunkState = {
   };
 };
 
-// Hilfsfunktion: AiSession (oder AiSessionAlternative) → NewTrainingPlanSession.
-// `weekId` und `date` müssen vom Aufrufer aufgelöst werden.
-function aiSessionToRow(
-  src: AiSession | AiSessionAlternative,
-  ctx: {
-    planId: number;
-    weekId: number;
-    date: string;
-    dayOrder: number;
-    alternativeOfId: number | null;
-  },
-): NewTrainingPlanSession {
-  return {
-    planId: ctx.planId,
-    weekId: ctx.weekId,
-    date: ctx.date,
-    dayOrder: ctx.dayOrder,
-    sessionType: src.sessionType,
-    title: src.title,
-    description: src.description ?? null,
-    targetDurationSec: src.targetDurationSec ?? null,
-    targetDistanceMeters: src.targetDistanceMeters ?? null,
-    primaryZone: src.primaryZone ?? null,
-    status: "planned",
-    aiLocked: false,
-    alternativeOfId: ctx.alternativeOfId,
-    selectedAlternativeId: null,
-    runSessionId: null,
-  };
-}
-
-// dayOfWeek (1=Mo..7=So) → ISO-Datum innerhalb der Plan-Woche.
-function dateForDayOfWeek(weekStartIso: string, dayOfWeek: number): string {
-  // dayOfWeek 1=Mo → Offset 0; 7=So → Offset 6.
-  const monday = new Date(`${weekStartIso}T00:00:00`);
-  monday.setDate(monday.getDate() + (dayOfWeek - 1));
-  return monday.toISOString().slice(0, 10);
-}
-
 export async function generatePlanSessions(
   planId: number,
   options: { model?: AiModel; chunkIndex: number },
@@ -345,94 +297,19 @@ export async function generatePlanSessions(
     };
   }
 
-  // ---- DB-Mapping: primary Sessions sammeln ----
-  const primaryRows: NewTrainingPlanSession[] = [];
-  type PendingMap = { aiSession: AiSession; weekId: number };
-  const pending: PendingMap[] = [];
-
-  for (const aiWeek of result.output.weeks) {
-    const dbWeek = weeks.find((w) => w.weekNumber === aiWeek.weekNumber);
-    if (!dbWeek) {
-      return {
-        ok: false,
-        error: `KI hat ungültige Wochennummer ${aiWeek.weekNumber} zurückgegeben.`,
-        totalChunks: chunks.length,
-        chunkIndex: ci,
-      };
-    }
-    for (const aiSession of aiWeek.sessions) {
-      primaryRows.push(
-        aiSessionToRow(aiSession, {
-          planId,
-          weekId: dbWeek.id,
-          date: dateForDayOfWeek(dbWeek.startDate, aiSession.dayOfWeek),
-          dayOrder: aiSession.dayOrder ?? 1,
-          alternativeOfId: null,
-        }),
-      );
-      pending.push({ aiSession, weekId: dbWeek.id });
-    }
-  }
-
-  const insertedPrimary = await insertPlanSessions(primaryRows);
-
-  // ---- Primary-Blocks (Bulk) ----
-  const primaryBlocks: NewTrainingPlanBlock[] = [];
-  for (let i = 0; i < insertedPrimary.length; i++) {
-    const sessionId = insertedPrimary[i].id;
-    const aiSession = pending[i].aiSession;
-    for (const block of aiSession.blocks) {
-      primaryBlocks.push({
-        sessionId,
-        blockOrder: block.blockOrder,
-        repetitions: block.repetitions,
-        segmentsJson: block.segments,
-        description: block.description ?? null,
-      });
-    }
-  }
-  await insertPlanBlocks(primaryBlocks);
-
-  // ---- Alternativen + ihre Blocks ----
-  const altRows: NewTrainingPlanSession[] = [];
-  type AltPending = { altSpec: AiSessionAlternative };
-  const altPending: AltPending[] = [];
-
-  for (let i = 0; i < insertedPrimary.length; i++) {
-    const primary = insertedPrimary[i];
-    const aiSession = pending[i].aiSession;
-    if (!aiSession.alternative) continue;
-    altRows.push(
-      aiSessionToRow(aiSession.alternative, {
-        planId,
-        weekId: pending[i].weekId,
-        date: primary.date,
-        dayOrder: primary.dayOrder,
-        alternativeOfId: primary.id,
-      }),
-    );
-    altPending.push({ altSpec: aiSession.alternative });
-  }
-
-  let alternativeCount = 0;
-  if (altRows.length > 0) {
-    const insertedAlt = await insertPlanSessions(altRows);
-    alternativeCount = insertedAlt.length;
-    const altBlocks: NewTrainingPlanBlock[] = [];
-    for (let i = 0; i < insertedAlt.length; i++) {
-      const sessionId = insertedAlt[i].id;
-      const altSpec = altPending[i].altSpec;
-      for (const block of altSpec.blocks) {
-        altBlocks.push({
-          sessionId,
-          blockOrder: block.blockOrder,
-          repetitions: block.repetitions,
-          segmentsJson: block.segments,
-          description: block.description ?? null,
-        });
-      }
-    }
-    await insertPlanBlocks(altBlocks);
+  // ---- DB-Persistierung (geteilt mit dem CLI-Skript) ----
+  const persisted = await persistChunkOutput({
+    planId,
+    allWeeks: weeks,
+    output: result.output,
+  });
+  if (!persisted.ok) {
+    return {
+      ok: false,
+      error: persisted.error,
+      totalChunks: chunks.length,
+      chunkIndex: ci,
+    };
   }
 
   // ---- Last-Chunk-Finalisierung: Status auf active + Notes ----
@@ -452,8 +329,8 @@ export async function generatePlanSessions(
     chunkIndex: ci,
     isLast,
     generated: {
-      sessions: insertedPrimary.length,
-      alternatives: alternativeCount,
+      sessions: persisted.primarySessions,
+      alternatives: persisted.alternativeSessions,
       cacheReadTokens: result.usage.cacheReadInputTokens,
     },
   };
