@@ -45,6 +45,8 @@ import {
   type PaceZones,
 } from "@/lib/endurance/plan";
 import { sessionTotals } from "@/lib/endurance/plan-splits";
+import { runPlanChat, type ChatMessage } from "@/lib/endurance/ai-chat";
+import { toLocalISODate } from "@/lib/utils/date";
 import { extractPdfText } from "@/lib/endurance/pdf-extract";
 
 // Hinweis zum Vercel-Timeout: dieser "use server"-File darf nur async
@@ -672,4 +674,37 @@ export async function createBlankSession(
   revalidatePath("/endurance/recommendations");
   revalidatePath("/endurance");
   return { ok: true, sessionId: session.id };
+}
+
+// ============================================================
+// Sprint 5 — KI-Chat
+// ============================================================
+// Agentischer Chat: Claude passt den Plan via Tool-Use direkt an. Läuft auf
+// der page.tsx mit maxDuration=60 (mehrere Tool-Runden können nah ans Limit
+// kommen — der Loop ist in ai-chat.ts auf MAX_TOOL_ROUNDS gedeckelt).
+
+export type ChatState = {
+  ok: boolean;
+  reply?: string;
+  changed?: boolean;
+  error?: string;
+};
+
+export async function sendPlanChatMessage(
+  planId: number,
+  history: ChatMessage[],
+): Promise<ChatState> {
+  if (!Array.isArray(history) || history.length === 0) {
+    return { ok: false, error: "Keine Nachricht." };
+  }
+  try {
+    const { reply, changed } = await runPlanChat(planId, history, toLocalISODate());
+    if (changed) {
+      revalidatePath("/endurance/recommendations");
+      revalidatePath("/endurance");
+    }
+    return { ok: true, reply, changed };
+  } catch (e) {
+    return { ok: false, error: `KI-Chat fehlgeschlagen: ${(e as Error).message}` };
+  }
 }

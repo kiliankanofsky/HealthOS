@@ -1,6 +1,6 @@
 import { Flag } from "lucide-react";
 
-import { PlanChatStub } from "@/components/endurance/PlanChatStub";
+import { PlanChat } from "@/components/endurance/PlanChat";
 import type { TrainingPlan, TrainingPlanWeek } from "@/lib/db/schema";
 import { formatPace, formatSecondsAsHms } from "@/lib/endurance/plan";
 import { PHASE_LABELS, PHASE_TONE } from "@/lib/endurance/plan-format";
@@ -93,9 +93,9 @@ export function NextRacePlanCard({ plan, weeks, todayIso }: Props) {
         </div>
       )}
 
-      {/* ---- Chat-Stub ---- */}
+      {/* ---- KI-Chat (Sprint 5) ---- */}
       <div className="mt-auto border-t border-border/60 pt-5">
-        <PlanChatStub />
+        <PlanChat planId={plan.id} />
       </div>
     </section>
   );
