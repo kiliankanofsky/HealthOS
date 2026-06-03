@@ -22,6 +22,9 @@ export type Split = {
   index: number;
   paceSec: number;
   kind: TrainingPlanBlockSegmentKind;
+  // Distanz des Splits in Metern (explizit oder aus Dauer/Pace abgeleitet).
+  // Steuert die DICKE des Balkens (3 km → 3× so dick wie 1 km).
+  meters: number;
   // schnellster Split (kürzeste Pace) — wird in der Grafik hervorgehoben.
   isFastest: boolean;
 };
@@ -135,10 +138,12 @@ export function buildSplits(
 
   if (isInterval) {
     // Pro Segment-Vorkommen ein Balken (Warmup, Work, Recovery, …, Cooldown).
+    // meters = tatsächliche/abgeleitete Distanz → Balken-Dicke.
     const splits = runs.map((r, i) => ({
       index: i + 1,
       paceSec: r.paceSec,
       kind: r.kind,
+      meters: r.meters,
     }));
     return withFastest("laps", splits);
   }
@@ -155,6 +160,8 @@ export function buildSplits(
       index: i + 1,
       paceSec: run?.paceSec ?? runs[0].paceSec,
       kind: run?.kind ?? "work",
+      // Im km-Modus ist jeder Balken genau ein Kilometer → einheitliche Dicke.
+      meters: 1000,
     });
   }
   return withFastest("km", splits);

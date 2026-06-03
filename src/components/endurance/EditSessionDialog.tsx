@@ -228,7 +228,11 @@ function SessionEditForm({
       {/* ── Splits links · Edit-Card rechts ── */}
       <div className="grid gap-5 lg:grid-cols-2">
         <div>
-          <SplitsChart result={splits} />
+          {/* Bei Recovery/Easy keine rote "schnellster km"-Hervorhebung. */}
+          <SplitsChart
+            result={splits}
+            highlightFastest={sessionType !== "recovery" && sessionType !== "easy"}
+          />
         </div>
 
         <div className="space-y-4 rounded-2xl bg-muted/60 p-4 ring-1 ring-black/5">
