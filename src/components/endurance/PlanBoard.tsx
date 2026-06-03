@@ -22,8 +22,8 @@ import {
   formatDistance,
   formatSegmentPace,
   SESSION_STATUS_LABELS,
-  SESSION_TYPE_LABELS,
   sessionTone,
+  sessionTypeLabel,
 } from "@/lib/endurance/plan-format";
 
 export type NextSessionBlock = {
@@ -196,7 +196,7 @@ function NextSessionCard({
             <span
               className={`rounded-full px-2.5 py-1 text-xs font-medium ${sessionTone(data.sessionType).soft}`}
             >
-              {SESSION_TYPE_LABELS[data.sessionType]}
+              {sessionTypeLabel(data.sessionType)}
             </span>
             <span className="text-xs text-muted-foreground">
               {formatRelativeDate(data.date, todayIso)}

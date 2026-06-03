@@ -85,8 +85,17 @@ const TYPE_TONE: Record<TrainingPlanSessionType, keyof typeof TONE> = {
   vo2max: "rose",
 };
 
+// Defensiv: bei unerwarteten/Legacy-Typen (z.B. alte Pläne mit "intervals",
+// "rest" …, die es vor Sprint 4.1 gab) NICHT crashen, sondern auf slate
+// zurückfallen. Wichtig, weil bestehende DB-Pläne noch alte Typen enthalten.
 export function sessionTone(type: TrainingPlanSessionType): SessionTone {
-  return TONE[TYPE_TONE[type]];
+  return TONE[TYPE_TONE[type]] ?? TONE.slate;
+}
+
+// Label mit Fallback auf den rohen Typ-String (statt leer), falls der Typ
+// nicht (mehr) in der 6er-Liste ist.
+export function sessionTypeLabel(type: TrainingPlanSessionType): string {
+  return SESSION_TYPE_LABELS[type] ?? String(type);
 }
 
 // ---- Distanz / Dauer ----

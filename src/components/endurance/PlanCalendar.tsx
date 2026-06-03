@@ -21,8 +21,8 @@ import type {
 import {
   formatDistance,
   formatDurationShort,
-  SESSION_TYPE_LABELS,
   sessionTone,
+  sessionTypeLabel,
 } from "@/lib/endurance/plan-format";
 import { cn } from "@/lib/utils";
 
@@ -327,7 +327,7 @@ function ChipVisual({
     >
       {done && <Check className="size-2.5 shrink-0" />}
       <span className="truncate">
-        {SESSION_TYPE_LABELS[session.sessionType]}
+        {sessionTypeLabel(session.sessionType)}
         {measure !== "—" ? ` · ${measure}` : ""}
       </span>
     </span>
