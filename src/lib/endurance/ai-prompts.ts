@@ -2,16 +2,21 @@
 //
 // Struktur:
 //  - SYSTEM[0]: Methodik / Rolle (stabil über alle Plans)
-//  - SYSTEM[1]: Plan-Settings + Pace-Zonen + Referenz-PDF — wird CACHED.
-//    Stabil über alle Chunk-Calls desselben Plans, ändert sich nicht innerhalb
-//    der ~4 sequentiellen Generierungs-Calls.
-//  - USER: pro Chunk variabel — welche Wochen sollen generiert werden.
+//  - SYSTEM[1]: Plan-Settings + Pace-Zonen (+ Referenz-Text, falls keine
+//    native Datei) — wird CACHED.
+//  - USER: pro Chunk variabel — welche Wochen + Ziel-Wochenvolumen.
+//    Bei nativem Referenz-Upload steckt die Datei (PDF/Bild) als gecachter
+//    content-Block davor (siehe ai-generator.ts).
 //
-// Prompt-Caching reduziert Kosten massiv: ab dem 2. Chunk-Call wird die
-// Referenz-PDF (~20k Zeichen) zum Cache-Read-Preis (~0.1×) statt Voll-Input.
+// Prompt-Caching reduziert Kosten massiv: ab dem 2. Chunk-Call wird der
+// Referenz-Block zum Cache-Read-Preis (~0.1×) statt Voll-Input.
 
 import type { TrainingPlan, TrainingPlanWeek } from "@/lib/db/schema";
-import { formatPace, formatSecondsAsHms } from "@/lib/endurance/plan";
+import {
+  formatPace,
+  formatSecondsAsHms,
+  targetWeeklyKm,
+} from "@/lib/endurance/plan";
 
 // Sortier-stabiles JSON für Pace-Zonen — sonst Cache-Miss durch wechselnde
 // Key-Reihenfolge (silent invalidator).
@@ -27,23 +32,34 @@ function stableJsonZones(zones: TrainingPlan["paceZonesJson"]): string {
   return lines.join("\n");
 }
 
-export const SYSTEM_METHODOLOGY = `Du bist ein erfahrener Lauf-Trainer mit Spezialisierung auf Marathon-Vorbereitung.
-Du erstellst strukturierte Trainingspläne auf Basis aktueller Sportwissenschaft (polarisiertes Training, Lactate-Threshold-Arbeit, progressives Overload, Marathon-spezifische Anpassungen).
+export const SYSTEM_METHODOLOGY = `Du bist ein erfahrener Lauf-Trainer mit Marathon-Spezialisierung. Deine Aufgabe ist es, einen Referenz-Trainingsplan möglichst originalgetreu in eine strukturierte Datenbank zu überführen.
 
-Regeln für deine Pläne:
-- ORIENTIERE dich am hochgeladenen Referenzplan: Struktur (welche Session an welchem Tag), Volumen, Intensitätsverteilung.
-- RESPEKTIERE die vorgegebenen Wochen-Phasen — du sollst NICHT periodisieren, das ist vorgegeben.
-- NUTZE die definierten Pace-Zonen wörtlich. Erfinde keine neuen Zonen.
-- STRUKTURIERE Intervalle in Blocks mit segments (work/recovery), nicht in Freitext.
-- KEINE generisch-falschen Hinweise. Lieber kürzer als pseudo-wissenschaftlich.
-- LANGUAGE: Titel und Beschreibungen auf Deutsch. Pace-Notation '4:15/km'. HF-Notation '155 bpm'.
+DEINE PRIORITÄT IST TRANSKRIPTION, NICHT NEUERFINDUNG:
+- Liegt eine Referenz (Datei oder Text) vor, übernimm deren Wochen- und Tagesstruktur SO GENAU WIE MÖGLICH: welcher Wochentag welche Art Einheit trägt, das Volumen, die Intervallstruktur und die Paces. Interpretiere nur so viel, wie nötig ist, um die Daten sauber in die DB-Struktur (Sessions + Blocks + Segments) zu bringen.
+- Bilde JEDE Einheit auf GENAU EINEN dieser sechs Typen ab — keine weiteren:
+  • recovery  – sehr lockere Regeneration (Z1)
+  • easy      – lockerer Dauerlauf (Z2)
+  • tempo     – zügiger Dauerlauf / Marathon-Pace-Bereich (Z3)
+  • threshold – Schwellenarbeit / Tempodauerläufe (Z3–Z4)
+  • vo2max    – harte Intervalle (Z4–Z5)
+  • long      – langer Lauf
 
-Wenn der Referenzplan eine Option 2 für eine Session anbietet, übernimm diese als 'alternative'. Wenn nicht, lass das Feld weg.
+HARTE REGELN:
+- RUHETAGE: Für Ruhetage gibst du KEINE Session aus. Ein freier Tag bleibt einfach leer (keine Session-Zeile, kein Typ "rest").
+- MAXIMAL EINE Session pro Tag. Keine Doppeltage, kein dayOrder 2.
+- LONG RUN immer am selben Wochentag über alle Wochen. Liegt eine Referenz vor, nimm deren Long-Run-Tag; ohne Referenz IMMER Sonntag (dayOfWeek 7).
+- VOLUMEN: Halte das je Woche vorgegebene Ziel-Wochenvolumen ein (steht in der User-Nachricht). Es steigt kontinuierlich bis zum Peak und sinkt im Taper — erzeuge KEINE eigenen Volumensprünge.
+- RACE-WOCHE (letzte Woche): minimales Volumen — nur der Wettkampf selbst plus 1–2 sehr kurze, lockere Aktivierungsläufe. Keine harten Einheiten mehr.
+- PHASEN (base/build/peak/taper/race) sind vorgegeben. Du periodisierst NICHT selbst.
+- PACE-ZONEN wörtlich nutzen (Z1–Z5 wie definiert). Erfinde keine neuen Zonen.
+- Intervalle IMMER als Blocks mit segments (warmup/work/recovery/cooldown) strukturieren, nicht als Freitext.
+- SPRACHE: Titel und Beschreibungen auf Deutsch. Pace-Notation '4:15/km', HF-Notation '155 bpm'.
 
 Du gibst deine Antwort AUSSCHLIESSLICH über das Tool 'create_training_chunk' zurück — kein Freitext-Output.`;
 
 export function buildPlanContextBlock(
   plan: TrainingPlan,
+  opts: { hasNativeReference?: boolean } = {},
 ): string {
   const targetTime = formatSecondsAsHms(plan.targetTimeSeconds);
   const targetPace = formatPace(plan.targetPaceSecPerKm, { withUnit: true });
@@ -65,17 +81,23 @@ export function buildPlanContextBlock(
     ``,
   ];
 
-  if (plan.referencePdfText) {
+  if (opts.hasNativeReference) {
+    parts.push(
+      `## REFERENZ-TRAININGSPLAN`,
+      `Die Referenz ist dieser Anfrage als Datei (PDF oder Bild) angehängt.`,
+      `Lies sie sorgfältig und transkribiere ihre Wochen-/Tagesstruktur 1:1.`,
+    );
+  } else if (plan.referencePdfText) {
     parts.push(
       `## REFERENZ-TRAININGSPLAN (extrahiert aus ${plan.referencePdfName ?? "Upload"})`,
-      `Nutze diesen Plan als strukturelle und methodische Vorlage.`,
+      `Transkribiere diese Struktur 1:1 (Wochentag → Einheit, Volumen, Paces).`,
       ``,
       plan.referencePdfText,
     );
   } else {
     parts.push(
       `## KEIN REFERENZPLAN HOCHGELADEN`,
-      `Erstelle den Plan auf Basis aktueller Marathon-Trainingsmethodik.`,
+      `Erstelle den Plan auf Basis aktueller Marathon-Trainingsmethodik (polarisiert, progressiv).`,
     );
   }
 
@@ -84,19 +106,22 @@ export function buildPlanContextBlock(
 
 export function buildChunkUserMessage(
   chunkWeeks: TrainingPlanWeek[],
-  context: { totalWeeks: number; raceDate: string | null },
+  plan: Pick<TrainingPlan, "totalWeeks" | "raceDate" | "targetWeeklyKmPeak">,
 ): string {
-  const weekLines = chunkWeeks.map(
-    (w) =>
-      `- Woche ${w.weekNumber} (${w.startDate} – ${w.endDate}): Phase "${w.phase}"`,
-  );
+  const weekLines = chunkWeeks.map((w) => {
+    const volume = targetWeeklyKm(w.weekNumber, plan.totalWeeks, plan.targetWeeklyKmPeak);
+    const volumeStr = volume != null ? ` — Ziel-Wochenvolumen ~${volume} km` : "";
+    return `- Woche ${w.weekNumber} (${w.startDate} – ${w.endDate}): Phase "${w.phase}"${volumeStr}`;
+  });
   return [
-    `Generiere die Trainingseinheiten für folgende Wochen des ${context.totalWeeks}-Wochen-Plans:`,
+    `Generiere die Trainingseinheiten für folgende Wochen des ${plan.totalWeeks}-Wochen-Plans:`,
     ``,
     ...weekLines,
     ``,
-    `Race-Tag ist Sonntag der Race-Woche (${context.raceDate ?? "—"}).`,
-    `Halte die Phase-Vorgabe ein. Pro Woche 5-7 Sessions (Rest-Tage zählen nicht als Session).`,
+    `Race-Tag ist Sonntag der Race-Woche (${plan.raceDate ?? "—"}).`,
+    `Beachte die harten Regeln: max. eine Session pro Tag, KEINE Ruhetag-Sessions`,
+    `(freie Tage einfach leer lassen), Long Run am selben Wochentag (bevorzugt Sonntag),`,
+    `Ziel-Wochenvolumen je Woche einhalten.`,
     `Liefere das Ergebnis ausschließlich über das Tool create_training_chunk.`,
   ].join("\n");
 }

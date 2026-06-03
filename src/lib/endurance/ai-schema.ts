@@ -134,17 +134,10 @@ const blockSchema = {
 const SESSION_TYPE_ENUM = [
   "recovery",
   "easy",
-  "long",
   "tempo",
   "threshold",
-  "intervals",
-  "hills",
-  "race_simulation",
-  "strides",
-  "progression",
-  "criss_cross",
-  "race",
-  "rest",
+  "vo2max",
+  "long",
 ] as const;
 
 const sessionCommonProps = {

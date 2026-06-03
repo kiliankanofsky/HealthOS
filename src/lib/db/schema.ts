@@ -528,20 +528,16 @@ export type TrainingPlanStatus = (typeof trainingPlanStatuses)[number];
 export const trainingPlanPhases = ["base", "build", "peak", "taper", "race"] as const;
 export type TrainingPlanPhase = (typeof trainingPlanPhases)[number];
 
+// Bewusst auf sechs Kern-Typen reduziert (Sprint 4.1). Die KI bildet die
+// Sessions einer Referenz auf genau diese Typen ab — keine Freitext-Vielfalt.
+// "rest" gibt es NICHT: Ruhetage bleiben einfach leer (keine Session-Zeile).
 export const trainingPlanSessionTypes = [
   "recovery",
   "easy",
-  "long",
   "tempo",
   "threshold",
-  "intervals",
-  "hills",
-  "race_simulation",
-  "strides",
-  "progression",
-  "criss_cross",
-  "race",
-  "rest",
+  "vo2max",
+  "long",
 ] as const;
 export type TrainingPlanSessionType = (typeof trainingPlanSessionTypes)[number];
 
@@ -595,8 +591,14 @@ export const trainingPlans = sqliteTable(
       z5: { minSec: number; maxSec: number };
     } | null>(),
     // Extrahierter Volltext aus der hochgeladenen Referenz-PDF.
+    // Fallback, wenn keine native Datei vorliegt (Alt-Pläne).
     referencePdfText: text("reference_pdf_text"),
     referencePdfName: text("reference_pdf_name"),
+    // Sprint 4.1: Referenzdatei (PDF oder Bild) base64-kodiert, damit sie
+    // bei der KI-Generierung NATIV an Claude (Vision) übergeben werden kann
+    // — statt verlustbehaftet zu Text extrahiert. Serverless-konform (kein FS).
+    referenceFileBase64: text("reference_file_base64"),
+    referenceFileMediaType: text("reference_file_media_type"),
     notes: text("notes"),
     createdAt: text("created_at")
       .notNull()

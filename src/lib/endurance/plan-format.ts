@@ -19,19 +19,12 @@ import { formatPace, type PaceZones } from "@/lib/endurance/plan";
 // ---- Labels (Deutsch) ----
 
 export const SESSION_TYPE_LABELS: Record<TrainingPlanSessionType, string> = {
-  recovery: "Regeneration",
-  easy: "Locker",
-  long: "Long Run",
+  recovery: "Recovery",
+  easy: "Easy",
   tempo: "Tempo",
-  threshold: "Schwelle",
-  intervals: "Intervalle",
-  hills: "Berglauf",
-  race_simulation: "Race-Simulation",
-  strides: "Steigerungen",
-  progression: "Progression",
-  criss_cross: "Criss-Cross",
-  race: "Wettkampf",
-  rest: "Ruhetag",
+  threshold: "Threshold",
+  vo2max: "VO2max",
+  long: "Long Run",
 };
 
 export const SESSION_STATUS_LABELS: Record<TrainingPlanSessionStatus, string> = {
@@ -84,19 +77,12 @@ const TONE: Record<string, SessionTone> = {
 };
 
 const TYPE_TONE: Record<TrainingPlanSessionType, keyof typeof TONE> = {
-  rest: "slate",
   recovery: "slate",
   easy: "sky",
   long: "indigo",
   tempo: "amber",
-  progression: "amber",
   threshold: "orange",
-  criss_cross: "orange",
-  intervals: "rose",
-  hills: "rose",
-  strides: "rose",
-  race_simulation: "emerald",
-  race: "emerald",
+  vo2max: "rose",
 };
 
 export function sessionTone(type: TrainingPlanSessionType): SessionTone {

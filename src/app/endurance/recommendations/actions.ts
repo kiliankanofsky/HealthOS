@@ -3,8 +3,10 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import {
+  createPlanSession,
   createTrainingPlan,
   deleteAllPlanSessionsForPlan,
+  deletePlanSession,
   getBlocksForPlanSession,
   getPlanSessionById,
   getPlanSessionsForDateRange,
@@ -42,6 +44,7 @@ import {
   parseHmsToSeconds,
   type PaceZones,
 } from "@/lib/endurance/plan";
+import { sessionTotals } from "@/lib/endurance/plan-splits";
 import { extractPdfText } from "@/lib/endurance/pdf-extract";
 
 // Hinweis zum Vercel-Timeout: dieser "use server"-File darf nur async
@@ -54,6 +57,16 @@ const DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
 // Action mit Fehler abgelehnt (statt silent zu truncaten) — Nutzer muss das
 // PDF kürzen oder nur den relevanten Teil hochladen.
 const PDF_TEXT_MAX_CHARS = 500_000;
+// Referenzdatei wird base64-kodiert in der DB gespeichert und nativ an Claude
+// übergeben. Cap bei 5 MB — deckt Trainingsplan-PDFs/Screenshots locker ab und
+// bleibt unter Claudes Image-/PDF-Limits.
+const REFERENCE_ALLOWED_TYPES = [
+  "application/pdf",
+  "image/png",
+  "image/jpeg",
+  "image/webp",
+];
+const REFERENCE_FILE_MAX_BYTES = 5 * 1_048_576;
 
 export type CreatePlanState = {
   ok: boolean;
@@ -152,25 +165,40 @@ export async function createPlanFromSettings(
     return { ok: false, error: (e as Error).message };
   }
 
-  // ---- PDF-Text extrahieren (optional) ----
-  const pdfFile = formData.get("pdf");
+  // ---- Referenzdatei (PDF oder Bild) ----
+  // Wird base64-kodiert gespeichert und bei der Generierung NATIV an Claude
+  // (Vision) übergeben. Bei PDF zusätzlich Text extrahieren (Fallback/Anzeige).
+  const refFile = formData.get("reference") ?? formData.get("pdf");
   let referencePdfText: string | null = null;
   let referencePdfName: string | null = null;
-  if (pdfFile instanceof File && pdfFile.size > 0) {
-    try {
-      const text = await extractPdfText(pdfFile);
-      if (text.length > PDF_TEXT_MAX_CHARS) {
-        // Hartes Reject statt silent truncate — sonst weiß die KI in S3 nicht,
-        // dass ihr Kontext beschnitten wurde.
-        return {
-          ok: false,
-          error: `PDF-Text ist ${text.length.toLocaleString("de-DE")} Zeichen — Limit ist ${PDF_TEXT_MAX_CHARS.toLocaleString("de-DE")}. Bitte kürze das PDF oder lade nur den relevanten Teil hoch.`,
-        };
+  let referenceFileBase64: string | null = null;
+  let referenceFileMediaType: string | null = null;
+  if (refFile instanceof File && refFile.size > 0) {
+    const mt = refFile.type;
+    if (!REFERENCE_ALLOWED_TYPES.includes(mt)) {
+      return {
+        ok: false,
+        error: `Dateityp „${mt || "unbekannt"}" wird nicht unterstützt. Erlaubt: PDF, PNG, JPG, WEBP.`,
+      };
+    }
+    if (refFile.size > REFERENCE_FILE_MAX_BYTES) {
+      return {
+        ok: false,
+        error: `Datei ist zu groß (${(refFile.size / 1_048_576).toFixed(1)} MB, Limit ${REFERENCE_FILE_MAX_BYTES / 1_048_576} MB). Bitte komprimieren oder nur den relevanten Teil hochladen.`,
+      };
+    }
+    const bytes = Buffer.from(await refFile.arrayBuffer());
+    referenceFileBase64 = bytes.toString("base64");
+    referenceFileMediaType = mt;
+    referencePdfName = refFile.name;
+    // PDF zusätzlich zu Text machen (nicht-fatal — die native Datei reicht).
+    if (mt === "application/pdf") {
+      try {
+        const text = await extractPdfText(refFile);
+        referencePdfText = text.slice(0, PDF_TEXT_MAX_CHARS);
+      } catch {
+        // Native PDF reicht; Text-Fallback ist optional.
       }
-      referencePdfText = text;
-      referencePdfName = pdfFile.name;
-    } catch (e) {
-      return { ok: false, error: `PDF konnte nicht gelesen werden: ${(e as Error).message}` };
     }
   }
 
@@ -197,6 +225,8 @@ export async function createPlanFromSettings(
     paceZonesJson: paceZones,
     referencePdfText,
     referencePdfName,
+    referenceFileBase64,
+    referenceFileMediaType,
   });
 
   await insertPlanWeeks(
@@ -500,8 +530,6 @@ export async function saveSessionEdits(
 
   // ---- Blocks validieren + Segmente säubern ----
   const cleanBlocks: Omit<TrainingPlanBlock, "id" | "sessionId" | "createdAt">[] = [];
-  let totalDurationSec = 0;
-  let totalDistanceMeters = 0;
   let dominant: { zone: number; weight: number } | null = null;
 
   for (let bi = 0; bi < input.blocks.length; bi++) {
@@ -541,12 +569,9 @@ export async function saveSessionEdits(
       }
       segments.push(seg);
 
-      // Totals + dominante Zone (härtestes Work-Segment prägt den Charakter).
-      const segDur = seg.durationSec ?? 0;
-      totalDurationSec += segDur * reps;
-      totalDistanceMeters += (seg.distanceMeters ?? 0) * reps;
+      // Dominante Zone (härtestes Work-Segment prägt den Charakter).
       if (seg.kind === "work") {
-        const weight = segDur > 0 ? segDur : (seg.distanceMeters ?? 0);
+        const weight = seg.durationSec ?? seg.distanceMeters ?? 0;
         if (!dominant || zone > dominant.zone) {
           dominant = { zone, weight };
         }
@@ -562,12 +587,18 @@ export async function saveSessionEdits(
   }
 
   // ---- Schreiben ----
+  // Distanz + Dauer aus den Intervallen ableiten (fehlendes Maß über die
+  // Pace-Zonen des Plans rekonstruiert) — so bleibt die Distanz auch bei
+  // rein dauer-basierten Intervall-Sessions erhalten.
+  const plan = await getTrainingPlanById(session.planId);
+  const totals = sessionTotals(cleanBlocks, plan?.paceZonesJson ?? null);
+
   await updatePlanSession(input.sessionId, {
     title,
     sessionType: input.sessionType,
     status: input.status,
-    targetDurationSec: totalDurationSec > 0 ? totalDurationSec : null,
-    targetDistanceMeters: totalDistanceMeters > 0 ? totalDistanceMeters : null,
+    targetDurationSec: totals.durationSec > 0 ? totals.durationSec : null,
+    targetDistanceMeters: totals.distanceMeters > 0 ? totals.distanceMeters : null,
     primaryZone: dominant?.zone ?? null,
   });
   await replacePlanBlocksForSession(input.sessionId, cleanBlocks);
@@ -575,4 +606,70 @@ export async function saveSessionEdits(
   revalidatePath("/endurance/recommendations");
   revalidatePath("/endurance");
   return { ok: true };
+}
+
+// ---- Session löschen ----
+export async function deletePlanSessionAction(
+  sessionId: number,
+): Promise<{ ok: boolean; error?: string }> {
+  const session = await getPlanSessionById(sessionId);
+  if (!session) return { ok: false, error: "Session nicht gefunden." };
+  // Blocks cascaden via FK ON DELETE CASCADE.
+  await deletePlanSession(sessionId);
+  revalidatePath("/endurance/recommendations");
+  revalidatePath("/endurance");
+  return { ok: true };
+}
+
+// ---- Neue (leere) Session an einem Tag anlegen ----
+// Erzeugt eine minimale Easy-Session, die der Nutzer anschließend im
+// Edit-Dialog anpasst. Gibt die neue ID zurück, damit der Dialog direkt öffnet.
+export type CreateSessionState = {
+  ok: boolean;
+  error?: string;
+  sessionId?: number;
+};
+
+export async function createBlankSession(
+  planId: number,
+  dateIso: string,
+): Promise<CreateSessionState> {
+  if (!DATE_REGEX.test(dateIso)) return { ok: false, error: "Ungültiges Datum." };
+  const week = await getWeekForDate(planId, dateIso);
+  if (!week) {
+    return { ok: false, error: "Dieser Tag liegt außerhalb des Plan-Zeitraums." };
+  }
+  const sameDay = await getPlanSessionsForDateRange(planId, dateIso, dateIso);
+  const dayOrder =
+    sameDay.length === 0 ? 1 : Math.max(...sameDay.map((s) => s.dayOrder)) + 1;
+
+  const session = await createPlanSession({
+    planId,
+    weekId: week.id,
+    date: dateIso,
+    dayOrder,
+    sessionType: "easy",
+    title: "Neue Session",
+    description: null,
+    targetDurationSec: 1800,
+    targetDistanceMeters: null,
+    primaryZone: 2,
+    status: "planned",
+    aiLocked: false,
+    alternativeOfId: null,
+    selectedAlternativeId: null,
+    runSessionId: null,
+  });
+  await replacePlanBlocksForSession(session.id, [
+    {
+      blockOrder: 1,
+      repetitions: 1,
+      segmentsJson: [{ kind: "work", zone: 2, durationSec: 1800 }],
+      description: null,
+    },
+  ]);
+
+  revalidatePath("/endurance/recommendations");
+  revalidatePath("/endurance");
+  return { ok: true, sessionId: session.id };
 }

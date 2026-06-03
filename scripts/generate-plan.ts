@@ -169,8 +169,9 @@ async function main(): Promise<void> {
     );
   }
 
-  // Finalisierung
-  if (plan.status === "draft") {
+  // Finalisierung. Hinweis: nach --reset steht die DB auf "draft", aber die
+  // lokal geladene `plan.status`-Variable noch auf dem alten Wert — daher `reset ||`.
+  if (reset || plan.status === "draft") {
     await setTrainingPlanStatus(planId, "active");
     await updateTrainingPlan(planId, {
       notes: `KI-generiert (CLI) mit ${model === "opus" ? "Opus 4.8" : "Sonnet 4.6"} am ${new Date().toISOString().slice(0, 10)}.`,

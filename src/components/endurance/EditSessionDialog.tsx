@@ -1,9 +1,10 @@
 "use client";
 
 import { Loader2, Plus, Trash2 } from "lucide-react";
-import { useState, useTransition } from "react";
+import { useMemo, useState, useTransition } from "react";
 
 import {
+  deletePlanSessionAction,
   saveSessionEdits,
   type SaveSessionEditsInput,
   type SessionDetail,
@@ -11,6 +12,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { SplitsChart } from "@/components/endurance/SplitsChart";
 import {
   trainingPlanSessionStatuses,
   trainingPlanSessionTypes,
@@ -18,14 +20,15 @@ import {
   type TrainingPlanSessionStatus,
   type TrainingPlanSessionType,
 } from "@/lib/db/schema";
-import { formatPace, formatSecondsAsHms, type PaceZones } from "@/lib/endurance/plan";
+import { formatSecondsAsHms, type PaceZones } from "@/lib/endurance/plan";
 import {
   formatDistance,
-  paceRangeForZone,
   SEGMENT_KIND_LABELS,
   SESSION_STATUS_LABELS,
   SESSION_TYPE_LABELS,
+  sessionTone,
 } from "@/lib/endurance/plan-format";
+import { buildSplits, sessionTotals, type SplitsBlock } from "@/lib/endurance/plan-splits";
 import { cn } from "@/lib/utils";
 
 type Measure = "duration" | "distance";
@@ -33,8 +36,8 @@ type Measure = "duration" | "distance";
 type SegState = {
   kind: TrainingPlanBlockSegmentKind;
   measure: Measure;
-  durationStr: string; // "m:ss" oder Minuten
-  distanceStr: string; // Meter
+  durationStr: string;
+  distanceStr: string;
   zone: number;
 };
 
@@ -46,8 +49,6 @@ type BlockState = {
 
 type Props = {
   editingId: number | null;
-  // Vom Parent vorgeladen (Event-Handler, nicht Effect — vermeidet
-  // synchrones setState im Effect und remountet das Formular pro Session).
   detail: SessionDetail | null;
   loading: boolean;
   paceZones: PaceZones | null;
@@ -57,6 +58,10 @@ type Props = {
 
 const FIELD =
   "h-8 w-full rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none transition-colors focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50";
+// Inline-editierbar: sieht aus wie Text, wird beim Fokus grau hinterlegt,
+// kein Dropdown-Pfeil (appearance-none).
+const INLINE_SELECT =
+  "cursor-pointer appearance-none rounded-md bg-transparent px-1.5 py-0.5 outline-none transition-colors hover:bg-foreground/5 focus:bg-foreground/10";
 
 export function EditSessionDialog({
   editingId,
@@ -77,12 +82,10 @@ export function EditSessionDialog({
     >
       <Dialog.Portal>
         <Dialog.Backdrop />
-        <Dialog.Popup className="w-[min(660px,calc(100vw-32px))] max-h-[88vh] overflow-y-auto">
+        <Dialog.Popup className="w-[min(900px,calc(100vw-32px))] max-h-[90vh] overflow-y-auto p-7">
           <Dialog.CloseIconButton />
-          <Dialog.Header
-            title="Session bearbeiten"
-            description="Titel, Typ und Status anpassen oder die Intervallstruktur ändern. Distanz und Dauer ergeben sich aus den Intervallen."
-          />
+          {/* Bewusst keine Header-Überschrift/Beschreibung — der editierbare
+              Titel ist der Hero. */}
           {ready ? (
             <SessionEditForm
               key={detail.session.id}
@@ -92,7 +95,7 @@ export function EditSessionDialog({
               onSaved={onSaved}
             />
           ) : (
-            <div className="flex items-center justify-center gap-2 py-12 text-sm text-muted-foreground">
+            <div className="flex items-center justify-center gap-2 py-16 text-sm text-muted-foreground">
               <Loader2 className="size-4 animate-spin" />
               Lade Session…
             </div>
@@ -103,8 +106,6 @@ export function EditSessionDialog({
   );
 }
 
-// Eigene Komponente, per `key={sessionId}` remountet → State wird über
-// useState-Initializer aus `detail` gesetzt, ohne Effect.
 function SessionEditForm({
   detail,
   paceZones,
@@ -127,6 +128,7 @@ function SessionEditForm({
     detail.blocks.map(toBlockState),
   );
   const [error, setError] = useState<string | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const [pending, startTransition] = useTransition();
 
   function patchBlock(bi: number, next: BlockState) {
@@ -148,7 +150,17 @@ function SessionEditForm({
     ]);
   }
 
-  const totals = computeTotals(blocks);
+  const splitBlocks = useMemo(() => blocksToSplitBlocks(blocks), [blocks]);
+  const totals = useMemo(
+    () => sessionTotals(splitBlocks, paceZones),
+    [splitBlocks, paceZones],
+  );
+  const dominantZone = useMemo(() => dominantZoneOf(blocks), [blocks]);
+  const splits = useMemo(
+    () => buildSplits(splitBlocks, paceZones),
+    [splitBlocks, paceZones],
+  );
+  const tone = sessionTone(sessionType);
 
   function handleSave() {
     setError(null);
@@ -182,102 +194,182 @@ function SessionEditForm({
     });
   }
 
+  function handleDelete() {
+    startTransition(async () => {
+      const r = await deletePlanSessionAction(detail.session.id);
+      if (!r.ok) {
+        setError(r.error ?? "Löschen fehlgeschlagen.");
+        return;
+      }
+      onSaved();
+    });
+  }
+
   return (
-    <div className="space-y-5">
-      <div className="space-y-1.5">
-        <FieldLabel>Titel</FieldLabel>
-        <Input value={title} onChange={(e) => setTitle(e.target.value)} />
+    <div className="space-y-6">
+      {/* ── Editierbarer Titel (Hero) ── */}
+      <input
+        value={title}
+        onChange={(e) => setTitle(e.target.value)}
+        aria-label="Titel"
+        className="-mx-1.5 w-full rounded-lg bg-transparent px-1.5 py-0.5 font-heading text-3xl font-semibold tracking-tight outline-none transition-colors hover:bg-foreground/5 focus:bg-foreground/10 lg:text-4xl"
+      />
+
+      {/* ── Hero-Stats ── */}
+      <div className="grid grid-cols-3 gap-4">
+        <HeroStat
+          label="Distanz"
+          value={totals.distanceMeters > 0 ? formatDistance(totals.distanceMeters) : "—"}
+        />
+        <HeroStat label="Zone" value={dominantZone ? `Z${dominantZone}` : "—"} />
+        <HeroStat label="Dauer" value={formatSecondsAsHms(totals.durationSec)} />
       </div>
 
-      <div className="grid grid-cols-2 gap-3">
-        <div className="space-y-1.5">
-          <FieldLabel>Trainingstyp</FieldLabel>
-          <select
-            className={FIELD}
-            value={sessionType}
-            onChange={(e) => setSessionType(e.target.value as TrainingPlanSessionType)}
-          >
-            {trainingPlanSessionTypes.map((t) => (
-              <option key={t} value={t}>
-                {SESSION_TYPE_LABELS[t]}
-              </option>
+      {/* ── Splits links · Edit-Card rechts ── */}
+      <div className="grid gap-5 lg:grid-cols-2">
+        <div>
+          <SplitsChart result={splits} />
+        </div>
+
+        <div className="space-y-4 rounded-2xl bg-muted/60 p-4 ring-1 ring-black/5">
+          {/* Typ + Status inline editierbar (kein Label, kein Dropdown-Pfeil) */}
+          <div className="flex flex-wrap items-center gap-2 text-sm">
+            <span className={cn("rounded-full px-1 text-xs font-medium", tone.soft)}>
+              <select
+                value={sessionType}
+                onChange={(e) => setSessionType(e.target.value as TrainingPlanSessionType)}
+                className={cn(INLINE_SELECT, "font-medium")}
+                aria-label="Trainingstyp"
+              >
+                {trainingPlanSessionTypes.map((t) => (
+                  <option key={t} value={t}>
+                    {SESSION_TYPE_LABELS[t]}
+                  </option>
+                ))}
+              </select>
+            </span>
+            <select
+              value={status}
+              onChange={(e) => setStatus(e.target.value as TrainingPlanSessionStatus)}
+              className={cn(INLINE_SELECT, "text-muted-foreground")}
+              aria-label="Status"
+            >
+              {trainingPlanSessionStatuses.map((s) => (
+                <option key={s} value={s}>
+                  {SESSION_STATUS_LABELS[s]}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {/* Intervalle */}
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                Intervalle
+              </span>
+              <span className="text-xs text-muted-foreground">
+                Σ {formatSecondsAsHms(totals.durationSec)}
+                {totals.distanceMeters > 0 ? ` · ${formatDistance(totals.distanceMeters)}` : ""}
+              </span>
+            </div>
+
+            {blocks.map((block, bi) => (
+              <BlockEditor
+                key={bi}
+                index={bi}
+                block={block}
+                onChange={(next) => patchBlock(bi, next)}
+                onRemove={blocks.length > 1 ? () => removeBlock(bi) : undefined}
+              />
             ))}
-          </select>
-        </div>
-        <div className="space-y-1.5">
-          <FieldLabel>Status</FieldLabel>
-          <select
-            className={FIELD}
-            value={status}
-            onChange={(e) => setStatus(e.target.value as TrainingPlanSessionStatus)}
-          >
-            {trainingPlanSessionStatuses.map((s) => (
-              <option key={s} value={s}>
-                {SESSION_STATUS_LABELS[s]}
-              </option>
-            ))}
-          </select>
-        </div>
-      </div>
 
-      <div className="space-y-3">
-        <div className="flex items-center justify-between">
-          <FieldLabel>Intervalle</FieldLabel>
-          <span className="text-xs text-muted-foreground">
-            Σ {formatSecondsAsHms(totals.durationSec)}
-            {totals.distanceMeters > 0 ? ` · ${formatDistance(totals.distanceMeters)}` : ""}
-          </span>
+            <button
+              type="button"
+              onClick={addBlock}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-dashed border-foreground/20 px-3 py-1.5 text-sm text-muted-foreground transition-colors hover:border-foreground/40 hover:text-foreground"
+            >
+              <Plus className="size-3.5" />
+              Block hinzufügen
+            </button>
+          </div>
         </div>
-
-        {blocks.map((block, bi) => (
-          <BlockEditor
-            key={bi}
-            index={bi}
-            block={block}
-            paceZones={paceZones}
-            onChange={(next) => patchBlock(bi, next)}
-            onRemove={blocks.length > 1 ? () => removeBlock(bi) : undefined}
-          />
-        ))}
-
-        <button
-          type="button"
-          onClick={addBlock}
-          className="inline-flex items-center gap-1.5 rounded-lg border border-dashed border-foreground/20 px-3 py-1.5 text-sm text-muted-foreground transition-colors hover:border-foreground/40 hover:text-foreground"
-        >
-          <Plus className="size-3.5" />
-          Block hinzufügen
-        </button>
       </div>
 
       {error && (
         <div className="rounded-xl bg-red-50 px-4 py-3 text-sm text-red-900">{error}</div>
       )}
 
-      <div className="flex items-center justify-end gap-2 pt-1">
-        <Button variant="outline" onClick={onCancel} disabled={pending}>
-          Abbrechen
-        </Button>
-        <Button onClick={handleSave} disabled={pending}>
-          {pending ? "Speichere…" : "Speichern"}
-        </Button>
+      {/* ── Footer ── */}
+      <div className="flex items-center justify-between gap-2 pt-1">
+        {confirmDelete ? (
+          <div className="flex items-center gap-2 text-sm">
+            <span className="text-muted-foreground">Wirklich löschen?</span>
+            <button
+              type="button"
+              onClick={handleDelete}
+              disabled={pending}
+              className="rounded-full bg-red-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-red-700 disabled:opacity-60"
+            >
+              Ja, löschen
+            </button>
+            <button
+              type="button"
+              onClick={() => setConfirmDelete(false)}
+              disabled={pending}
+              className="text-xs text-muted-foreground hover:text-foreground"
+            >
+              Abbrechen
+            </button>
+          </div>
+        ) : (
+          <button
+            type="button"
+            onClick={() => setConfirmDelete(true)}
+            disabled={pending}
+            className="inline-flex items-center gap-1.5 text-sm text-muted-foreground transition-colors hover:text-red-600"
+          >
+            <Trash2 className="size-4" />
+            Löschen
+          </button>
+        )}
+
+        <div className="flex items-center gap-2">
+          <Button variant="outline" onClick={onCancel} disabled={pending}>
+            Abbrechen
+          </Button>
+          <Button onClick={handleSave} disabled={pending}>
+            {pending ? "Speichere…" : "Speichern"}
+          </Button>
+        </div>
       </div>
     </div>
   );
 }
 
-// ---- Block-Editor ----
+function HeroStat({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <p className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+        {label}
+      </p>
+      <p className="mt-0.5 font-heading text-2xl font-semibold tabular-nums lg:text-3xl">
+        {value}
+      </p>
+    </div>
+  );
+}
+
+// ---- Block-Editor (unverändert in der Logik, nur ohne paceZones-Hint hier) ----
 
 function BlockEditor({
   index,
   block,
-  paceZones,
   onChange,
   onRemove,
 }: {
   index: number;
   block: BlockState;
-  paceZones: PaceZones | null;
   onChange: (next: BlockState) => void;
   onRemove?: () => void;
 }) {
@@ -298,7 +390,7 @@ function BlockEditor({
   }
 
   return (
-    <div className="rounded-xl bg-muted/40 p-3">
+    <div className="rounded-xl bg-card p-3 ring-1 ring-black/5">
       <div className="mb-2 flex items-center justify-between gap-2">
         <span className="text-xs font-medium text-muted-foreground">Block {index + 1}</span>
         <div className="flex items-center gap-2">
@@ -332,7 +424,6 @@ function BlockEditor({
           <SegmentEditor
             key={si}
             seg={seg}
-            paceZones={paceZones}
             onChange={(next) => patchSeg(si, next)}
             onRemove={block.segments.length > 1 ? () => removeSeg(si) : undefined}
           />
@@ -358,30 +449,19 @@ function BlockEditor({
   );
 }
 
-// ---- Segment-Editor ----
-
 function SegmentEditor({
   seg,
-  paceZones,
   onChange,
   onRemove,
 }: {
   seg: SegState;
-  paceZones: PaceZones | null;
   onChange: (next: SegState) => void;
   onRemove?: () => void;
 }) {
-  const pace = paceRangeForZone({ zone: seg.zone }, paceZones);
-  const paceHint = pace
-    ? Math.round(pace.minSec) === Math.round(pace.maxSec)
-      ? formatPace(pace.minSec, { withUnit: true })
-      : `${formatPace(pace.minSec)}–${formatPace(pace.maxSec, { withUnit: true })}`
-    : null;
-
   return (
-    <div className="flex flex-wrap items-center gap-1.5 rounded-lg bg-card p-1.5 ring-1 ring-black/5">
+    <div className="flex flex-wrap items-center gap-1.5 rounded-lg bg-muted/50 p-1.5">
       <select
-        className={cn(FIELD, "h-7 w-[8.5rem] flex-none")}
+        className={cn(FIELD, "h-7 w-[7.5rem] flex-none")}
         value={seg.kind}
         onChange={(e) => onChange({ ...seg, kind: e.target.value as TrainingPlanBlockSegmentKind })}
       >
@@ -428,7 +508,7 @@ function SegmentEditor({
       )}
 
       <select
-        className={cn(FIELD, "h-7 w-16 flex-none")}
+        className={cn(FIELD, "h-7 w-14 flex-none")}
         value={seg.zone}
         onChange={(e) => onChange({ ...seg, zone: Number(e.target.value) })}
       >
@@ -439,16 +519,12 @@ function SegmentEditor({
         ))}
       </select>
 
-      {paceHint && (
-        <span className="ml-auto text-[11px] tabular-nums text-muted-foreground">{paceHint}</span>
-      )}
-
       {onRemove && (
         <button
           type="button"
           onClick={onRemove}
           aria-label="Segment entfernen"
-          className="inline-flex size-6 flex-none items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-red-50 hover:text-red-600"
+          className="ml-auto inline-flex size-6 flex-none items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-red-50 hover:text-red-600"
         >
           <Trash2 className="size-3" />
         </button>
@@ -482,14 +558,6 @@ function MeasureToggle({
   );
 }
 
-function FieldLabel({ children }: { children: React.ReactNode }) {
-  return (
-    <label className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-      {children}
-    </label>
-  );
-}
-
 // ---- Daten-Helfer ----
 
 function toBlockState(b: SessionDetail["blocks"][number]): BlockState {
@@ -509,20 +577,30 @@ function toBlockState(b: SessionDetail["blocks"][number]): BlockState {
   };
 }
 
-function computeTotals(blocks: BlockState[]): { durationSec: number; distanceMeters: number } {
-  let durationSec = 0;
-  let distanceMeters = 0;
+// Editier-State → Segment-Struktur für Totals/Splits (live).
+function blocksToSplitBlocks(blocks: BlockState[]): SplitsBlock[] {
+  return blocks.map((b) => ({
+    repetitions: b.repetitions,
+    segmentsJson: b.segments.map((s) => ({
+      kind: s.kind,
+      zone: s.zone,
+      ...(s.measure === "duration"
+        ? { durationSec: parseDuration(s.durationStr) ?? 0 }
+        : { distanceMeters: parseDistance(s.distanceStr) ?? 0 }),
+    })),
+  }));
+}
+
+function dominantZoneOf(blocks: BlockState[]): number | null {
+  let workMax: number | null = null;
+  let anyMax: number | null = null;
   for (const b of blocks) {
-    let bd = 0;
-    let bdist = 0;
     for (const s of b.segments) {
-      if (s.measure === "duration") bd += parseDuration(s.durationStr) ?? 0;
-      else bdist += parseDistance(s.distanceStr) ?? 0;
+      anyMax = anyMax == null ? s.zone : Math.max(anyMax, s.zone);
+      if (s.kind === "work") workMax = workMax == null ? s.zone : Math.max(workMax, s.zone);
     }
-    durationSec += bd * b.repetitions;
-    distanceMeters += bdist * b.repetitions;
   }
-  return { durationSec, distanceMeters };
+  return workMax ?? anyMax;
 }
 
 function secToMmss(sec: number): string {
@@ -531,7 +609,6 @@ function secToMmss(sec: number): string {
   return `${m}:${String(s).padStart(2, "0")}`;
 }
 
-// "m:ss" → Sekunden; eine reine Zahl wird als Minuten interpretiert.
 function parseDuration(str: string): number | null {
   const t = str.trim();
   if (!t) return null;

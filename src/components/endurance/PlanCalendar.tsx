@@ -11,7 +11,7 @@ import {
   type DragEndEvent,
   type DragStartEvent,
 } from "@dnd-kit/core";
-import { Check, ChevronLeft, ChevronRight } from "lucide-react";
+import { Check, ChevronLeft, ChevronRight, Plus } from "lucide-react";
 import { useMemo, useState } from "react";
 
 import type {
@@ -45,8 +45,12 @@ type Props = {
   // Plan-Zeitraum — Tage außerhalb sind kein gültiges Drop-Ziel.
   planStartDate: string;
   raceDate: string | null;
+  // Vom Server (deterministisch) — markiert "heute" ohne new Date() im Client.
+  todayIso: string;
   onSelect: (sessionId: number) => void;
   onMove: (sessionId: number, newDate: string) => void;
+  // Neue Session an einem (leeren) Tag im Plan-Zeitraum anlegen.
+  onAddDay: (dateIso: string) => void;
   // Während eine Verschiebung an den Server geht: Chip ausgrauen.
   movingId: number | null;
 };
@@ -58,8 +62,10 @@ export function PlanCalendar({
   initialDate,
   planStartDate,
   raceDate,
+  todayIso,
   onSelect,
   onMove,
+  onAddDay,
   movingId,
 }: Props) {
   const [anchor, setAnchor] = useState<Date>(() => parseIso(initialDate));
@@ -84,7 +90,6 @@ export function PlanCalendar({
 
   const cells = useMemo(() => buildMonthGrid(anchor), [anchor]);
   const anchorMonth = anchor.getMonth();
-  const todayIso = toISODate(new Date());
   const monthLabel = anchor.toLocaleDateString("de-DE", {
     month: "long",
     year: "numeric",
@@ -154,6 +159,7 @@ export function PlanCalendar({
               const inPlan =
                 cell.iso >= planStartDate &&
                 (raceDate == null || cell.iso <= raceDate);
+              const cellSessions = sessionsByDate.get(cell.iso) ?? [];
               return (
                 <DayCell
                   key={cell.iso}
@@ -163,8 +169,10 @@ export function PlanCalendar({
                   isToday={cell.iso === todayIso}
                   inPlan={inPlan}
                   draggingActive={activeId !== null}
+                  showAdd={inPlan && cellSessions.length === 0 && activeId === null}
+                  onAdd={() => onAddDay(cell.iso)}
                 >
-                  {(sessionsByDate.get(cell.iso) ?? []).map((s) => (
+                  {cellSessions.map((s) => (
                     <DraggableChip
                       key={s.id}
                       session={s}
@@ -202,6 +210,8 @@ function DayCell({
   isToday,
   inPlan,
   draggingActive,
+  showAdd,
+  onAdd,
   children,
 }: {
   iso: string;
@@ -210,6 +220,8 @@ function DayCell({
   isToday: boolean;
   inPlan: boolean;
   draggingActive: boolean;
+  showAdd: boolean;
+  onAdd: () => void;
   children: React.ReactNode;
 }) {
   // Nur Tage im Plan-Zeitraum sind gültige Drop-Ziele.
@@ -219,7 +231,7 @@ function DayCell({
     <div
       ref={setNodeRef}
       className={cn(
-        "min-h-[5.25rem] rounded-xl p-1 ring-1 transition-colors",
+        "group relative min-h-[5.25rem] rounded-xl p-1 ring-1 transition-colors",
         inPlan ? "bg-muted/30 ring-black/5" : "bg-transparent ring-transparent",
         // Drop-Highlight nur, solange wirklich gezogen wird.
         draggingActive && inPlan && "ring-dashed ring-border",
@@ -240,6 +252,17 @@ function DayCell({
         </span>
       </div>
       <div className="space-y-1">{children}</div>
+      {showAdd && (
+        <button
+          type="button"
+          onClick={onAdd}
+          aria-label="Session hinzufügen"
+          title="Session hinzufügen"
+          className="absolute inset-x-1 bottom-1 inline-flex items-center justify-center rounded-md py-1 text-muted-foreground/0 transition-colors hover:bg-foreground/5 hover:text-muted-foreground group-hover:text-muted-foreground/60"
+        >
+          <Plus className="size-4" />
+        </button>
+      )}
     </div>
   );
 }
@@ -305,7 +328,7 @@ function ChipVisual({
       {done && <Check className="size-2.5 shrink-0" />}
       <span className="truncate">
         {SESSION_TYPE_LABELS[session.sessionType]}
-        {measure !== "—" && session.sessionType !== "rest" ? ` · ${measure}` : ""}
+        {measure !== "—" ? ` · ${measure}` : ""}
       </span>
     </span>
   );

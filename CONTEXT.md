@@ -108,7 +108,8 @@ Nach Modul gruppiert. **RSC** = Server Component, **CC** = Client Component (`"u
 - `weight/` — `WeightChart`/`Chart Section` (Recharts, CC), `WeightStats`, `WeightTable`, `WeightWeekMatrix`, `WeightDayList`, `WeightDayDetailDialog` (CC, nimmt jetzt `tag`-Prop), `WeightDetailView`, `WeightEntryForm` (CC), `PhaseEditDialog` (CC), `TagEditor` (CC, Tag-Übersicht + Edit-Dialog)
 - `hypertrophy/` — `Calendar`, `SessionLogger` (CC), `NewSessionDialog` (CC), `DeleteSessionButton` (CC), `OpenOrCreateSessionButton` (CC), `ExerciseProgressChart` (CC), `WorkoutCards` (RSC), `WorkoutOverviewChart`, `SiblingNavButtons`/`SiblingSwipe`
 - `hypertrophy/avatar/` — `MuscleAvatar` (SVG-Bodymap), `OverviewAvatarPanel`, `WorkoutAvatarPanel`, `MuscleExerciseList`, `anatomy-paths.ts` (SVG-Pfade)
-- `endurance/` — `KmGraphSection` (CC, Recharts AreaChart wöchentliches Volumen), `RunCalendar` (CC, Adaption des Hypertrophy-Kalenders mit Double-Day-Indikator), `MetricsDashboard` (CC, sieben klickbare Tiles mit Detail-Popovern: RHR, HRV, Sleep, Race-Predictions, Training Status, VO₂, Lactate Threshold), `TrainingsSection` (RSC, zwei Cards für Empfohlen/Historisch), `PlanSetupForm` (CC, Phase 4: Form mit Live-Pace-Berechnung, Pace-Zone-Auto-Ableitung mit Manual-Override, Drag-and-Drop-PDF-Upload), `PerformanceDashboard` (legacy, nicht mehr benutzt — bei Cleanup entfernen)
+- `endurance/` — `KmGraphSection` (CC, Recharts AreaChart wöchentliches Volumen), `RunCalendar` (CC, Adaption des Hypertrophy-Kalenders mit Double-Day-Indikator), `MetricsDashboard` (CC, sieben klickbare Tiles mit Detail-Popovern: RHR, HRV, Sleep, Race-Predictions, Training Status, VO₂, Lactate Threshold), `TrainingsSection` (RSC, zwei Cards für Empfohlen/Historisch), `PlanSetupForm` (CC, Phase 4: Form mit Live-Pace-Berechnung, Pace-Zone-Auto-Ableitung mit Manual-Override, Datei-Upload PDF **oder Bild**), `PerformanceDashboard` (legacy, nicht mehr benutzt — bei Cleanup entfernen)
+  - **Phase 4 Sprint 4/4.1** (`/endurance/recommendations` 4-Card-Layout): `PlanBoard` (CC, Orchestrator: Kalender + Nächste-Session-Card + Edit-Dialog-State), `PlanCalendar` (CC, @dnd-kit Drag-and-Drop + "+" zum Anlegen leerer Tage), `EditSessionDialog` (CC, editierbarer Titel-Hero + Hero-Stats Distanz/Zone/Dauer + Splits links + gräuliche Edit-Card rechts mit Intervall-Editor + Löschen), `SplitsChart` (Balken-Grafik, km bei Dauerläufen / Runden bei Intervallen, längster Balken = schnellste Pace), `NextRacePlanCard` (Countdown + Phasen-Timeline + `PlanChatStub`), `PlanOverviewCard` (Fortschritt + Wochen-Volumen)
 - `nutrition/` — `NutritionChart` + `ChartSection`, `NutritionCorrelationView` (Streudiagramm Weight×Kalorien), `NutritionDayDetailDialog` (alle drei nehmen jetzt `tags`-Prop)
 - `ui/` — shadcn-Primitives: `button`, `card`, `dialog`, `input`, `label`, `popover`, `segmented-control`, `table`
 - `ComingSoon.tsx` — Placeholder
@@ -172,7 +173,9 @@ Nach Modul gruppiert. **RSC** = Server Component, **CC** = Client Component (`"u
 | `hypertrophy/muscles.ts` | Muskelgruppen-Definitionen |
 | `hypertrophy/workouts.ts` | Template-Konfiguration (Cycle-Berechnung u.ä.) |
 | `endurance/plan.ts` | Phase 4: `derivePaceZones`, `computePlanWeeks` (16w rückwärts vom Race), Pace/Zeit-Formatter (`formatPace`, `parseHmsToSeconds`, `formatSecondsAsHms`). Phasen-Verteilung skaliert auf totalWeeks (Default 16: 4-base, 5-build, 3-peak, 3-taper, 1-race). |
-| `endurance/pdf-extract.ts` | Phase 4: `extractPdfText(file)` via `pdf-parse` v2 (`PDFParse`-Klasse). Server-only, dynamischer Import. |
+| `endurance/pdf-extract.ts` | Phase 4: `extractPdfText(file)` via `pdf-parse` v2 (`PDFParse`-Klasse). Server-only, dynamischer Import. Seit Sprint 4.1 nur noch Fallback — Referenz geht nativ an Claude. |
+| `endurance/plan-format.ts` | Sprint 4: Anzeige-Helfer (Session-Typ-Labels/Farben, Phasen-Labels/-Farben, Zone→Pace, Block→Text, Distanz/Dauer-Formatter). Reine Formatierung, von allen Cards geteilt. |
+| `endurance/plan-splits.ts` | Sprint 4.1: `buildSplits(blocks, zones)` (km vs Runden) + `sessionTotals` (Distanz/Dauer aus Intervallen, fehlendes Maß über Pace abgeleitet). |
 
 ### 4.6 Scripts (`scripts/`) — alle als `tsx` lokal, **nicht** in Vercel verfügbar
 
@@ -212,6 +215,7 @@ Sequenz `0000` → `0012`. **Nicht editieren** — Drizzle hält im `meta/_journ
 | `0011` | `garmin_daily_metrics`-Erweiterung: Sleep-Stadien, HRV-Baseline, RHR-7d-Avg |
 | `0012` | `daily_tags`-Tabelle, Tag-Daten aus `weight_entries` rüberkopiert, `cheat_day`/`alcohol`/`cheat_meal`/`kcal_target` aus `weight_entries` entfernt — **manuell editiert** (INSERT vor DROP), nicht regenerieren |
 | `0013` | Endurance Phase 4: `training_plans` + `training_plan_weeks` + `training_plan_sessions` + `training_plan_blocks`. Self-FK auf `alternative_of_id` (kein DB-Constraint, App-Logik), FK auf `run_sessions.id` mit ON DELETE SET NULL. |
+| `0014` | Sprint 4.1: `training_plans.reference_file_base64` + `reference_file_media_type` — Referenzdatei (PDF/Bild) base64-kodiert, wird nativ an Claude (Vision) übergeben statt nur als extrahierter Text. |
 
 ### 4.8 Konfig-Files (Root)
 

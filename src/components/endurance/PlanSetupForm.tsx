@@ -19,6 +19,16 @@ import {
 
 const DEFAULT_TOTAL_WEEKS = 16;
 const DEFAULT_DISTANCE = 42.195;
+// Referenzdatei: PDF oder Bild (wird nativ an Claude/Vision übergeben).
+const REFERENCE_TYPES = [
+  "application/pdf",
+  "image/png",
+  "image/jpeg",
+  "image/webp",
+];
+function isAllowedReference(file: File): boolean {
+  return REFERENCE_TYPES.includes(file.type);
+}
 const ZONE_LABELS = [
   "Z1 Recovery",
   "Z2 Endurance",
@@ -65,14 +75,14 @@ export function PlanSetupForm() {
     e.preventDefault();
     setDragActive(false);
     const file = e.dataTransfer.files?.[0];
-    if (file && file.type === "application/pdf") {
+    if (file && isAllowedReference(file)) {
       setPdfFile(file);
     }
   }
 
   function onFileSelect(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
-    if (file && file.type === "application/pdf") {
+    if (file && isAllowedReference(file)) {
       setPdfFile(file);
     }
   }
@@ -82,9 +92,9 @@ export function PlanSetupForm() {
       {/* Hidden file input — drag-and-drop oder click triggert es. */}
       <input
         id="pdf-input"
-        name="pdf"
+        name="reference"
         type="file"
-        accept="application/pdf"
+        accept="application/pdf,image/png,image/jpeg,image/webp"
         className="sr-only"
         onChange={onFileSelect}
       />
@@ -251,14 +261,14 @@ export function PlanSetupForm() {
         </div>
       </fieldset>
 
-      {/* ─── Section: Referenz-PDF ─── */}
+      {/* ─── Section: Referenz-Plan (PDF/Bild) ─── */}
       <fieldset className="space-y-4">
         <legend className="font-heading text-lg font-medium">
-          Referenz-Trainingsplan (PDF)
+          Referenz-Trainingsplan (PDF oder Bild)
         </legend>
         <p className="text-sm text-muted-foreground">
-          Optional. Der extrahierte Text wird als Kontext für die KI in
-          Sprint 3 verwendet.
+          Optional. Die Datei wird nativ an die KI übergeben (Vision) und
+          möglichst originalgetreu in den Plan übernommen. PDF oder Screenshot.
         </p>
         <label
           htmlFor="pdf-input"
@@ -298,8 +308,8 @@ export function PlanSetupForm() {
           ) : (
             <>
               <UploadCloud className="size-8 text-muted-foreground" />
-              <p className="text-sm">PDF hierher ziehen oder klicken</p>
-              <p className="text-xs text-muted-foreground">nur .pdf</p>
+              <p className="text-sm">Datei hierher ziehen oder klicken</p>
+              <p className="text-xs text-muted-foreground">PDF, PNG, JPG oder WEBP</p>
             </>
           )}
         </label>

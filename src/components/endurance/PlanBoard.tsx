@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 
 import {
+  createBlankSession,
   loadSessionDetail,
   movePlanSession,
   type SessionDetail,
@@ -36,23 +37,29 @@ export type NextSessionData = CalendarSession & {
 };
 
 type Props = {
+  planId: number;
   sessions: CalendarSession[];
   nextSession: NextSessionData | null;
   planStartDate: string;
   raceDate: string | null;
   paceZones: PaceZones | null;
   initialMonth: string;
+  // Vom Server berechnet, damit SSR und Client identisch rendern (kein
+  // `new Date()` im Client → keine Hydration-Mismatches).
+  todayIso: string;
 };
 
 const CARD = "rounded-3xl bg-card p-6 ring-1 ring-black/5 shadow-sm lg:p-7";
 
 export function PlanBoard({
+  planId,
   sessions,
   nextSession,
   planStartDate,
   raceDate,
   paceZones,
   initialMonth,
+  todayIso,
 }: Props) {
   const router = useRouter();
   const [editingId, setEditingId] = useState<number | null>(null);
@@ -76,6 +83,21 @@ export function PlanBoard({
 
   function handleClose() {
     setEditingId(null);
+  }
+
+  // "+" auf einem leeren Kalendertag: neue Session anlegen und direkt im
+  // Edit-Dialog öffnen.
+  function handleAddDay(dateIso: string) {
+    setMoveError(null);
+    startTransition(async () => {
+      const r = await createBlankSession(planId, dateIso);
+      if (!r.ok || r.sessionId == null) {
+        setMoveError(r.error ?? "Anlegen fehlgeschlagen.");
+        return;
+      }
+      router.refresh();
+      handleSelect(r.sessionId);
+    });
   }
 
   function handleMove(sessionId: number, newDate: string) {
@@ -107,8 +129,10 @@ export function PlanBoard({
             initialDate={initialMonth}
             planStartDate={planStartDate}
             raceDate={raceDate}
+            todayIso={todayIso}
             onSelect={handleSelect}
             onMove={handleMove}
+            onAddDay={handleAddDay}
             movingId={movingId}
           />
           {moveError && (
@@ -122,6 +146,7 @@ export function PlanBoard({
           <NextSessionCard
             data={nextSession}
             paceZones={paceZones}
+            todayIso={todayIso}
             onEdit={handleSelect}
           />
         </section>
@@ -144,10 +169,12 @@ export function PlanBoard({
 function NextSessionCard({
   data,
   paceZones,
+  todayIso,
   onEdit,
 }: {
   data: NextSessionData | null;
   paceZones: PaceZones | null;
+  todayIso: string;
   onEdit: (id: number) => void;
 }) {
   return (
@@ -172,7 +199,7 @@ function NextSessionCard({
               {SESSION_TYPE_LABELS[data.sessionType]}
             </span>
             <span className="text-xs text-muted-foreground">
-              {formatRelativeDate(data.date)}
+              {formatRelativeDate(data.date, todayIso)}
             </span>
           </div>
 
@@ -255,10 +282,10 @@ function formatGermanDate(iso: string): string {
   });
 }
 
-// "heute" / "morgen" / "in 4 Tagen" / "in 2 Wochen"
-function formatRelativeDate(iso: string): string {
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
+// "heute" / "morgen" / "in 4 Tagen" / "in 2 Wochen". todayIso wird vom Server
+// gereicht (deterministisch — kein new Date() im Client → keine Hydration-Mismatches).
+function formatRelativeDate(iso: string, todayIso: string): string {
+  const today = new Date(`${todayIso}T00:00:00`);
   const target = new Date(`${iso}T00:00:00`);
   const days = Math.round((target.getTime() - today.getTime()) / 86_400_000);
   if (days <= 0) return "heute";

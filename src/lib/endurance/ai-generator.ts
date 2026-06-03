@@ -80,17 +80,56 @@ export type ChunkResult = {
   };
 };
 
+// Baut den nativen Referenz-content-Block aus der gespeicherten base64-Datei.
+// PDF → document-Block, Bild → image-Block. cache_control:ephemeral, damit der
+// (große) Datei-Block ab Chunk 2 als Cache-Read abgerechnet wird.
+const IMAGE_MEDIA_TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp"] as const;
+type ImageMediaType = (typeof IMAGE_MEDIA_TYPES)[number];
+
+function buildReferenceBlock(
+  plan: TrainingPlan,
+): Anthropic.ContentBlockParam | null {
+  const data = plan.referenceFileBase64;
+  const mediaType = plan.referenceFileMediaType;
+  if (!data || !mediaType) return null;
+
+  if (mediaType === "application/pdf") {
+    return {
+      type: "document",
+      source: { type: "base64", media_type: "application/pdf", data },
+      cache_control: { type: "ephemeral" },
+    };
+  }
+  if ((IMAGE_MEDIA_TYPES as readonly string[]).includes(mediaType)) {
+    return {
+      type: "image",
+      source: { type: "base64", media_type: mediaType as ImageMediaType, data },
+      cache_control: { type: "ephemeral" },
+    };
+  }
+  return null;
+}
+
 export async function generateChunk(
   plan: TrainingPlan,
   chunkWeeks: TrainingPlanWeek[],
   model: AiModel,
 ): Promise<ChunkResult> {
   const client = getClient();
-  const planContext = buildPlanContextBlock(plan);
-  const userMessage = buildChunkUserMessage(chunkWeeks, {
-    totalWeeks: plan.totalWeeks,
-    raceDate: plan.raceDate,
-  });
+
+  // Native Referenzdatei (PDF/Bild) als gecachten content-Block — Claude liest
+  // sie via Vision direkt, statt aus verlustbehaftet extrahiertem Text. Der
+  // Block sitzt VOR der variablen Chunk-Anweisung, damit der Cache-Prefix
+  // (System + Datei) über alle Chunk-Calls stabil bleibt.
+  const referenceBlock = buildReferenceBlock(plan);
+  const hasNativeReference = referenceBlock != null;
+
+  const planContext = buildPlanContextBlock(plan, { hasNativeReference });
+  const userMessage = buildChunkUserMessage(chunkWeeks, plan);
+
+  const userContent: Anthropic.ContentBlockParam[] = [];
+  if (referenceBlock) userContent.push(referenceBlock);
+  userContent.push({ type: "text", text: userMessage });
 
   const response = await client.messages.create({
     model: MODEL_IDS[model],
@@ -104,13 +143,13 @@ export async function generateChunk(
       {
         type: "text",
         text: planContext,
-        // PDF-Inhalt + Plan-Settings cachen — stabil über alle 4 Chunk-Calls.
+        // Plan-Settings (+ Referenz-Text, falls keine native Datei) cachen.
         cache_control: { type: "ephemeral" },
       },
     ],
     tools: [CREATE_TRAINING_CHUNK_TOOL],
     tool_choice: { type: "tool", name: CREATE_TRAINING_CHUNK_TOOL.name },
-    messages: [{ role: "user", content: userMessage }],
+    messages: [{ role: "user", content: userContent }],
   });
 
   // Mit tool_choice:{type:"tool",name:...} ist der erste tool_use-Block

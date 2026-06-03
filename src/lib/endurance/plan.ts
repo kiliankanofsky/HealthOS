@@ -125,6 +125,43 @@ function phaseForWeek(weekNumber: number, totalWeeks: number): TrainingPlanPhase
   return "taper";
 }
 
+// Ziel-Wochenvolumen (km) als deterministische Richtgröße für die KI.
+// Kontinuierlicher Aufbau Base→Build, Peak-Plateau, danach 2–3 Wochen Taper,
+// Race-Woche reduziert. Liefert null, wenn kein Peak-Volumen gesetzt ist
+// (dann darf die KI selbst eine sinnvolle Progression wählen).
+//
+// Performance-Science-Logik: progressive Overload bis Peak, dann Erholung
+// (Superkompensation) vor dem Wettkampf — kein Sägezahn, kein Volumen-Sprung.
+export function targetWeeklyKm(
+  weekNumber: number,
+  totalWeeks: number,
+  peakKm: number | null | undefined,
+): number | null {
+  if (!peakKm || peakKm <= 0) return null;
+  const buildEnd = Math.round((9 / 16) * totalWeeks);
+  const peakEnd = Math.round((12 / 16) * totalWeeks);
+
+  // Race-Woche: stark reduziert (nur Pre-Race-Aktivierung + Race).
+  if (weekNumber === totalWeeks) return Math.round(peakKm * 0.4);
+
+  // Taper-Wochen (nach Peak-Phase bis zur vorletzten Woche): 0.80 → 0.55.
+  if (weekNumber > peakEnd) {
+    const taperWeeks = totalWeeks - 1 - peakEnd;
+    const idx = weekNumber - peakEnd; // 1..taperWeeks
+    const frac =
+      taperWeeks <= 1 ? 0.65 : 0.8 - ((idx - 1) / (taperWeeks - 1)) * (0.8 - 0.55);
+    return Math.round(peakKm * frac);
+  }
+
+  // Peak-Phase: Plateau bei 100 %.
+  if (weekNumber > buildEnd) return Math.round(peakKm);
+
+  // Base + Build: linearer Aufbau 0.65 → 0.95.
+  const frac =
+    0.65 + ((weekNumber - 1) / Math.max(1, buildEnd - 1)) * (0.95 - 0.65);
+  return Math.round(peakKm * frac);
+}
+
 export function computePlanWeeks(
   raceDateIso: string,
   totalWeeks: number,

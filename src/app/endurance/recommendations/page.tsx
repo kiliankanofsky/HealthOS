@@ -103,12 +103,14 @@ async function PlanView({ plan }: { plan: TrainingPlan }) {
 
       {/* Reihe 1: Kalender (Drag-and-Drop) + Nächste Session */}
       <PlanBoard
+        planId={plan.id}
         sessions={sessions.map(toCalendarSession)}
         nextSession={nextData}
         planStartDate={plan.planStartDate}
         raceDate={plan.raceDate}
         paceZones={plan.paceZonesJson ?? null}
         initialMonth={initialMonth}
+        todayIso={todayIso}
       />
 
       {/* Reihe 2: Next-Race-Plan (mit Chat) + Übersicht */}
