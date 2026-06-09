@@ -16,10 +16,7 @@ export const siteConfig = {
   metaDescription: "Modulares Health & Performance Dashboard.",
   // Optionaler Promo-Banner ganz oben auf der Home-Page.
   // Auf null setzen, um zu verstecken.
-  promo: {
-    text: "Phase 2 ist live — Hypertrophie-Logger",
-    href: "/hypertrophy" as Route,
-  } as { text: string; href: Route } | null,
+  promo: null as { text: string; href: Route } | null,
 } as const;
 
 // =============================================================

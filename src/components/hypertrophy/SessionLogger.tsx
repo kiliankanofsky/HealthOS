@@ -1,6 +1,7 @@
 "use client";
 
 import { Check, Plus, RotateCcw, Trash2, X } from "lucide-react";
+import Link from "next/link";
 import { useMemo, useState, useTransition } from "react";
 
 import {
@@ -24,6 +25,8 @@ export type PreviousSetRef = {
 export type ExerciseLogRow = {
   templateExerciseId: number;
   name: string;
+  // Slug der Stamm-Übung des Slots — für den Link zur Übungs-Verlauf-Seite.
+  exerciseSlug: string;
   // Wenn gesetzt, steht der alternative Name; "name" bleibt der Slot-Default.
   overrideName: string | null;
   unilateral: boolean;
@@ -36,16 +39,22 @@ export type ExerciseLogRow = {
 
 type Props = {
   sessionId: number;
+  templateSlug: string;
   exerciseRows: ExerciseLogRow[];
 };
 
 // Auto-Save-Logger: pro Set zwei Inputs (Gewicht / Reps), Speichern beim Blur.
 // Optimistic update — wir merken uns den lokalen State und revidieren nur bei Fehler.
-export function SessionLogger({ sessionId, exerciseRows }: Props) {
+export function SessionLogger({ sessionId, templateSlug, exerciseRows }: Props) {
   return (
     <div className="space-y-4">
       {exerciseRows.map((row) => (
-        <ExerciseCard key={row.templateExerciseId} row={row} sessionId={sessionId} />
+        <ExerciseCard
+          key={row.templateExerciseId}
+          row={row}
+          sessionId={sessionId}
+          templateSlug={templateSlug}
+        />
       ))}
     </div>
   );
@@ -80,9 +89,11 @@ function setsToDraft(sets: WorkoutSet[]): DraftSet[] {
 function ExerciseCard({
   row,
   sessionId,
+  templateSlug,
 }: {
   row: ExerciseLogRow;
   sessionId: number;
+  templateSlug: string;
 }) {
   const [drafts, setDrafts] = useState<DraftSet[]>(() => setsToDraft(row.sets));
   const [pending, startTransition] = useTransition();
@@ -251,7 +262,13 @@ function ExerciseCard({
           ) : (
             <div className="flex items-baseline gap-2">
               <h3 className="font-heading text-lg font-semibold tracking-tight">
-                {displayName}
+                <Link
+                  href={`/hypertrophy/${templateSlug}/exercise/${row.exerciseSlug}`}
+                  className="decoration-1 underline-offset-4 hover:underline"
+                  title={`Verlauf von ${row.name} ansehen`}
+                >
+                  {displayName}
+                </Link>
               </h3>
               {isOverridden && (
                 <span className="text-[10px] font-medium tracking-wider text-muted-foreground uppercase">

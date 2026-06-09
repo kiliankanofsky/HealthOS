@@ -30,7 +30,11 @@ export type Split = {
 };
 
 export type SplitsResult = {
-  mode: "km" | "laps";
+  // "km"    = reiner Dauerlauf (alle Balken sind Kilometer)
+  // "laps"  = reine Intervalle (alle Balken sind Runden/Segmente)
+  // "mixed" = Kombination: durchgehende Blöcke km-weise, Strides/Intervalle
+  //           als Runden (z.B. Recovery-Lauf + Strides am Ende)
+  mode: "km" | "laps" | "mixed";
   splits: Split[];
 };
 
@@ -89,7 +93,10 @@ function runAtDistance(runs: Run[], distance: number): Run | null {
   return runs[runs.length - 1] ?? null;
 }
 
-function withFastest(mode: "km" | "laps", splits: Omit<Split, "isFastest">[]): SplitsResult {
+function withFastest(
+  mode: "km" | "laps" | "mixed",
+  splits: Omit<Split, "isFastest">[],
+): SplitsResult {
   if (splits.length === 0) return { mode, splits: [] };
   const min = Math.min(...splits.map((s) => s.paceSec));
   return {
@@ -128,41 +135,77 @@ export function sessionTotals(
   return { durationSec: Math.round(durationSec), distanceMeters: Math.round(distanceMeters) };
 }
 
+// Mindest-Distanz, ab der ein durchgehender (reps=1) Block km-weise abgetastet
+// wird. Kürzere reps=1-Blöcke (z.B. einzelne kurze Strides) bleiben ein Balken.
+const KM_SPLIT_MIN_METERS = 1500;
+
+// Tastet einen einzelnen zusammenhängenden Block km-weise ab.
+function kmSplitsForBlock(
+  blockRuns: Run[],
+  startIndex: number,
+): Omit<Split, "isFastest">[] {
+  const total = blockRuns.reduce((s, r) => s + r.meters, 0);
+  const kmCount = Math.max(1, Math.round(total / 1000));
+  const out: Omit<Split, "isFastest">[] = [];
+  for (let i = 0; i < kmCount; i++) {
+    const mid = Math.min((i + 0.5) * 1000, total);
+    const run = runAtDistance(blockRuns, mid);
+    out.push({
+      index: startIndex + i,
+      paceSec: run?.paceSec ?? blockRuns[0]?.paceSec ?? 0,
+      kind: run?.kind ?? "work",
+      meters: 1000, // km-Modus → einheitliche Dicke pro Balken
+    });
+  }
+  return out;
+}
+
 export function buildSplits(
   blocks: SplitsBlock[],
   zones: PaceZones | null,
 ): SplitsResult {
-  const isInterval = blocks.some((b) => b.repetitions > 1);
-  const runs = expandRuns(blocks, zones);
-  if (runs.length === 0) return { mode: isInterval ? "laps" : "km", splits: [] };
+  // PRO BLOCK entscheiden, statt die ganze Session über einen Kamm zu scheren:
+  //  - durchgehender Block (reps=1, ≥1,5 km) → km-weise Balken
+  //  - Intervall-/Strides-Block (reps>1) oder kurzer reps=1-Block → pro
+  //    Segment-Vorkommen ein Balken (Runde)
+  // So wird "Recovery-Dauerlauf + Strides" korrekt kombiniert dargestellt.
+  const splits: Omit<Split, "isFastest">[] = [];
+  let idx = 0;
+  let anyKm = false;
+  let anyLap = false;
 
-  if (isInterval) {
-    // Pro Segment-Vorkommen ein Balken (Warmup, Work, Recovery, …, Cooldown).
-    // meters = tatsächliche/abgeleitete Distanz → Balken-Dicke.
-    const splits = runs.map((r, i) => ({
-      index: i + 1,
-      paceSec: r.paceSec,
-      kind: r.kind,
-      meters: r.meters,
-    }));
-    return withFastest("laps", splits);
+  for (const b of blocks) {
+    const reps = Math.max(1, b.repetitions);
+    const blockRuns = expandRuns(
+      [{ repetitions: reps, segmentsJson: b.segmentsJson }],
+      zones,
+    );
+    if (blockRuns.length === 0) continue;
+
+    const blockMeters = blockRuns.reduce((s, r) => s + r.meters, 0);
+    if (reps === 1 && blockMeters >= KM_SPLIT_MIN_METERS) {
+      const kmSplits = kmSplitsForBlock(blockRuns, idx + 1);
+      splits.push(...kmSplits);
+      idx += kmSplits.length;
+      anyKm = true;
+    } else {
+      // Strides/Intervalle bzw. kurzer Block → jedes Segment-Vorkommen als Balken.
+      for (const r of blockRuns) {
+        splits.push({
+          index: ++idx,
+          paceSec: r.paceSec,
+          kind: r.kind,
+          meters: r.meters,
+        });
+      }
+      anyLap = true;
+    }
   }
 
-  // Dauerlauf: in Kilometer neu abtasten. Jeder km bekommt die Pace des
-  // Segments, in das seine Mitte fällt (Warmup-km langsamer → kürzerer Balken).
-  const total = runs.reduce((s, r) => s + r.meters, 0);
-  const kmCount = Math.max(1, Math.round(total / 1000));
-  const splits = [];
-  for (let i = 0; i < kmCount; i++) {
-    const mid = Math.min((i + 0.5) * 1000, total);
-    const run = runAtDistance(runs, mid);
-    splits.push({
-      index: i + 1,
-      paceSec: run?.paceSec ?? runs[0].paceSec,
-      kind: run?.kind ?? "work",
-      // Im km-Modus ist jeder Balken genau ein Kilometer → einheitliche Dicke.
-      meters: 1000,
-    });
+  if (splits.length === 0) {
+    const isInterval = blocks.some((b) => b.repetitions > 1);
+    return { mode: isInterval ? "laps" : "km", splits: [] };
   }
-  return withFastest("km", splits);
+  const mode = anyKm && anyLap ? "mixed" : anyKm ? "km" : "laps";
+  return withFastest(mode, splits);
 }

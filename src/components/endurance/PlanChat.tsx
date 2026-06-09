@@ -1,6 +1,6 @@
 "use client";
 
-import { Loader2, Send, Sparkles } from "lucide-react";
+import { Check, ChevronDown, Loader2, Send, Sparkles } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useRef, useState, useTransition } from "react";
 import ReactMarkdown from "react-markdown";
@@ -8,6 +8,7 @@ import remarkGfm from "remark-gfm";
 
 import { sendPlanChatMessage } from "@/app/endurance/recommendations/actions";
 import type { ChatMessage } from "@/lib/endurance/ai-chat";
+import { type ChatModel, chatModelLabel } from "@/lib/endurance/ai-models";
 import { cn } from "@/lib/utils";
 
 // Kompaktes Markdown-Styling für Chat-Bubbles (ohne @tailwindcss/typography).
@@ -41,6 +42,7 @@ export function PlanChat({ planId }: Props) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [chatModel, setChatModel] = useState<ChatModel>("anthropic");
   const [pending, startTransition] = useTransition();
   const scrollRef = useRef<HTMLDivElement | null>(null);
 
@@ -52,7 +54,7 @@ export function PlanChat({ planId }: Props) {
     setMessages(next);
     setInput("");
     startTransition(async () => {
-      const r = await sendPlanChatMessage(planId, next);
+      const r = await sendPlanChatMessage(planId, next, chatModel);
       if (!r.ok) {
         setError(r.error ?? "Etwas ist schiefgelaufen.");
         return;
@@ -68,6 +70,13 @@ export function PlanChat({ planId }: Props) {
 
   return (
     <div className="space-y-3">
+      <div className="flex items-center justify-between">
+        <span className="text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground">
+          Plan-Assistent
+        </span>
+        <ChatModelPicker model={chatModel} onChange={setChatModel} disabled={pending} />
+      </div>
+
       {messages.length > 0 && (
         <div
           ref={scrollRef}
@@ -150,9 +159,65 @@ export function PlanChat({ planId }: Props) {
         </p>
       ) : (
         <p className="text-xs text-muted-foreground">
-          Claude passt deinen Plan direkt an (verschieben, ersetzen, anlegen,
-          löschen) und kennt deine letzten Erholungsdaten.
+          Die KI ({chatModelLabel(chatModel)}) passt deinen Plan direkt an
+          (verschieben, ersetzen, anlegen, löschen) und kennt deine letzten
+          Erholungsdaten.
         </p>
+      )}
+    </div>
+  );
+}
+
+// Modell-Wahl im Tooltip-Stil: schlichter Button (grau bei Hover), Klick öffnet
+// die Auswahl zwischen Anthropic (Claude) und dem kostenlosen OpenRouter-Modell.
+function ChatModelPicker({
+  model,
+  onChange,
+  disabled,
+}: {
+  model: ChatModel;
+  onChange: (m: ChatModel) => void;
+  disabled?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const options: ChatModel[] = ["anthropic", "free"];
+  return (
+    <div className="relative">
+      <button
+        type="button"
+        disabled={disabled}
+        onClick={() => setOpen((o) => !o)}
+        title="KI-Modell wählen"
+        className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-50"
+      >
+        <Sparkles className="size-3" />
+        {chatModelLabel(model)}
+        <ChevronDown className="size-3" />
+      </button>
+      {open && (
+        <>
+          <div
+            className="fixed inset-0 z-10"
+            aria-hidden
+            onClick={() => setOpen(false)}
+          />
+          <div className="absolute right-0 z-20 mt-1 w-48 overflow-hidden rounded-lg border border-border bg-card py-1 shadow-lg">
+            {options.map((m) => (
+              <button
+                key={m}
+                type="button"
+                onClick={() => {
+                  onChange(m);
+                  setOpen(false);
+                }}
+                className="flex w-full items-center justify-between gap-2 px-3 py-1.5 text-left text-xs hover:bg-muted"
+              >
+                <span>{chatModelLabel(m)}</span>
+                {m === model && <Check className="size-3 text-primary" />}
+              </button>
+            ))}
+          </div>
+        </>
       )}
     </div>
   );

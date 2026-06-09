@@ -427,6 +427,10 @@ export const runSessions = sqliteTable(
     vo2MaxRun: real("vo2_max_run"),
     notes: text("notes"),
     rawJson: text("raw_json"),
+    // Per-Lap-Zusammenfassung aus Garmin (Splits). Erlaubt der KI, einen
+    // gleichmäßigen Recovery-Lauf von einem strukturierten Workout (Intervalle,
+    // Tempowechsel) zu unterscheiden. null = noch nicht (nach-)synct.
+    lapsJson: text("laps_json", { mode: "json" }).$type<RunLap[] | null>(),
     createdAt: text("created_at")
       .notNull()
       .default(sql`(CURRENT_TIMESTAMP)`),
@@ -440,6 +444,15 @@ export const runSessions = sqliteTable(
     check("duration_non_negative", sql`${table.durationSeconds} >= 0`),
   ],
 );
+
+// Eine Runde/ein Split eines Laufs (aus Garmin laps). Reicht der KI, um
+// Pace-Varianz (Intervalle) von gleichmäßigem Tempo (Recovery) zu erkennen.
+export type RunLap = {
+  distanceMeters: number;
+  durationSec: number;
+  avgPaceSecPerKm: number | null;
+  avgHr: number | null;
+};
 
 export type RunSession = typeof runSessions.$inferSelect;
 export type NewRunSession = typeof runSessions.$inferInsert;
@@ -600,6 +613,14 @@ export const trainingPlans = sqliteTable(
     referenceFileBase64: text("reference_file_base64"),
     referenceFileMediaType: text("reference_file_media_type"),
     notes: text("notes"),
+    // #10: KI-generierte Tagesnotiz zur NÄCHSTEN Session — leitet aus aktuellen
+    // Health-Daten (HRV/Schlaf/Recovery) eine kurze, tagesaktuelle Empfehlung
+    // ab. Wird vom täglichen Cron und vom Sync-Button aktualisiert.
+    nextNoteText: text("next_note_text"),
+    // Datum der Session, auf die sich die Notiz bezieht — damit wir erkennen,
+    // ob die Notiz noch zur aktuell nächsten Session passt (sonst veraltet).
+    nextNoteForDate: text("next_note_for_date"),
+    nextNoteGeneratedAt: text("next_note_generated_at"),
     createdAt: text("created_at")
       .notNull()
       .default(sql`(CURRENT_TIMESTAMP)`),

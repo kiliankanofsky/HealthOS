@@ -11,6 +11,7 @@ import { syncGarminRuns } from "@/lib/integrations/garmin-runs-import";
 import { getGarminClient } from "@/lib/integrations/garmin-strength";
 import { syncGarminStrength } from "@/lib/integrations/garmin-strength-import";
 import { sheetsAdapter } from "@/lib/integrations/sheets";
+import { refreshNextSessionNote } from "@/lib/endurance/ai-note";
 
 // Shared sync runner — vom täglichen Cron (/api/cron/sync) UND vom UI-Button
 // (Server Action `syncNow`) verwendet, damit beide Wege identisch laufen.
@@ -29,6 +30,9 @@ export type SyncSummary = {
     garminRuns: SyncResult;
     garminMetrics: SyncResult;
     nutrition: SyncResult;
+    // #10: KI-Tagesnotiz für die nächste Session (nutzt die frisch gesyncten
+    // Metrics — läuft daher als letzter Schritt).
+    nextSessionNote: SyncResult;
   };
 };
 
@@ -137,6 +141,11 @@ async function syncMetrics(): Promise<Record<string, unknown>> {
   return { daysProcessed: result.daysProcessed };
 }
 
+async function syncNextSessionNote(): Promise<Record<string, unknown>> {
+  const r = await refreshNextSessionNote();
+  return { generated: r.generated };
+}
+
 async function syncNutrition(): Promise<Record<string, unknown>> {
   const since = isoDaysAgo(7);
   const entries = await fddbAdapter.fetchNutritionEntries({ since });
@@ -160,6 +169,8 @@ export async function runAllSyncs(): Promise<SyncSummary> {
     garminRuns: await safe(syncRuns),
     garminMetrics: await safe(syncMetrics),
     nutrition: await safe(syncNutrition),
+    // Zuletzt: Tagesnotiz aus den frisch gesyncten Erholungsdaten ableiten.
+    nextSessionNote: await safe(syncNextSessionNote),
   };
   const ok = Object.values(results).every((r) => r.ok);
   return { ok, ranAt, results };

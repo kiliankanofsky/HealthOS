@@ -40,7 +40,13 @@ export function SplitsChart({
   return (
     <div>
       <div className="mb-2 flex items-center justify-between text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
-        <span>{result.mode === "km" ? "Kilometer" : "Runde"}</span>
+        <span>
+          {result.mode === "km"
+            ? "Kilometer"
+            : result.mode === "laps"
+              ? "Runde"
+              : "km · Runden"}
+        </span>
         <span>Pace</span>
       </div>
       <div className="space-y-1">

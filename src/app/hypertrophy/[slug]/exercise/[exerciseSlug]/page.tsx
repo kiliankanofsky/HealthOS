@@ -7,6 +7,7 @@ import { SiblingSwipe } from "@/components/hypertrophy/SiblingSwipe";
 import { AppShell } from "@/components/site/AppShell";
 import {
   getSetsByTemplateExercise,
+  getSwapDatesForTemplateExercise,
   getTemplateBySlug,
   getTemplateExerciseBySlug,
   getTemplateExercises,
@@ -31,6 +32,9 @@ export default async function ExerciseProgressPage({
   if (!row) notFound();
 
   const sets = await getSetsByTemplateExercise(row.templateExercise.id);
+  // Tage, an denen dieser Slot durch eine andere Übung ersetzt war — sie zählen
+  // nicht zum Verlauf der Stamm-Übung, werden aber als Indikator-Punkt gezeigt.
+  const swaps = await getSwapDatesForTemplateExercise(row.templateExercise.id);
   const repMin = row.templateExercise.repMin ?? row.exercise.defaultRepMin;
   const repMax = row.templateExercise.repMax ?? row.exercise.defaultRepMax;
 
@@ -137,6 +141,7 @@ export default async function ExerciseProgressPage({
         <ExerciseProgressChart
           sets={sets}
           unilateral={row.exercise.unilateral}
+          swaps={swaps}
         />
       </section>
 

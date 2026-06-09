@@ -27,6 +27,7 @@ import {
 } from "@/lib/db/queries";
 import type {
   NewTrainingPlanBlock,
+  RunLap,
   TrainingPlan,
   TrainingPlanBlockSegment,
   TrainingPlanBlockSegmentKind,
@@ -42,10 +43,13 @@ import { formatPace, formatSecondsAsHms, type PaceZones } from "@/lib/endurance/
 import { formatDistance, SESSION_TYPE_LABELS } from "@/lib/endurance/plan-format";
 import { sessionTotals, type SplitsBlock } from "@/lib/endurance/plan-splits";
 import { computeFitness } from "@/lib/endurance/training-load";
+import { CHAT_MODEL_INFO, type ChatModel } from "@/lib/endurance/ai-models";
+import {
+  openRouterChat,
+  toolToOpenAI,
+  type OpenAIMessage,
+} from "@/lib/endurance/ai-openrouter";
 
-// Chat-Modell konfigurierbar. Default Haiku (günstig, gleiche Tool-Use-Klasse);
-// für maximale Zuverlässigkeit hier auf "claude-sonnet-4-6" wechseln.
-const CHAT_MODEL = "claude-haiku-4-5";
 const MAX_TOOL_ROUNDS = 6;
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const WEEKDAYS = ["So", "Mo", "Di", "Mi", "Do", "Fr", "Sa"];
@@ -174,6 +178,47 @@ function sessionLine(s: TrainingPlanSession): string {
   return `#${s.id} ${s.date} (${wd}) ${SESSION_TYPE_LABELS[s.sessionType]} "${s.title}" · ${km} · ${dur} · ${s.status}`;
 }
 
+// Expliziter Zeit-Anker: heutiger Tag + die unmittelbar anstehenden Einheiten.
+// Damit die KI verlässlich weiß, was HEUTE und als Nächstes ansteht — statt das
+// aus der flachen Session-Liste raten zu müssen.
+function todayAndUpcomingText(
+  sessions: TrainingPlanSession[],
+  todayIso: string,
+): string {
+  const sorted = [...sessions].sort(
+    (a, b) => a.date.localeCompare(b.date) || a.dayOrder - b.dayOrder,
+  );
+  const todayWd = WEEKDAYS[new Date(`${todayIso}T00:00:00`).getDay()];
+  const today = sorted.filter((s) => s.date === todayIso);
+  const future = sorted.filter((s) => s.date > todayIso).slice(0, 4);
+
+  const lines = [`Heute ist ${todayWd}, der ${todayIso}.`];
+  if (today.length > 0) {
+    lines.push(
+      `HEUTE geplant: ${today
+        .map(
+          (s) =>
+            `${SESSION_TYPE_LABELS[s.sessionType]} "${s.title}" (#${s.id}, ${s.status})`,
+        )
+        .join("; ")}`,
+    );
+  } else {
+    lines.push(`HEUTE ist keine Einheit geplant (Ruhetag).`);
+  }
+  if (future.length > 0) {
+    lines.push(`Als Nächstes:`);
+    for (const s of future) {
+      const wd = WEEKDAYS[new Date(`${s.date}T00:00:00`).getDay()];
+      lines.push(
+        `  ${s.date} (${wd}): ${SESSION_TYPE_LABELS[s.sessionType]} "${s.title}" (#${s.id})`,
+      );
+    }
+  } else {
+    lines.push(`Keine weiteren geplanten Einheiten in der Zukunft.`);
+  }
+  return lines.join("\n");
+}
+
 function metricsText(
   rows: Awaited<ReturnType<typeof getDailyMetricsBetween>>,
 ): string {
@@ -207,6 +252,28 @@ function metricsText(
   return lines.join("\n") + (baseline ? `\nHinweis:${baseline}` : "");
 }
 
+// Charakterisiert einen Lauf anhand seiner Garmin-Laps: gleichmäßig (Recovery/
+// Dauerlauf) vs. strukturiert (Intervalle/Tempowechsel). So kann die KI z.B.
+// einen 5k-Recovery-Lauf von einem 5k-Intervall-Workout unterscheiden.
+function describeLaps(laps: RunLap[] | null | undefined): string | null {
+  if (!laps || laps.length < 3) return null;
+  const paces = laps
+    .filter((l) => l.distanceMeters >= 200 && l.avgPaceSecPerKm != null)
+    .map((l) => l.avgPaceSecPerKm as number);
+  if (paces.length < 3) return null;
+  const sorted = [...paces].sort((a, b) => a - b);
+  const median = sorted[Math.floor(sorted.length / 2)];
+  const fast = paces.filter((p) => p <= median * 0.92).length;
+  const spread = Math.max(...paces) - Math.min(...paces); // sec/km
+  if (fast >= 2 && spread >= 30) {
+    return `strukturiert: ${laps.length} Laps, ~${fast} schnelle Abschnitte, Pace-Spanne ${Math.round(spread)}s/km → Intervalle/Workout`;
+  }
+  if (spread < 20) {
+    return `gleichmäßig: ${laps.length} Laps → Dauerlauf/Recovery`;
+  }
+  return `variabel: ${laps.length} Laps, Pace-Spanne ${Math.round(spread)}s/km`;
+}
+
 function runsText(runs: Awaited<ReturnType<typeof getRunSessionsBetween>>): string {
   if (runs.length === 0) return "(keine Läufe erfasst)";
   // Neueste zuerst, max. 12.
@@ -221,6 +288,8 @@ function runsText(runs: Awaited<ReturnType<typeof getRunSessionsBetween>>): stri
       if (r.avgHeartRate != null) parts.push(`HF ${r.avgHeartRate}`);
       if (r.aerobicTrainingEffect != null) parts.push(`TE ${r.aerobicTrainingEffect.toFixed(1)}`);
       if (r.trainingLoad != null) parts.push(`Load ${Math.round(r.trainingLoad)}`);
+      const laps = describeLaps(r.lapsJson);
+      if (laps) parts.push(laps);
       return "  " + parts.join(" · ");
     })
     .join("\n");
@@ -271,6 +340,9 @@ function buildSystem(args: {
     ``,
     `PLAN: ${plan.name} — Race ${plan.raceName ?? "—"} am ${plan.raceDate ?? "—"}, Ziel ${formatSecondsAsHms(plan.targetTimeSeconds)} (${formatPace(plan.targetPaceSecPerKm, { withUnit: true })}). Heute ist ${todayIso}.`,
     ``,
+    `HEUTE & NÄCHSTE EINHEITEN:`,
+    todayAndUpcomingText(sessions, todayIso),
+    ``,
     `SESSIONS (#ID Datum (Tag) Typ "Titel" · Distanz · Dauer · Status):`,
     ...sessions.map(sessionLine),
     ``,
@@ -280,7 +352,8 @@ function buildSystem(args: {
     `FITNESS / FATIGUE / FORM (aus Garmin Training Load):`,
     fitnessText(fitness),
     ``,
-    `TRAININGSHISTORIE (letzte absolvierte Läufe):`,
+    `TRAININGSHISTORIE (letzte absolvierte Läufe — inkl. Lauf-Struktur aus Garmin-Laps):`,
+    `Nutze die Struktur ("gleichmäßig" vs. "strukturiert/Intervalle"), um die tatsächliche Belastung einzuschätzen — ein 5k-Recovery zählt anders als 5k mit Intervallen.`,
     runsText(runs),
   ].join("\n");
 }
@@ -466,11 +539,11 @@ export async function runPlanChat(
   planId: number,
   history: ChatMessage[],
   todayIso: string,
+  model: ChatModel = "anthropic",
 ): Promise<{ reply: string; changed: boolean }> {
   const plan = await getTrainingPlanById(planId);
   if (!plan) return { reply: "Kein Plan gefunden.", changed: false };
 
-  const client = getClient();
   const sessions = await getSessionsForPlan(planId);
   const [metrics, runsRaw] = await Promise.all([
     getDailyMetricsBetween(isoDaysAgo(todayIso, 14), todayIso),
@@ -485,6 +558,21 @@ export async function runPlanChat(
 
   const system = buildSystem({ plan, sessions, todayIso, metrics, runs, fitness });
 
+  const info = CHAT_MODEL_INFO[model];
+  if (info.provider === "openrouter") {
+    return runChatOpenRouter(plan, system, history, info.id, info.fallbacks);
+  }
+  return runChatAnthropic(plan, system, history, info.id);
+}
+
+// ---- Anthropic-Loop (Claude, native tool-use) ----
+async function runChatAnthropic(
+  plan: TrainingPlan,
+  system: string,
+  history: ChatMessage[],
+  modelId: string,
+): Promise<{ reply: string; changed: boolean }> {
+  const client = getClient();
   const messages: Anthropic.MessageParam[] = history.map((m) => ({
     role: m.role,
     content: m.content,
@@ -493,7 +581,7 @@ export async function runPlanChat(
   let changed = false;
   for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
     const resp = await client.messages.create({
-      model: CHAT_MODEL,
+      model: modelId,
       max_tokens: 2048,
       system,
       tools: TOOLS,
@@ -530,6 +618,60 @@ export async function runPlanChat(
 
   return {
     reply: "Das war komplexer als erwartet — ich habe nach mehreren Schritten abgebrochen. Bitte formuliere die Anpassung etwas kleiner.",
+    changed,
+  };
+}
+
+// ---- OpenRouter/DeepSeek-Loop (OpenAI-kompatibles tool-calling) ----
+async function runChatOpenRouter(
+  plan: TrainingPlan,
+  system: string,
+  history: ChatMessage[],
+  modelId: string,
+  fallbacks?: string[],
+): Promise<{ reply: string; changed: boolean }> {
+  const tools = TOOLS.map((t) =>
+    toolToOpenAI({ name: t.name, description: t.description, input_schema: t.input_schema }),
+  );
+  const messages: OpenAIMessage[] = [
+    { role: "system", content: system },
+    ...history.map((m) => ({ role: m.role, content: m.content })),
+  ];
+
+  let changed = false;
+  for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
+    const resp = await openRouterChat({
+      model: modelId,
+      fallbackModels: fallbacks,
+      messages,
+      tools,
+      toolChoice: "auto",
+      maxTokens: 2048,
+    });
+    const msg = resp.choices[0].message;
+    const toolCalls = msg.tool_calls ?? [];
+
+    if (toolCalls.length === 0) {
+      return { reply: (msg.content ?? "").trim() || "Erledigt.", changed };
+    }
+
+    messages.push({ role: "assistant", content: msg.content ?? null, tool_calls: toolCalls });
+    for (const tc of toolCalls) {
+      let input: Record<string, unknown> = {};
+      try {
+        input = JSON.parse(tc.function.arguments || "{}") as Record<string, unknown>;
+      } catch {
+        // Ungültige Argumente → leeres Objekt, executeTool meldet den Fehler.
+      }
+      const r = await executeTool(plan, tc.function.name, input);
+      if (r.mutated) changed = true;
+      messages.push({ role: "tool", tool_call_id: tc.id, content: r.message });
+    }
+  }
+
+  return {
+    reply:
+      "Das war komplexer als erwartet — ich habe nach mehreren Schritten abgebrochen. Bitte formuliere die Anpassung etwas kleiner.",
     changed,
   };
 }

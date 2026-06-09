@@ -454,6 +454,29 @@ export async function deleteSet(id: number): Promise<void> {
 
 // ---- Session-Exercise-Overrides ----
 
+export type ExerciseSwap = { date: string; name: string };
+
+// Alle Tage, an denen dieser Slot durch eine alternative Übung ersetzt wurde.
+// Für die Verlaufs-Grafik: solche Tage zählen NICHT zum e1RM-Trend der
+// Stamm-Übung, werden aber als Indikator-Punkt auf der Brücken-Linie gezeigt.
+export async function getSwapDatesForTemplateExercise(
+  templateExerciseId: number,
+): Promise<ExerciseSwap[]> {
+  return db
+    .select({
+      date: workoutSessions.date,
+      name: sessionExerciseOverrides.name,
+    })
+    .from(sessionExerciseOverrides)
+    .innerJoin(
+      workoutSessions,
+      eq(workoutSessions.id, sessionExerciseOverrides.sessionId),
+    )
+    .where(eq(sessionExerciseOverrides.templateExerciseId, templateExerciseId))
+    .orderBy(asc(workoutSessions.date))
+    .all();
+}
+
 export async function getOverridesForSession(
   sessionId: number,
 ): Promise<SessionExerciseOverride[]> {
@@ -833,6 +856,7 @@ export async function upsertRunSession(
         trainingLoad: input.trainingLoad ?? null,
         vo2MaxRun: input.vo2MaxRun ?? null,
         rawJson: input.rawJson ?? null,
+        lapsJson: input.lapsJson ?? null,
         updatedAt: sql`(CURRENT_TIMESTAMP)`,
       },
     })

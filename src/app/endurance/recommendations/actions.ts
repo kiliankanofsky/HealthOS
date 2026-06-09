@@ -37,6 +37,7 @@ import {
   chunkWeeks,
   generateChunk,
 } from "@/lib/endurance/ai-generator";
+import { type ChatModel, modelLabel } from "@/lib/endurance/ai-models";
 import { persistChunkOutput } from "@/lib/endurance/ai-persist";
 import {
   computePlanWeeks,
@@ -365,7 +366,7 @@ export async function generatePlanSessions(
   if (isLast) {
     await setTrainingPlanStatus(plan.id, "active");
     await updateTrainingPlan(plan.id, {
-      notes: `KI-generiert mit ${model === "opus" ? "Opus 4.8" : "Sonnet 4.6"} am ${new Date().toISOString().slice(0, 10)}.`,
+      notes: `KI-generiert mit ${modelLabel(model)} am ${new Date().toISOString().slice(0, 10)}.`,
     });
   }
 
@@ -693,12 +694,18 @@ export type ChatState = {
 export async function sendPlanChatMessage(
   planId: number,
   history: ChatMessage[],
+  model: ChatModel = "anthropic",
 ): Promise<ChatState> {
   if (!Array.isArray(history) || history.length === 0) {
     return { ok: false, error: "Keine Nachricht." };
   }
   try {
-    const { reply, changed } = await runPlanChat(planId, history, toLocalISODate());
+    const { reply, changed } = await runPlanChat(
+      planId,
+      history,
+      toLocalISODate(),
+      model,
+    );
     if (changed) {
       revalidatePath("/endurance/recommendations");
       revalidatePath("/endurance");

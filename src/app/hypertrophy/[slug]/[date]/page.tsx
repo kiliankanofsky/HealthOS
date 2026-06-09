@@ -195,6 +195,7 @@ export default async function SessionPage({
 
       <SessionLogger
         sessionId={session.id}
+        templateSlug={template.slug}
         exerciseRows={await Promise.all(exerciseRows.map(async (row) => {
           const overrideName =
             overrideByTemplateExerciseId.get(row.templateExercise.id) ?? null;
@@ -214,6 +215,7 @@ export default async function SessionPage({
           return {
             templateExerciseId: row.templateExercise.id,
             name: row.exercise.name,
+            exerciseSlug: row.exercise.slug,
             overrideName,
             unilateral: row.exercise.unilateral,
             repMin: row.templateExercise.repMin ?? row.exercise.defaultRepMin,

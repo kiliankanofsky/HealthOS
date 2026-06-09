@@ -133,7 +133,19 @@ export function PlanGeneratorButton({
             onClick={() => setModel("opus")}
             disabled={pending}
           />
+          <ModelChip
+            label="Open-Source (gratis)"
+            sub="kostenlos · OpenRouter · ggf. langsam/limitiert"
+            active={model === "free"}
+            onClick={() => setModel("free")}
+            disabled={pending}
+          />
         </div>
+        <p className="text-[11px] text-muted-foreground">
+          Hinweis: Das Gratis-Modell läuft über OpenRouter, kann keine Referenz-PDF
+          per Vision lesen (nutzt extrahierten Text) und ist gelegentlich
+          rate-limitiert. Für beste Qualität Sonnet/Opus.
+        </p>
       </div>
 
       <div className="flex flex-wrap items-center gap-3">
@@ -175,8 +187,8 @@ export function PlanGeneratorButton({
             <p className="mt-1 text-xs">
               {status.progress.doneChunks} von{" "}
               {status.progress.totalChunks ?? "?"} Chunks waren bereits
-              erfolgreich. Du kannst über „Generierung fortsetzen" weitermachen
-              oder „Sessions löschen" und neu starten.
+              erfolgreich. Du kannst über „Generierung fortsetzen“ weitermachen
+              oder „Sessions löschen“ und neu starten.
             </p>
           )}
         </div>
@@ -201,7 +213,7 @@ function ProgressBox({
       <p className="mt-1 text-xs">
         {progress.totalSessions} Sessions + {progress.totalAlternatives}{" "}
         Alternativen bisher fertig. Bleib auf der Seite — bei Wegklicken
-        läuft's im Hintergrund aber die UI verliert den Fortschritt.
+        läuft’s im Hintergrund aber die UI verliert den Fortschritt.
       </p>
     </div>
   );

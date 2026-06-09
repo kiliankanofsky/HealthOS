@@ -17,6 +17,10 @@ import { effectiveE1RM, round1 } from "@/lib/utils/strength";
 type Props = {
   sets: SetWithDate[];
   unilateral?: boolean;
+  // Tage, an denen dieser Slot durch eine andere Übung ersetzt war. Diese Tage
+  // zählen NICHT zum Trend, werden aber als hohler Punkt auf der Brücken-Linie
+  // zwischen den beiden validen Nachbar-Punkten markiert (analog /weight).
+  swaps?: { date: string; name: string }[];
 };
 
 // Eine Linie pro Satz-Position (Satz 1, Satz 2, ...). Je tiefer der Index,
@@ -25,8 +29,11 @@ const SET_COLORS = ["#0F172A", "#475569", "#94A3B8", "#CBD5E1"];
 
 type ChartRow = {
   date: string;
-  // dynamisch: set1, set2, ... mit e1RM-Wert (oder null bei skip)
-  [key: string]: number | string | null;
+  isSwap: boolean;
+  swapName: string | null;
+  // dynamisch: set1, set2, ... mit e1RM-Wert (oder null bei skip/swap),
+  // sowie set1Bridge, ... mit dem interpolierten Brücken-Wert über Tausch-Tage.
+  [key: string]: number | string | boolean | null | undefined;
 };
 
 type SetMeta = {
@@ -35,8 +42,11 @@ type SetMeta = {
   weightMode: "per-side" | "summed";
 };
 
-export function ExerciseProgressChart({ sets, unilateral }: Props) {
-  const { rows, maxSetNumber, metaByDateAndSet } = useMemo(() => {
+export function ExerciseProgressChart({ sets, unilateral, swaps }: Props) {
+  const { rows, maxSetNumber, metaByDateAndSet, swapNameByDate } = useMemo(() => {
+    const swapNameByDate = new Map<string, string>();
+    for (const sw of swaps ?? []) swapNameByDate.set(sw.date, sw.name);
+
     // Pro Datum: e1RM und Roh-Set-Werte je Satz-Position sammeln.
     // Score nutzt effectiveE1RM — bei summed-Mode halbiert sich's intern.
     const byDate = new Map<string, Map<number, SetMeta>>();
@@ -50,29 +60,58 @@ export function ExerciseProgressChart({ sets, unilateral }: Props) {
         weightMode: s.weightMode,
       });
       byDate.set(s.date, dayMap);
-      if (s.setNumber > maxSet) maxSet = s.setNumber;
+      // maxSet nur aus echten (nicht getauschten) Tagen ableiten, damit ein
+      // Tausch-Tag mit mehr Sätzen keine sonst leere Extra-Linie erzeugt.
+      if (!swapNameByDate.has(s.date) && s.setNumber > maxSet) maxSet = s.setNumber;
     }
+
     const dates = [...byDate.keys()].sort();
     const rows: ChartRow[] = dates.map((date) => {
       const day = byDate.get(date)!;
-      const row: ChartRow = { date };
+      const isSwap = swapNameByDate.has(date);
+      const row: ChartRow = {
+        date,
+        isSwap,
+        swapName: isSwap ? (swapNameByDate.get(date) ?? null) : null,
+      };
       for (let n = 1; n <= maxSet; n++) {
         const meta = day.get(n);
-        row[`set${n}`] = meta
-          ? round1(
-              effectiveE1RM({
-                weightKg: meta.weightKg,
-                reps: meta.reps,
-                weightMode: meta.weightMode,
-                unilateral,
-              }),
-            )
-          : null;
+        // Tausch-Tage aus dem Trend nehmen (Werte gehören zu anderer Übung).
+        row[`set${n}`] =
+          isSwap || !meta
+            ? null
+            : round1(
+                effectiveE1RM({
+                  weightKg: meta.weightKg,
+                  reps: meta.reps,
+                  weightMode: meta.weightMode,
+                  unilateral,
+                }),
+              );
       }
       return row;
     });
-    return { rows, maxSetNumber: maxSet, metaByDateAndSet: byDate };
-  }, [sets, unilateral]);
+
+    // Brücken-Linien: für jede Satz-Position ein einzelnes Segment exakt über
+    // jeden Tausch-Tag, linear interpoliert zwischen den validen Nachbarn. Der
+    // Indikator-Punkt sitzt am interpolierten Wert genau auf dieser Linie.
+    const swapIndices = rows
+      .map((r, i) => (r.isSwap ? i : -1))
+      .filter((i) => i >= 0);
+    if (swapIndices.length > 0) {
+      for (let n = 1; n <= maxSet; n++) {
+        const key = `set${n}`;
+        for (const i of swapIndices) fillBridge(i, rows, key);
+      }
+    }
+
+    return {
+      rows,
+      maxSetNumber: maxSet,
+      metaByDateAndSet: byDate,
+      swapNameByDate,
+    };
+  }, [sets, unilateral, swaps]);
 
   if (rows.length === 0) {
     return (
@@ -81,6 +120,8 @@ export function ExerciseProgressChart({ sets, unilateral }: Props) {
       </p>
     );
   }
+
+  const hasSwaps = swapNameByDate.size > 0;
 
   return (
     <div>
@@ -93,7 +134,7 @@ export function ExerciseProgressChart({ sets, unilateral }: Props) {
             </span>
           )}
         </p>
-        <Legend max={maxSetNumber} />
+        <Legend max={maxSetNumber} hasSwaps={hasSwaps} />
       </div>
 
       <div className="h-72 w-full">
@@ -121,12 +162,32 @@ export function ExerciseProgressChart({ sets, unilateral }: Props) {
             <Tooltip
               content={({ active, payload, label }) => {
                 if (!active || !payload?.length) return null;
-                const dayMeta = metaByDateAndSet.get(String(label));
+                const dateStr = String(label);
+                const swapName = swapNameByDate.get(dateStr);
+                if (swapName !== undefined) {
+                  return (
+                    <div className="rounded-lg bg-card px-3 py-2 text-xs shadow-md ring-1 ring-foreground/10">
+                      <p className="mb-1 font-medium">{formatLong(dateStr)}</p>
+                      <p className="text-muted-foreground">
+                        Übung ausgetauscht{swapName ? `: ${swapName}` : ""}
+                      </p>
+                      <p className="text-muted-foreground/80">
+                        zählt nicht zum Verlauf
+                      </p>
+                    </div>
+                  );
+                }
+                const dayMeta = metaByDateAndSet.get(dateStr);
                 return (
                   <div className="rounded-lg bg-card px-3 py-2 text-xs shadow-md ring-1 ring-foreground/10">
-                    <p className="mb-1 font-medium">{formatLong(String(label))}</p>
+                    <p className="mb-1 font-medium">{formatLong(dateStr)}</p>
                     {payload
-                      .filter((p) => p.value !== null && p.value !== undefined)
+                      .filter(
+                        (p) =>
+                          /^set\d+$/.test(String(p.dataKey)) &&
+                          p.value !== null &&
+                          p.value !== undefined,
+                      )
                       .map((p) => {
                         const setNum = Number(String(p.dataKey).replace("set", ""));
                         const meta = dayMeta?.get(setNum);
@@ -153,6 +214,48 @@ export function ExerciseProgressChart({ sets, unilateral }: Props) {
                 );
               }}
             />
+            {/* Brücken-Linien (gestrichelt) über Tausch-Tage + Indikator-Punkt. */}
+            {hasSwaps &&
+              Array.from({ length: maxSetNumber }, (_, i) => i + 1).map((n, idx) => {
+                const color = SET_COLORS[idx % SET_COLORS.length];
+                return (
+                  <Line
+                    key={`bridge-${n}`}
+                    type="monotone"
+                    dataKey={`set${n}Bridge`}
+                    stroke={color}
+                    strokeOpacity={0.5}
+                    strokeWidth={1.4}
+                    strokeDasharray="4 4"
+                    connectNulls={false}
+                    isAnimationActive={false}
+                    activeDot={false}
+                    legendType="none"
+                    dot={(props: DotRenderProps) => {
+                      const { cx, cy, payload, index } = props;
+                      if (
+                        payload?.isSwap !== true ||
+                        typeof cx !== "number" ||
+                        typeof cy !== "number"
+                      ) {
+                        return <g key={`b-${n}-${index}`} />;
+                      }
+                      // Hohler Ring = "hier wurde getauscht, kein echter Wert".
+                      return (
+                        <circle
+                          key={`b-${n}-${index}`}
+                          cx={cx}
+                          cy={cy}
+                          r={4}
+                          fill="white"
+                          stroke={color}
+                          strokeWidth={1.6}
+                        />
+                      );
+                    }}
+                  />
+                );
+              })}
             {Array.from({ length: maxSetNumber }, (_, i) => i + 1).map((n, idx) => (
               <Line
                 key={n}
@@ -173,7 +276,45 @@ export function ExerciseProgressChart({ sets, unilateral }: Props) {
   );
 }
 
-function Legend({ max }: { max: number }) {
+type DotRenderProps = {
+  cx?: number;
+  cy?: number;
+  index?: number;
+  payload?: ChartRow;
+};
+
+// Setzt Brücken-Werte für eine einzelne Tausch-Position `i` einer Satz-Linie:
+// linear interpolierter Wert an `i`, identische Anker-Werte bei prev/next, alle
+// übrigen Slots bleiben undefined. So zeichnet Recharts (connectNulls=false)
+// genau ein Segment über die Lücke — ohne dass die gestrichelte Linie woanders
+// durchscheint. Der Punkt an `i` liegt damit exakt auf der Verbindungslinie.
+function fillBridge(i: number, rows: ChartRow[], key: string): void {
+  const bkey = `${key}Bridge`;
+  const valueAt = (j: number): number | null => {
+    const v = rows[j][key];
+    return typeof v === "number" ? v : null;
+  };
+  let prev = i - 1;
+  while (prev >= 0 && valueAt(prev) === null) prev--;
+  let next = i + 1;
+  while (next < rows.length && valueAt(next) === null) next++;
+  const prevV = prev >= 0 ? valueAt(prev) : null;
+  const nextV = next < rows.length ? valueAt(next) : null;
+  if (prevV !== null && nextV !== null) {
+    const t = (i - prev) / (next - prev);
+    rows[i][bkey] = prevV + (nextV - prevV) * t;
+    rows[prev][bkey] = prevV;
+    rows[next][bkey] = nextV;
+  } else if (prevV !== null) {
+    rows[i][bkey] = prevV;
+    rows[prev][bkey] = prevV;
+  } else if (nextV !== null) {
+    rows[i][bkey] = nextV;
+    rows[next][bkey] = nextV;
+  }
+}
+
+function Legend({ max, hasSwaps }: { max: number; hasSwaps: boolean }) {
   if (max === 0) return null;
   return (
     <div className="flex flex-wrap items-center gap-3 text-xs">
@@ -187,6 +328,15 @@ function Legend({ max }: { max: number }) {
           <span className="text-muted-foreground">Satz {n}</span>
         </span>
       ))}
+      {hasSwaps && (
+        <span className="inline-flex items-center gap-1.5">
+          <span
+            aria-hidden
+            className="inline-block size-2.5 rounded-full border-[1.6px] border-muted-foreground/70 bg-white"
+          />
+          <span className="text-muted-foreground">getauscht</span>
+        </span>
+      )}
     </div>
   );
 }

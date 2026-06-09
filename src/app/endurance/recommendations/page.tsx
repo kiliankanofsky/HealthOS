@@ -1,4 +1,4 @@
-import { ArrowRight, Calendar, Settings2, Target } from "lucide-react";
+import { ArrowRight, Calendar, ChevronLeft, Settings2, Target } from "lucide-react";
 import Link from "next/link";
 
 import { NextRacePlanCard } from "@/components/endurance/NextRacePlanCard";
@@ -33,6 +33,14 @@ export default async function EnduranceRecommendationsPage() {
     <AppShell>
       <main className="mx-auto w-full max-w-[1280px] space-y-8 px-5 py-10 sm:px-8 lg:px-10 lg:py-14">
         <header className="space-y-2">
+          <Link
+            href="/endurance"
+            aria-label="Zurück zu Endurance"
+            title="Zurück zu Endurance"
+            className="mb-1 inline-flex size-8 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+          >
+            <ChevronLeft className="size-4" />
+          </Link>
           <p className="text-[11px] font-medium tracking-[0.22em] text-primary uppercase">
             Endurance · Empfohlene Trainings
           </p>
@@ -97,6 +105,11 @@ async function PlanView({ plan }: { plan: TrainingPlan }) {
   const initialMonth =
     next?.date ?? (todayIso >= plan.planStartDate ? todayIso : plan.planStartDate);
 
+  // #10: KI-Tagesnotiz nur zeigen, wenn sie zur AKTUELL nächsten Session passt
+  // (sonst veraltet — die nächste Session hat sich seit der Generierung geändert).
+  const nextSessionNote =
+    next && plan.nextNoteForDate === next.date ? (plan.nextNoteText ?? null) : null;
+
   return (
     <section className="space-y-6">
       <PlanHeader plan={plan} />
@@ -111,6 +124,7 @@ async function PlanView({ plan }: { plan: TrainingPlan }) {
         paceZones={plan.paceZonesJson ?? null}
         initialMonth={initialMonth}
         todayIso={todayIso}
+        nextSessionNote={nextSessionNote}
       />
 
       {/* Reihe 2: Next-Race-Plan (mit Chat) + Übersicht */}

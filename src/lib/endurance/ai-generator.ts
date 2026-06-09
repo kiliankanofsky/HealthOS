@@ -10,18 +10,16 @@ import {
   buildChunkUserMessage,
   buildPlanContextBlock,
 } from "@/lib/endurance/ai-prompts";
+import { AI_MODELS, type AiModel } from "@/lib/endurance/ai-models";
+import { openRouterChat, toolToOpenAI } from "@/lib/endurance/ai-openrouter";
 
 // ============================================================
 // Modell-Wahl
 // ============================================================
-// Default: Sonnet 4.6 für Iteration (10× günstiger).
-// Opus 4.8 für finalen Plan-Generierungs-Lauf.
-export type AiModel = "sonnet" | "opus";
-
-const MODEL_IDS: Record<AiModel, string> = {
-  sonnet: "claude-sonnet-4-6",
-  opus: "claude-opus-4-8",
-};
+// "sonnet" (Test, günstig) / "opus" (Qualität) via Anthropic, oder
+// "deepseek" (kostenlos) via OpenRouter. Definition: ai-models.ts.
+// Re-Export, damit bestehende Importe aus ai-generator weiter funktionieren.
+export type { AiModel };
 
 // ============================================================
 // Chunking
@@ -110,10 +108,23 @@ function buildReferenceBlock(
   return null;
 }
 
+// Dispatcher: wählt anhand des Providers den Anthropic- oder OpenRouter-Pfad.
 export async function generateChunk(
   plan: TrainingPlan,
   chunkWeeks: TrainingPlanWeek[],
   model: AiModel,
+): Promise<ChunkResult> {
+  const info = AI_MODELS[model];
+  if (info.provider === "openrouter") {
+    return generateChunkOpenRouter(plan, chunkWeeks, info.id, info.fallbacks);
+  }
+  return generateChunkAnthropic(plan, chunkWeeks, info.id);
+}
+
+async function generateChunkAnthropic(
+  plan: TrainingPlan,
+  chunkWeeks: TrainingPlanWeek[],
+  modelId: string,
 ): Promise<ChunkResult> {
   const client = getClient();
 
@@ -132,7 +143,7 @@ export async function generateChunk(
   userContent.push({ type: "text", text: userMessage });
 
   const response = await client.messages.create({
-    model: MODEL_IDS[model],
+    model: modelId,
     max_tokens: 16000,
     // Anmerkung: `thinking: adaptive` ist inkompatibel mit
     // `tool_choice: {type: "tool"}`. Wir brauchen forced tool-use → Thinking
@@ -177,6 +188,62 @@ export async function generateChunk(
       outputTokens: response.usage.output_tokens,
       cacheCreationInputTokens: response.usage.cache_creation_input_tokens ?? 0,
       cacheReadInputTokens: response.usage.cache_read_input_tokens ?? 0,
+    },
+  };
+}
+
+// DeepSeek via OpenRouter (OpenAI-kompatibel). Unterschiede zum Anthropic-Pfad:
+//  - KEIN Vision/PDF: die Referenz wird als extrahierter Text mitgegeben
+//    (hasNativeReference:false). Rein bild-basierte Pläne kann DeepSeek nicht
+//    lesen — dann generiert es aus Methodik + Plan-Settings.
+//  - KEIN Prompt-Caching (jeder Chunk schickt System + Kontext voll).
+//  - Forced tool-use via OpenAI tool_choice.
+async function generateChunkOpenRouter(
+  plan: TrainingPlan,
+  chunkWeeks: TrainingPlanWeek[],
+  modelId: string,
+  fallbacks?: string[],
+): Promise<ChunkResult> {
+  const planContext = buildPlanContextBlock(plan, { hasNativeReference: false });
+  const userMessage = buildChunkUserMessage(chunkWeeks, plan);
+  const tool = toolToOpenAI(CREATE_TRAINING_CHUNK_TOOL);
+
+  const resp = await openRouterChat({
+    model: modelId,
+    fallbackModels: fallbacks,
+    messages: [
+      { role: "system", content: `${SYSTEM_METHODOLOGY}\n\n${planContext}` },
+      { role: "user", content: userMessage },
+    ],
+    tools: [tool],
+    toolChoice: { type: "function", function: { name: CREATE_TRAINING_CHUNK_TOOL.name } },
+    maxTokens: 8000,
+  });
+
+  const call = resp.choices[0]?.message?.tool_calls?.[0];
+  if (!call) {
+    throw new Error(
+      `DeepSeek hat kein tool_call zurückgegeben (finish_reason=${resp.choices[0]?.finish_reason}).`,
+    );
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(call.function.arguments);
+  } catch {
+    throw new Error("DeepSeek-Tool-Argumente sind kein valides JSON.");
+  }
+  const output = parsed as AiChunkOutput;
+  if (!output || !Array.isArray(output.weeks)) {
+    throw new Error("DeepSeek-Output hat kein 'weeks'-Array.");
+  }
+
+  return {
+    output,
+    usage: {
+      inputTokens: resp.usage?.prompt_tokens ?? 0,
+      outputTokens: resp.usage?.completion_tokens ?? 0,
+      cacheCreationInputTokens: 0,
+      cacheReadInputTokens: 0,
     },
   };
 }

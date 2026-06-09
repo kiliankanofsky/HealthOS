@@ -1,7 +1,7 @@
 import { GarminConnect } from "@gooin/garmin-connect";
 
 import { getRunSessionByGarminId, upsertRunSession } from "@/lib/db/queries";
-import type { NewRunSession } from "@/lib/db/schema";
+import type { NewRunSession, RunLap } from "@/lib/db/schema";
 
 // ============================================================
 // Garmin-Runs-Import.
@@ -141,6 +141,18 @@ export async function syncGarminRuns(
       const km = distance / 1000;
       const avgPace = duration / km;
 
+      const existed = dryRun
+        ? undefined
+        : await getRunSessionByGarminId(act.activityId);
+
+      // Laps/Splits: nur holen, wenn der Lauf neu ist oder noch keine Laps
+      // hat (Backfill). Bestehende Laps behalten wir, um pro Sync nicht für
+      // jeden Lauf eine zusätzliche Garmin-Anfrage zu feuern.
+      let laps: RunLap[] | null = existed?.lapsJson ?? null;
+      if (!dryRun && laps == null) {
+        laps = await fetchRunLaps(client, act.activityId, dateIso, log);
+      }
+
       const entry: NewRunSession = {
         garminActivityId: act.activityId,
         date: dateIso,
@@ -158,6 +170,7 @@ export async function syncGarminRuns(
         trainingLoad: numOrNull(act.activityTrainingLoad),
         vo2MaxRun: numOrNull(act.vO2MaxValue),
         rawJson: JSON.stringify(act),
+        lapsJson: laps,
       };
 
       if (dryRun) {
@@ -169,7 +182,6 @@ export async function syncGarminRuns(
         continue;
       }
 
-      const existed = await getRunSessionByGarminId(act.activityId);
       await upsertRunSession(entry);
       if (existed) {
         result.updated += 1;
@@ -190,4 +202,56 @@ export async function syncGarminRuns(
 
 function numOrNull(v: number | null | undefined): number | null {
   return typeof v === "number" && Number.isFinite(v) ? v : null;
+}
+
+// Garmin-Splits-Endpoint: liefert pro Runde einen lapDTO. Wir reduzieren auf
+// das, was die KI zur Struktur-Erkennung braucht (Distanz/Dauer/Pace/HF).
+type LapDTO = {
+  distance?: number | null; // Meter
+  duration?: number | null; // Sekunden
+  movingDuration?: number | null;
+  averageSpeed?: number | null; // m/s
+  averageHR?: number | null;
+};
+type SplitsResponse = { lapDTOs?: LapDTO[] };
+
+async function fetchRunLaps(
+  client: GarminConnect,
+  activityId: number,
+  dateIso: string,
+  log: ImportLogEntry[],
+): Promise<RunLap[] | null> {
+  try {
+    const resp = await client.client.get<SplitsResponse>(
+      `https://connectapi.garmin.com/activity-service/activity/${activityId}/splits`,
+    );
+    const laps = resp.lapDTOs ?? [];
+    const out: RunLap[] = [];
+    for (const l of laps) {
+      const distanceMeters = numOrNull(l.distance) ?? 0;
+      const durationSec =
+        numOrNull(l.duration) ?? numOrNull(l.movingDuration) ?? 0;
+      if (distanceMeters <= 0 && durationSec <= 0) continue;
+      let avgPaceSecPerKm: number | null = null;
+      if (distanceMeters > 0 && durationSec > 0) {
+        avgPaceSecPerKm = durationSec / (distanceMeters / 1000);
+      } else if (l.averageSpeed && l.averageSpeed > 0) {
+        avgPaceSecPerKm = 1000 / l.averageSpeed;
+      }
+      out.push({
+        distanceMeters: Math.round(distanceMeters),
+        durationSec: Math.round(durationSec),
+        avgPaceSecPerKm:
+          avgPaceSecPerKm != null ? Math.round(avgPaceSecPerKm) : null,
+        avgHr: numOrNull(l.averageHR),
+      });
+    }
+    return out.length > 0 ? out : null;
+  } catch (err) {
+    log.push({
+      level: "warn",
+      message: `Activity ${activityId} (${dateIso}): Laps nicht geladen (${(err as Error).message}).`,
+    });
+    return null;
+  }
 }

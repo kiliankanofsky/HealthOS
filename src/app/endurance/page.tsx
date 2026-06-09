@@ -10,6 +10,7 @@ import {
 } from "@/components/endurance/RunCalendar";
 import { TrainingsSection } from "@/components/endurance/TrainingsSection";
 import { AppShell } from "@/components/site/AppShell";
+import { SyncNowButton } from "@/components/site/SyncNowButton";
 import {
   getAllDailyTags,
   getAllRunSessions,
@@ -87,6 +88,9 @@ export default async function EndurancePage() {
             Wöchentliche Distanz, Kalender vergangener Läufe und Garmin-Metrics
             — alles auf einer Seite.
           </p>
+          <div className="flex flex-wrap items-center gap-2 pt-2">
+            <SyncNowButton label="Sync" />
+          </div>
         </header>
 
         <KmGraphSection weeks={weeks} thisWeek={thisWeek} />

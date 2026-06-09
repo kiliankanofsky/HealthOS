@@ -1,6 +1,6 @@
 "use client";
 
-import { CalendarDays, Pencil, Route, Timer } from "lucide-react";
+import { CalendarDays, Pencil, Route, Sparkles, Timer } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 
@@ -47,6 +47,8 @@ type Props = {
   // Vom Server berechnet, damit SSR und Client identisch rendern (kein
   // `new Date()` im Client → keine Hydration-Mismatches).
   todayIso: string;
+  // #10: KI-Tagesnotiz zur nächsten Session (aus Erholungsdaten). null = keine.
+  nextSessionNote: string | null;
 };
 
 const CARD = "rounded-3xl bg-card p-6 ring-1 ring-black/5 shadow-sm lg:p-7";
@@ -60,6 +62,7 @@ export function PlanBoard({
   paceZones,
   initialMonth,
   todayIso,
+  nextSessionNote,
 }: Props) {
   const router = useRouter();
   const [editingId, setEditingId] = useState<number | null>(null);
@@ -147,6 +150,7 @@ export function PlanBoard({
             data={nextSession}
             paceZones={paceZones}
             todayIso={todayIso}
+            note={nextSessionNote}
             onEdit={handleSelect}
           />
         </section>
@@ -170,11 +174,13 @@ function NextSessionCard({
   data,
   paceZones,
   todayIso,
+  note,
   onEdit,
 }: {
   data: NextSessionData | null;
   paceZones: PaceZones | null;
   todayIso: string;
+  note: string | null;
   onEdit: (id: number) => void;
 }) {
   return (
@@ -241,6 +247,13 @@ function NextSessionCard({
                 );
               })}
             </ul>
+          )}
+
+          {note && (
+            <div className="mt-4 flex gap-2 rounded-xl bg-primary/5 px-3 py-2.5 ring-1 ring-primary/10">
+              <Sparkles className="mt-0.5 size-3.5 shrink-0 text-primary" />
+              <p className="text-sm leading-snug text-foreground/80">{note}</p>
+            </div>
           )}
 
           <div className="mt-auto pt-5">

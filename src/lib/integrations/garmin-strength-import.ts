@@ -5,6 +5,7 @@ import {
   createSession as dbCreateSession,
   getAllTemplates,
   getSessionByGarminId,
+  getSetsBySession,
   getTemplateExercises,
   upsertSet,
 } from "@/lib/db/queries";
@@ -113,78 +114,54 @@ export async function syncGarminStrength(
     }
     if (since && dateIso < since) continue;
 
-    // Idempotenz: schon importiert?
+    // Idempotenz mit Backfill: Statt eine bereits importierte Aktivität komplett
+    // zu überspringen, prüfen wir, ob noch Slots LEER sind. Das passiert, wenn
+    // ein früherer Sync die Garmin-Aktivität nur teilweise gesehen hat (Garmin
+    // schreibt Sätze teils verzögert / nach Skip-Group erst nachträglich). Dann
+    // tragen wir die leeren Slots aus Garmin nach — bestehende Sätze (manuell
+    // wie importiert) bleiben unberührt.
     const existing = await getSessionByGarminId(act.activityId);
     if (existing) {
-      result.skippedAlreadyImported += 1;
-      continue;
-    }
-
-    // Sets laden.
-    let detail: ExerciseSetsResponse;
-    try {
-      detail = await client.client.get<ExerciseSetsResponse>(
-        `https://connectapi.garmin.com/activity-service/activity/${act.activityId}/exerciseSets`,
+      const tplRows = templateExercisesByTemplate.get(existing.templateId) ?? [];
+      const existingSets = await getSetsBySession(existing.id);
+      const filledSlots = new Set(existingSets.map((s) => s.templateExerciseId));
+      const hasEmptySlot = tplRows.some(
+        (r) => !filledSlots.has(r.templateExercise.id),
       );
-    } catch (err) {
-      log.push({
-        level: "error",
-        message: `Activity ${act.activityId}: Sets nicht geladen (${(err as Error).message}).`,
-      });
+      if (!hasEmptySlot) {
+        result.skippedAlreadyImported += 1;
+        continue;
+      }
+      // Es gibt leere Slots → erst jetzt die (teurere) Garmin-Detailabfrage.
+      const mapped = await collectGarminSets(client, act, aliasMap, dateIso, log);
+      if (!mapped) {
+        result.skippedAlreadyImported += 1;
+        continue;
+      }
+      const added = await backfillEmptySlots(
+        existing.id,
+        mapped,
+        tplRows,
+        filledSlots,
+        dryRun,
+        act,
+        dateIso,
+        log,
+      );
+      if (added > 0) result.imported += 1;
+      else result.skippedAlreadyImported += 1;
       continue;
     }
 
-    const activeSets = (detail.exerciseSets ?? []).filter(
-      (s) => s.setType === "ACTIVE",
+    // Neue Session: Sätze laden + mappen.
+    const setsByExerciseId = await collectGarminSets(
+      client,
+      act,
+      aliasMap,
+      dateIso,
+      log,
     );
-    if (activeSets.length === 0) {
-      log.push({
-        level: "warn",
-        message: `Activity ${act.activityId} (${dateIso}): keine Active-Sets — übersprungen.`,
-      });
-      continue;
-    }
-
-    // Sätze pro DB-Übung gruppieren.
-    type GroupedSet = { startTime: string; weightKg: number; reps: number };
-    const setsByExerciseId = new Map<number, GroupedSet[]>();
-    const unmappedCodes = new Set<string>();
-
-    for (const s of activeSets) {
-      if (typeof s.weight !== "number" || typeof s.repetitionCount !== "number") {
-        continue;
-      }
-      const code = pickCode(s.exercises?.[0]);
-      if (!code) {
-        unmappedCodes.add("(no code)");
-        continue;
-      }
-      const exerciseId = aliasMap.get(code.toLowerCase());
-      if (!exerciseId) {
-        unmappedCodes.add(code);
-        continue;
-      }
-      const list = setsByExerciseId.get(exerciseId) ?? [];
-      list.push({
-        startTime: s.startTime,
-        weightKg: s.weight / 1000,
-        reps: s.repetitionCount,
-      });
-      setsByExerciseId.set(exerciseId, list);
-    }
-
-    if (unmappedCodes.size > 0) {
-      log.push({
-        level: "warn",
-        message: `Activity ${act.activityId} (${dateIso}): unbekannte Garmin-Codes ignoriert: ${[...unmappedCodes].join(", ")}`,
-      });
-    }
-
-    if (setsByExerciseId.size === 0) {
-      log.push({
-        level: "warn",
-        message: `Activity ${act.activityId} (${dateIso}): kein Set ließ sich mappen.`,
-      });
+    if (!setsByExerciseId) {
       result.skippedUnassigned += 1;
       continue;
     }
@@ -281,9 +258,135 @@ export async function syncGarminStrength(
 
 // ---- helpers ----
 
+type GroupedSet = { startTime: string; weightKg: number; reps: number };
+
 function pickCode(exercise: { category?: string | null; name?: string | null } | undefined): string | null {
   if (!exercise) return null;
   return exercise.name ?? exercise.category ?? null;
+}
+
+// Lädt die Garmin-Sätze einer Aktivität und gruppiert sie (gemappt über die
+// Alias-Map) nach DB-Übungs-ID. Liefert null, wenn nichts Verwertbares da ist.
+// Von Neu-Import UND Backfill geteilt — eine einzige Mapping-Wahrheit.
+async function collectGarminSets(
+  client: GarminConnect,
+  act: GarminActivity,
+  aliasMap: Map<string, number>,
+  dateIso: string,
+  log: ImportLogEntry[],
+): Promise<Map<number, GroupedSet[]> | null> {
+  let detail: ExerciseSetsResponse;
+  try {
+    detail = await client.client.get<ExerciseSetsResponse>(
+      `https://connectapi.garmin.com/activity-service/activity/${act.activityId}/exerciseSets`,
+    );
+  } catch (err) {
+    log.push({
+      level: "error",
+      message: `Activity ${act.activityId}: Sets nicht geladen (${(err as Error).message}).`,
+    });
+    return null;
+  }
+
+  const activeSets = (detail.exerciseSets ?? []).filter(
+    (s) => s.setType === "ACTIVE",
+  );
+  if (activeSets.length === 0) {
+    log.push({
+      level: "warn",
+      message: `Activity ${act.activityId} (${dateIso}): keine Active-Sets — übersprungen.`,
+    });
+    return null;
+  }
+
+  const setsByExerciseId = new Map<number, GroupedSet[]>();
+  const unmappedCodes = new Set<string>();
+  for (const s of activeSets) {
+    if (typeof s.weight !== "number" || typeof s.repetitionCount !== "number") {
+      continue;
+    }
+    const code = pickCode(s.exercises?.[0]);
+    if (!code) {
+      unmappedCodes.add("(no code)");
+      continue;
+    }
+    const exerciseId = aliasMap.get(code.toLowerCase());
+    if (!exerciseId) {
+      unmappedCodes.add(code);
+      continue;
+    }
+    const list = setsByExerciseId.get(exerciseId) ?? [];
+    list.push({
+      startTime: s.startTime,
+      weightKg: s.weight / 1000,
+      reps: s.repetitionCount,
+    });
+    setsByExerciseId.set(exerciseId, list);
+  }
+
+  if (unmappedCodes.size > 0) {
+    log.push({
+      level: "warn",
+      message: `Activity ${act.activityId} (${dateIso}): unbekannte Garmin-Codes ignoriert: ${[...unmappedCodes].join(", ")}`,
+    });
+  }
+  if (setsByExerciseId.size === 0) {
+    log.push({
+      level: "warn",
+      message: `Activity ${act.activityId} (${dateIso}): kein Set ließ sich mappen.`,
+    });
+    return null;
+  }
+  return setsByExerciseId;
+}
+
+// Trägt Garmin-Sätze NUR in Slots nach, die in der Session noch leer sind.
+// Bereits vorhandene Sätze (manuell wie importiert) werden nicht angefasst.
+async function backfillEmptySlots(
+  sessionId: number,
+  mapped: Map<number, GroupedSet[]>,
+  tplRows: TemplateExerciseRow[],
+  filledSlots: Set<number>,
+  dryRun: boolean,
+  act: GarminActivity,
+  dateIso: string,
+  log: ImportLogEntry[],
+): Promise<number> {
+  const tplByExerciseId = new Map<number, TemplateExerciseRow>();
+  for (const r of tplRows) tplByExerciseId.set(r.exercise.id, r);
+
+  let added = 0;
+  const filledNames: string[] = [];
+  for (const [exerciseId, sets] of mapped.entries()) {
+    const tplRow = tplByExerciseId.get(exerciseId);
+    if (!tplRow) continue; // Übung gehört nicht zu diesem Template.
+    if (filledSlots.has(tplRow.templateExercise.id)) continue; // Slot schon gefüllt.
+    const sorted = [...sets].sort((a, b) =>
+      a.startTime.localeCompare(b.startTime),
+    );
+    if (!dryRun) {
+      for (let i = 0; i < sorted.length; i++) {
+        await upsertSet({
+          sessionId,
+          templateExerciseId: tplRow.templateExercise.id,
+          setNumber: i + 1,
+          weightKg: Math.round(sorted[i].weightKg * 100) / 100,
+          reps: sorted[i].reps,
+          weightMode: "per-side",
+        });
+      }
+    }
+    added += sorted.length;
+    filledNames.push(`${tplRow.exercise.name} (${sorted.length})`);
+  }
+
+  if (added > 0) {
+    log.push({
+      level: "info",
+      message: `Activity ${act.activityId} (${dateIso}): ${added} Sätze in leere Slots nachgetragen → ${filledNames.join(", ")}.`,
+    });
+  }
+  return added;
 }
 
 function pickBestTemplate(
