@@ -32,9 +32,13 @@ export type PersistResult = {
 // abweichendes liefert (z.B. 0).
 function dateForDayOfWeek(weekStartIso: string, dayOfWeek: number): string {
   const safeDow = Math.max(1, Math.min(7, Math.round(dayOfWeek)));
-  const monday = new Date(`${weekStartIso}T00:00:00`);
-  monday.setDate(monday.getDate() + (safeDow - 1));
-  return monday.toISOString().slice(0, 10);
+  // UTC-sicher rechnen: `new Date("YYYY-MM-DDT00:00:00")` ist LOKALZEIT, und
+  // `.toISOString()` konvertiert nach UTC → in Zeitzonen mit positivem Offset
+  // (z.B. CEST +2) rutscht das Datum auf den Vortag. Daher über Date.UTC.
+  const [y, m, d] = weekStartIso.split("-").map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  dt.setUTCDate(dt.getUTCDate() + (safeDow - 1));
+  return dt.toISOString().slice(0, 10);
 }
 
 function aiSessionToRow(
