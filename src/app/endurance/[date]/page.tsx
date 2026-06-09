@@ -3,9 +3,11 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 
 import { AppShell } from "@/components/site/AppShell";
+import { SplitsChart } from "@/components/endurance/SplitsChart";
 import { getRunSessionsForDate } from "@/lib/db/queries";
 import type { RunSession } from "@/lib/db/schema";
 import { formatPace, formatSecondsAsHms } from "@/lib/endurance/plan";
+import { lapsPaceSpread, runLapsToSplits } from "@/lib/endurance/plan-splits";
 
 export const dynamic = "force-dynamic";
 
@@ -120,6 +122,18 @@ function RunCard({ run }: { run: RunSession }) {
           }
         />
       </dl>
+
+      {run.lapsJson && run.lapsJson.length > 0 && (
+        <div className="mt-6 border-t border-border/60 pt-5">
+          <p className="mb-3 text-xs font-medium tracking-[0.2em] text-muted-foreground uppercase">
+            Splits
+          </p>
+          <SplitsChart
+            result={runLapsToSplits(run.lapsJson)}
+            highlightFastest={lapsPaceSpread(run.lapsJson) >= 30}
+          />
+        </div>
+      )}
     </section>
   );
 }

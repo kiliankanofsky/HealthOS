@@ -12,6 +12,7 @@
 // ============================================================
 
 import type {
+  RunLap,
   TrainingPlanBlockSegment,
   TrainingPlanBlockSegmentKind,
 } from "@/lib/db/schema";
@@ -158,6 +159,39 @@ function kmSplitsForBlock(
     });
   }
   return out;
+}
+
+// ============================================================
+// ECHTE gelaufene Splits (aus Garmin-Laps) → SplitsResult.
+// Damit dieselbe SplitsChart wie bei den geplanten Sessions auch die
+// tatsächlich gelaufenen Lap-Splits einer absolvierten Einheit zeigt.
+// ============================================================
+export function runLapsToSplits(laps: RunLap[] | null | undefined): SplitsResult {
+  const valid = (laps ?? []).filter(
+    (l) => l.avgPaceSecPerKm != null && l.distanceMeters > 0,
+  );
+  if (valid.length === 0) return { mode: "km", splits: [] };
+  const min = Math.min(...valid.map((l) => l.avgPaceSecPerKm as number));
+  return {
+    mode: "km",
+    splits: valid.map((l, i) => ({
+      index: i + 1,
+      paceSec: l.avgPaceSecPerKm as number,
+      kind: "work",
+      meters: l.distanceMeters,
+      isFastest: Math.round(l.avgPaceSecPerKm as number) <= Math.round(min),
+    })),
+  };
+}
+
+// Pace-Spanne (langsamster − schnellster Lap, Sek/km). Steuert, ob der
+// schnellste Split rot hervorgehoben wird (nur bei strukturierten Läufen).
+export function lapsPaceSpread(laps: RunLap[] | null | undefined): number {
+  const paces = (laps ?? [])
+    .filter((l) => l.avgPaceSecPerKm != null)
+    .map((l) => l.avgPaceSecPerKm as number);
+  if (paces.length < 2) return 0;
+  return Math.max(...paces) - Math.min(...paces);
 }
 
 export function buildSplits(
