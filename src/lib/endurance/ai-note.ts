@@ -7,8 +7,6 @@
 // und auf dem aktiven Plan gespeichert (training_plans.next_note_*).
 // ============================================================
 
-import Anthropic from "@anthropic-ai/sdk";
-
 import {
   getCurrentTrainingPlan,
   getDailyMetricsBetween,
@@ -16,21 +14,15 @@ import {
   updateTrainingPlan,
 } from "@/lib/db/queries";
 import type { TrainingPlanSession } from "@/lib/db/schema";
+import { CHAT_MODEL_INFO } from "@/lib/endurance/ai-models";
+import { openRouterChat } from "@/lib/endurance/ai-openrouter";
 import { formatSecondsAsHms } from "@/lib/endurance/plan";
 import { formatDistance, SESSION_TYPE_LABELS } from "@/lib/endurance/plan-format";
 import { toLocalISODate } from "@/lib/utils/date";
 
-// Günstig + schnell — die Notiz ist 1–2 Sätze.
-const NOTE_MODEL = "claude-haiku-4-5";
-
-let cachedClient: Anthropic | null = null;
-function getClient(): Anthropic {
-  if (!process.env.ANTHROPIC_API_KEY) {
-    throw new Error("ANTHROPIC_API_KEY ist nicht gesetzt (.env.local bzw. Vercel-Env).");
-  }
-  if (!cachedClient) cachedClient = new Anthropic();
-  return cachedClient;
-}
+// Tagesnotiz läuft über das kostenlose OpenRouter-OSS-Modell (mit Fallback),
+// damit der tägliche Sync sie OHNE Anthropic-Guthaben generiert. Ist nur 1–2
+// Sätze, daher unkritisch bzgl. Rate-Limits.
 
 function isoDaysAgo(iso: string, days: number): string {
   const d = new Date(`${iso}T00:00:00`);
@@ -79,7 +71,6 @@ export async function generateNextSessionNote(args: {
   todayIso: string;
 }): Promise<string | null> {
   const { next, metrics, todayIso } = args;
-  const client = getClient();
 
   const dist =
     next.targetDistanceMeters != null ? `, ${formatDistance(next.targetDistanceMeters)}` : "";
@@ -101,18 +92,18 @@ export async function generateNextSessionNote(args: {
     metricsContext(metrics),
   ].join("\n");
 
-  const resp = await client.messages.create({
-    model: NOTE_MODEL,
-    max_tokens: 200,
-    system,
-    messages: [{ role: "user", content: user }],
+  const free = CHAT_MODEL_INFO.free;
+  const resp = await openRouterChat({
+    model: free.id,
+    fallbackModels: free.fallbacks,
+    messages: [
+      { role: "system", content: system },
+      { role: "user", content: user },
+    ],
+    maxTokens: 200,
   });
 
-  const text = resp.content
-    .filter((b): b is Anthropic.TextBlock => b.type === "text")
-    .map((b) => b.text)
-    .join(" ")
-    .trim();
+  const text = (resp.choices[0]?.message?.content ?? "").trim();
   return text || null;
 }
 
