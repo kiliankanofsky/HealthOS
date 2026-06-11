@@ -4,6 +4,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
+import { SettingsMenu } from "@/components/site/SettingsMenu";
 import { modules, siteConfig } from "@/lib/site";
 import { cn } from "@/lib/utils";
 
@@ -81,6 +82,7 @@ export function SiteHeader({ variant = "light" }: Props) {
 
         <div className="flex items-center gap-2">
           <MobileNav pathname={pathname} variant={variant} />
+          <SettingsMenu variant={variant} />
         </div>
       </div>
     </header>

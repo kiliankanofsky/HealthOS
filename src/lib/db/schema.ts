@@ -799,3 +799,10 @@ export const trainingPlanBlocks = sqliteTable(
 
 export type TrainingPlanBlock = typeof trainingPlanBlocks.$inferSelect;
 export type NewTrainingPlanBlock = typeof trainingPlanBlocks.$inferInsert;
+
+// =============================================================
+// Auth (Better Auth) — user/session/account/verification.
+// Generiert via `npx @better-auth/cli generate`, lebt in auth-schema.ts.
+// =============================================================
+
+export * from "./auth-schema";

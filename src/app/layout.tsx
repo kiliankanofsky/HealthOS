@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Inter } from "next/font/google";
 
+import { ThemeProvider } from "@/components/site/ThemeProvider";
 import { siteConfig } from "@/lib/site";
 
 import "./globals.css";
@@ -29,9 +30,15 @@ export default function RootLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="de" className={`${inter.variable} h-full antialiased`}>
+    // suppressHydrationWarning: next-themes setzt die .dark-Klasse auf <html>
+    // schon vor der Hydration — ohne das Flag meckert React über den Diff.
+    <html
+      lang="de"
+      className={`${inter.variable} h-full antialiased`}
+      suppressHydrationWarning
+    >
       <body className="flex min-h-full flex-col bg-background text-foreground">
-        {children}
+        <ThemeProvider>{children}</ThemeProvider>
       </body>
     </html>
   );

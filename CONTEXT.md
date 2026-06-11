@@ -13,6 +13,8 @@ Privates Self-Tracking-Tool für einen einzelnen Nutzer (kiliankanofsky). Drei M
 
 Zusatz: **Nutrition** (FDDB-Sync, Tageskalorien + Makros), **Daily Activity** (Garmin-Gesamtkalorien) und **Tags** (Cheat/Alkohol-Übersicht unter `/weight/tags`) als Erweiterungen.
 
+**Auth (seit 2026-06-11):** Die gesamte App ist hinter einem Login (Better Auth, E-Mail+Passwort). `src/proxy.ts` (Next-16-Proxy, Node-Runtime) validiert die Session pro Request und leitet sonst auf `/account` um; ausgenommen sind `/account`, `/api/*` (Cron schützt sich selbst per `CRON_SECRET`) und statische Dateien. **Nur EIN Konto erlaubt** — die Health-Daten sind nicht pro Nutzer getrennt, deshalb blockt ein `databaseHooks.user.create.before`-Hook in `src/lib/auth.ts` jede weitere Registrierung (auch auf API-Ebene). Dark-/Light-Mode via `next-themes` (SettingsMenu im Header).
+
 ## 2. Tech-Stack
 
 | Schicht | Wahl |
@@ -26,6 +28,7 @@ Zusatz: **Nutrition** (FDDB-Sync, Tageskalorien + Makros), **Daily Activity** (G
 | Hosting | **Vercel** (serverless) |
 | Sprache | TypeScript, strict |
 | Charts | Recharts |
+| Auth | `better-auth` (E-Mail+Passwort, Drizzle-Adapter, Session-Cookie-Cache) + `next-themes` für Dark Mode |
 | Externe Integrationen | Google Sheets (CSV-Export), Garmin Connect (`@gooin/garmin-connect`), FDDB (HTML-Scraping mit Cookie) |
 
 ## 3. Hosting / Deployment
@@ -57,6 +60,8 @@ In Vercel → Settings → Environment Variables gesetzt für Production+Preview
 | `GARMIN_USERNAME` | Garmin Connect Login |
 | `GARMIN_PASSWORD` | Garmin Connect Login |
 | `FDDB_COOKIE` | Cookie für FDDB-Scraping |
+| `BETTER_AUTH_SECRET` | Signier-Secret für Sessions/Cookies (`openssl rand -base64 32`) |
+| `BETTER_AUTH_URL` | Basis-URL der App (Production: `https://health-os-nine.vercel.app`, lokal: `http://localhost:3000`) |
 
 Lokal liegen die gleichen Werte in `.env.local` (gitignored). `.env.example` ist die Vorlage ohne Secrets.
 
@@ -98,12 +103,17 @@ Heißt: lokales `npm run dev` läuft gegen die lokale SQLite-Datei. Wenn man lok
 | `endurance/history/page.tsx` | RSC | Placeholder: historische Trainings-Liste |
 | `endurance/{longevity,performance}/{recommendations,history}/page.tsx` | RSC | Vier Sub-Placeholder (alt — verweist auf die unified Routes oben) |
 | `api/cron/sync/route.ts` | Route Handler | **GET** mit Bearer-Auth, führt 6 Syncs aus (sheets/strength/calories/runs/metrics/nutrition) |
+| `account/page.tsx` | RSC | Konto-Seite: ausgeloggt → AuthCard (Login; Registrierung nur solange kein User existiert), eingeloggt → Konto-Übersicht + Abmelden. Ziel des Proxy-Redirects. |
+| `api/auth/[...all]/route.ts` | Route Handler | Better-Auth-Endpunkte (sign-in/up/out, get-session, …) via `toNextJsHandler` |
+
+Außerhalb von `app/`: `src/proxy.ts` (Login-Schutz aller Seiten, siehe §1 Auth) und `src/lib/auth.ts` / `src/lib/auth-client.ts` (Better-Auth Server-Instanz / React-Client).
 
 ### 4.2 Komponenten (`src/components/`)
 
 Nach Modul gruppiert. **RSC** = Server Component, **CC** = Client Component (`"use client"`).
 
-- `site/` — `AppShell` (Wrapper), `SiteHeader`, `SiteFooter`
+- `site/` — `AppShell` (Wrapper), `SiteHeader` (mit `SettingsMenu`: Burger-Popover, Konto-Link + Hell/Dunkel-Toggle), `SiteFooter`, `ThemeProvider` (next-themes)
+- `account/` — `AuthCard` (CC, Login/Registrierung mit deutschen Fehlertexten), `LogoutButton` (CC)
 - `home/` — `HeroGrid`, `PromoBar`, `PulseSection` (RSC, lädt Live-Stats), `SectionHero`, `Topbar`
 - `weight/` — `WeightChart`/`Chart Section` (Recharts, CC), `WeightStats`, `WeightTable`, `WeightWeekMatrix`, `WeightDayList`, `WeightDayDetailDialog` (CC, nimmt jetzt `tag`-Prop), `WeightDetailView`, `WeightEntryForm` (CC), `PhaseEditDialog` (CC), `TagEditor` (CC, Tag-Übersicht + Edit-Dialog)
 - `hypertrophy/` — `Calendar`, `SessionLogger` (CC), `NewSessionDialog` (CC), `DeleteSessionButton` (CC), `OpenOrCreateSessionButton` (CC), `ExerciseProgressChart` (CC), `WorkoutCards` (RSC), `WorkoutOverviewChart`, `SiblingNavButtons`/`SiblingSwipe`
@@ -216,6 +226,8 @@ Sequenz `0000` → `0012`. **Nicht editieren** — Drizzle hält im `meta/_journ
 | `0012` | `daily_tags`-Tabelle, Tag-Daten aus `weight_entries` rüberkopiert, `cheat_day`/`alcohol`/`cheat_meal`/`kcal_target` aus `weight_entries` entfernt — **manuell editiert** (INSERT vor DROP), nicht regenerieren |
 | `0013` | Endurance Phase 4: `training_plans` + `training_plan_weeks` + `training_plan_sessions` + `training_plan_blocks`. Self-FK auf `alternative_of_id` (kein DB-Constraint, App-Logik), FK auf `run_sessions.id` mit ON DELETE SET NULL. |
 | `0014` | Sprint 4.1: `training_plans.reference_file_base64` + `reference_file_media_type` — Referenzdatei (PDF/Bild) base64-kodiert, wird nativ an Claude (Vision) übergeben statt nur als extrahierter Text. |
+| `0015` | `run_sessions.laps_json` (Garmin-Splits) + `training_plans.next_note_*` (KI-Tagesnotiz) |
+| `0016` | Auth (Better Auth): `user` + `session` + `account` + `verification`. Drizzle-Definitionen in `src/lib/db/auth-schema.ts` (via `npx @better-auth/cli generate` erzeugt, aus `schema.ts` re-exportiert). |
 
 ### 4.8 Konfig-Files (Root)
 
