@@ -22,8 +22,13 @@ import { fitnessText, metricsText, runsText } from "@/lib/endurance/ai-chat";
 import { formatPace, formatSecondsAsHms } from "@/lib/endurance/plan";
 import { SESSION_TYPE_LABELS } from "@/lib/endurance/plan-format";
 import { computeFitness } from "@/lib/endurance/training-load";
-import { computeWeightStats, diff } from "@/lib/utils/weight-stats";
+import { buildNutritionRecommendation } from "@/lib/utils/nutrition-recommendation";
+import { computeWeightStats, diff, phaseForDate } from "@/lib/utils/weight-stats";
 import { getRecentGymSummaries } from "./gym";
+
+// Re-Export für bestehende Importe (Startseite) — die Funktion lebt jetzt
+// in utils/weight-stats, damit sie ohne den schweren Kontext nutzbar ist.
+export { phaseForDate };
 
 const WEEKDAYS = ["So", "Mo", "Di", "Mi", "Do", "Fr", "Sa"];
 const PHASE_LABELS: Record<WeightPhase["kind"], string> = {
@@ -55,19 +60,6 @@ function signedKg(v: number | null): string {
   return `${r > 0 ? "+" : ""}${r.toFixed(1)} kg`;
 }
 
-// Aktive Phase für ein Datum (Phasen sind nicht-überlappend, offene Phase
-// hat endDate = null).
-export function phaseForDate(
-  phases: WeightPhase[],
-  iso: string,
-): WeightPhase | null {
-  return (
-    phases.find(
-      (p) => p.startDate <= iso && (p.endDate == null || p.endDate >= iso),
-    ) ?? null
-  );
-}
-
 function planSessionLine(s: TrainingPlanSession): string {
   const km =
     s.targetDistanceMeters != null
@@ -88,7 +80,8 @@ export async function buildHealthContext(todayIso: string): Promise<string> {
   ] = await Promise.all([
     getAllWeightEntries(),
     getAllPhases(),
-    getNutritionEntries({ from: isoDaysAgo(todayIso, 7), to: todayIso }),
+    // 14 Tage — die deterministische Kalorien-Empfehlung mittelt über 2 Wochen.
+    getNutritionEntries({ from: isoDaysAgo(todayIso, 13), to: todayIso }),
     getRecentGymSummaries(6),
     getCurrentTrainingPlan(),
     getDailyMetricsBetween(isoDaysAgo(todayIso, 14), todayIso),
@@ -113,6 +106,25 @@ export async function buildHealthContext(todayIso: string): Promise<string> {
     `4-Wochen-Schnitt: ${kg(stats.fourWeekAvg.avg)}`,
   ];
 
+  // Deterministische Kalorien-Empfehlung (gleiche Engine wie die Card auf
+  // /weight) — gibt der KI eine belastbare Zahl für Phasen-Empfehlungen.
+  const rec = buildNutritionRecommendation({
+    weightEntries,
+    phases,
+    nutrition,
+    todayIso,
+  });
+  if (rec.phaseKind != null) {
+    weightLines.push(
+      `Kalorien-Empfehlung (deterministisch, Phase ${PHASE_LABELS[rec.phaseKind]}): ` +
+        `beobachtet ${signedKg(rec.observedWeeklyDeltaKg)}/Woche vs. Ziel ${signedKg(rec.targetWeeklyDeltaKg)}/Woche · ` +
+        `Ø Intake (14d) ${rec.avgIntakeKcal != null ? `${rec.avgIntakeKcal} kcal` : "—"} · ` +
+        (rec.adjustmentKcal != null && rec.recommendedIntakeKcal != null
+          ? `Anpassung ${rec.adjustmentKcal > 0 ? "+" : ""}${rec.adjustmentKcal} kcal/Tag → empfohlenes Ziel ~${rec.recommendedIntakeKcal} kcal/Tag${rec.adjustmentCapped ? " (gedeckelt auf ±500)" : ""}`
+          : `(zu wenig Daten für eine konkrete Anpassung)`),
+    );
+  }
+
   // ---- Nutrition (letzte 7 Tage) ----
   const nutritionLines =
     nutrition.length === 0
@@ -128,7 +140,7 @@ export async function buildHealthContext(todayIso: string): Promise<string> {
       ? ["(keine Gym-Sessions erfasst)"]
       : gym.map(
           (g) =>
-            `  ${g.date} (${weekday(g.date)}): ${g.label} (Cycle ${g.cycle}) · Σe1RM ${g.totalE1} kg${g.deltaToPrev != null ? ` (${g.deltaToPrev > 0 ? "+" : ""}${g.deltaToPrev} vs. letzte ${g.label})` : ""} · ${g.setCount} Sätze · Volumen ${g.volume} kg`,
+            `  ${g.date} (${weekday(g.date)}): ${g.label} (${g.cycle}. Session) · Σe1RM ${g.totalE1} kg${g.deltaToPrev != null ? ` (${g.deltaToPrev > 0 ? "+" : ""}${g.deltaToPrev} vs. letzte ${g.label})` : ""} · ${g.setCount} Sätze · Volumen ${g.volume} kg`,
         );
 
   // ---- Endurance-Plan ----

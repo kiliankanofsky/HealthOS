@@ -24,7 +24,8 @@ export type GymSessionSummary = {
   kind: WorkoutKind;
   slug: string;
   label: string;
-  // Wievielte Ausführung dieses Templates (für "Cycle n").
+  // Wievielte Ausführung dieses Templates ("n. Session" — der globale
+  // Cycle bezieht sich dagegen auf die volle Rotation, siehe WorkoutCards).
   cycle: number;
   // Sätze mit reps > 0.
   setCount: number;

@@ -41,7 +41,9 @@ export function SiteHeader({ variant = "light" }: Props) {
       <div className="mx-auto flex h-14 w-full max-w-[1440px] items-center justify-between gap-6 px-5 sm:px-8 lg:h-16 lg:px-10">
         <Link href="/" className="flex items-center gap-2 group">
           <Logo />
-          <span className="font-heading text-base font-semibold tracking-tight lg:text-lg">
+          {/* App-Name unter sm ausblenden — auf dem iPhone braucht die
+              Modul-Nav den Platz, das Logo reicht als Home-Link. */}
+          <span className="hidden font-heading text-base font-semibold tracking-tight sm:inline lg:text-lg">
             {siteConfig.name}
           </span>
         </Link>

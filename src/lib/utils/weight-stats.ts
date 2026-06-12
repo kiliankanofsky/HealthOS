@@ -1,4 +1,17 @@
-import type { WeightEntry } from "@/lib/db/schema";
+import type { WeightEntry, WeightPhase } from "@/lib/db/schema";
+
+// Aktive Phase für ein Datum (Phasen sind nicht-überlappend, offene Phase
+// hat endDate = null).
+export function phaseForDate(
+  phases: WeightPhase[],
+  iso: string,
+): WeightPhase | null {
+  return (
+    phases.find(
+      (p) => p.startDate <= iso && (p.endDate == null || p.endDate >= iso),
+    ) ?? null
+  );
+}
 
 export type WindowAvg = {
   avg: number | null;

@@ -119,10 +119,10 @@ Nach Modul gruppiert. **RSC** = Server Component, **CC** = Client Component (`"u
 - `home/` — `HeroGrid`, `PromoBar`, `PulseSection` (RSC, lädt Live-Stats), `SectionHero`, `Topbar`
 - `weight/` — `WeightChart`/`Chart Section` (Recharts, CC), `WeightStats`, `WeightTable`, `WeightWeekMatrix`, `WeightDayList`, `WeightDayDetailDialog` (CC, nimmt jetzt `tag`-Prop), `WeightDetailView`, `WeightEntryForm` (CC), `PhaseEditDialog` (CC), `TagEditor` (CC, Tag-Übersicht + Edit-Dialog)
 - `hypertrophy/` — `Calendar`, `SessionLogger` (CC), `NewSessionDialog` (CC), `DeleteSessionButton` (CC), `OpenOrCreateSessionButton` (CC), `ExerciseProgressChart` (CC), `WorkoutCards` (RSC), `WorkoutOverviewChart`, `SiblingNavButtons`/`SiblingSwipe`
-- `hypertrophy/avatar/` — `MuscleAvatar` (SVG-Bodymap), `OverviewAvatarPanel`, `WorkoutAvatarPanel`, `MuscleExerciseList`, `anatomy-paths.ts` (SVG-Pfade)
-- `endurance/` — `KmGraphSection` (CC, Recharts AreaChart wöchentliches Volumen), `RunCalendar` (CC, Adaption des Hypertrophy-Kalenders mit Double-Day-Indikator), `MetricsDashboard` (CC, sieben klickbare Tiles mit Detail-Popovern: RHR, HRV, Sleep, Race-Predictions, Training Status, VO₂, Lactate Threshold), `TrainingsSection` (RSC, zwei Cards für Empfohlen/Historisch), `PlanSetupForm` (CC, Phase 4: Form mit Live-Pace-Berechnung, Pace-Zone-Auto-Ableitung mit Manual-Override, Datei-Upload PDF **oder Bild**), `PerformanceDashboard` (legacy, nicht mehr benutzt — bei Cleanup entfernen)
+- `hypertrophy/avatar/` — `MuscleAvatar` (SVG-Bodymap), `OverviewAvatarPanel` (CC, Volumen-Tracker: gewichtete Sätze pro Muskelgruppe der letzten 7 Tage färben den Avatar, Balken-Liste darunter; Daten via `lib/hypertrophy/volume.ts`), `WorkoutAvatarPanel`, `MuscleExerciseList`, `anatomy-paths.ts` (SVG-Pfade)
+- `endurance/` — `KmGraphSection` (CC, Recharts AreaChart wöchentliches Volumen), `RunCalendar` (CC, Adaption des Hypertrophy-Kalenders mit Double-Day-Indikator), `MetricsDashboard` (CC, sieben klickbare Tiles mit Detail-Popovern: RHR, HRV, Sleep, Race-Predictions, Training Status, VO₂, Lactate Threshold), `TrainingsSection` (RSC, zwei Cards für Empfohlen/Historisch), `TrainingZoneCalculator` (CC, Pace-/HF-Zonen aus Schwellen-Pace + LTHR — vorbefüllt aus Garmin Lactate Threshold, Max-HF-Fallback ~90 %), `PlanSetupForm` (CC, Phase 4: Form mit Live-Pace-Berechnung, Pace-Zone-Auto-Ableitung mit Manual-Override, Datei-Upload PDF **oder Bild**), `PerformanceDashboard` (legacy, nicht mehr benutzt — bei Cleanup entfernen)
   - **Phase 4 Sprint 4/4.1** (`/endurance/recommendations` 4-Card-Layout): `PlanBoard` (CC, Orchestrator: Kalender + Nächste-Session-Card + Edit-Dialog-State), `PlanCalendar` (CC, @dnd-kit Drag-and-Drop + "+" zum Anlegen leerer Tage), `EditSessionDialog` (CC, editierbarer Titel-Hero + Hero-Stats Distanz/Zone/Dauer + Splits links + gräuliche Edit-Card rechts mit Intervall-Editor + Löschen), `SplitsChart` (Balken-Grafik, km bei Dauerläufen / Runden bei Intervallen, längster Balken = schnellste Pace), `NextRacePlanCard` (Countdown + Phasen-Timeline + `PlanChatStub`), `PlanOverviewCard` (Fortschritt + Wochen-Volumen)
-- `nutrition/` — `NutritionChart` + `ChartSection`, `NutritionCorrelationView` (Streudiagramm Weight×Kalorien), `NutritionDayDetailDialog` (alle drei nehmen jetzt `tags`-Prop)
+- `nutrition/` — `NutritionChart` + `ChartSection`, `NutritionCorrelationView` (Streudiagramm Weight×Kalorien), `NutritionDayDetailDialog` (alle drei nehmen jetzt `tags`-Prop), `NutritionRecommendationCard` (RSC, deterministische Kalorien-Empfehlung je Phase — Engine in `utils/nutrition-recommendation.ts`)
 - `ui/` — shadcn-Primitives: `button`, `card`, `dialog`, `input`, `label`, `popover`, `segmented-control`, `table`
 - `ComingSoon.tsx` — Placeholder
 
@@ -180,11 +180,13 @@ Nach Modul gruppiert. **RSC** = Server Component, **CC** = Client Component (`"u
 | `utils/csv.ts` | CSV-Parser für Sheets-Import |
 | `utils/date.ts` | ISO-Date-Helper |
 | `utils/iso-week.ts` | KW-Berechnung für Sheets-Spalten |
-| `utils/loess.ts` | LOESS-Glättung für Weight-Chart-Trend |
+| `utils/loess.ts` | LOESS-Glättung für Weight-/Nutrition-Trend + Σe1RM-Trend im WorkoutOverviewChart |
 | `utils/strength.ts` | e1RM-Formel, Volumen-Aggregation |
-| `utils/weight-stats.ts` | Trend, Schwankung, Δ7d/Δ30d |
-| `hypertrophy/muscles.ts` | Muskelgruppen-Definitionen |
-| `hypertrophy/workouts.ts` | Template-Konfiguration (Cycle-Berechnung u.ä.) |
+| `utils/weight-stats.ts` | Trend, Schwankung, Δ7d/Δ30d + `phaseForDate(phases, iso)` (hierher gezogen, von dashboard/context re-exportiert) |
+| `utils/nutrition-recommendation.ts` | `buildNutritionRecommendation()` — deterministische Kalorien-Anpassung je Phase: Ziel-Rate (Cut −0,5 %/Wo, Bulk +0,25 %/Wo, Maintenance 0) vs. beobachtete Rate der laufenden Phase, 7700-kcal-Regel, gerundet auf 50, gedeckelt ±500. Genutzt von /weight-Card + KI-Kontext. |
+| `hypertrophy/muscles.ts` | Muskelgruppen-Definitionen + Volumen-Schwellen (`VOLUME_PRIMARY_THRESHOLD`=10, `VOLUME_SECONDARY_THRESHOLD`=4, client-safe) |
+| `hypertrophy/workouts.ts` | Template-Konfiguration (Labels/Farben/Order). **Cycle-Semantik:** ein Cycle = volle Rotation Upper A → Lower → Upper B (global, `min(Sessions je Template)+1` in WorkoutCards); pro Template heißt es "n. Session" |
+| `hypertrophy/volume.ts` | `getMuscleVolumeBetween(from, to)` — gewichtete Sätze pro Muskelgruppe (primär 1,0 / sekundär 0,5) für den Avatar-Volumen-Tracker |
 | `endurance/plan.ts` | Phase 4: `derivePaceZones`, `computePlanWeeks` (16w rückwärts vom Race), Pace/Zeit-Formatter (`formatPace`, `parseHmsToSeconds`, `formatSecondsAsHms`). Phasen-Verteilung skaliert auf totalWeeks (Default 16: 4-base, 5-build, 3-peak, 3-taper, 1-race). |
 | `endurance/pdf-extract.ts` | Phase 4: `extractPdfText(file)` via `pdf-parse` v2 (`PDFParse`-Klasse). Server-only, dynamischer Import. Seit Sprint 4.1 nur noch Fallback — Referenz geht nativ an Claude. |
 | `endurance/plan-format.ts` | Sprint 4: Anzeige-Helfer (Session-Typ-Labels/Farben, Phasen-Labels/-Farben, Zone→Pace, Block→Text, Distanz/Dauer-Formatter). Reine Formatierung, von allen Cards geteilt. |

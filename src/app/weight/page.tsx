@@ -4,6 +4,7 @@ import Link from "next/link";
 import { AppShell } from "@/components/site/AppShell";
 import { NutritionChartSection } from "@/components/nutrition/NutritionChartSection";
 import { NutritionCorrelationView } from "@/components/nutrition/NutritionCorrelationView";
+import { NutritionRecommendationCard } from "@/components/nutrition/NutritionRecommendationCard";
 import { SyncNowButton } from "@/components/site/SyncNowButton";
 import { WeightChartSection } from "@/components/weight/WeightChartSection";
 import { WeightEntryForm } from "@/components/weight/WeightEntryForm";
@@ -16,6 +17,7 @@ import {
   getNutritionEntries,
 } from "@/lib/db/queries";
 import { toLocalISODate } from "@/lib/utils/date";
+import { buildNutritionRecommendation } from "@/lib/utils/nutrition-recommendation";
 import { computeWeightStats } from "@/lib/utils/weight-stats";
 
 export const dynamic = "force-dynamic";
@@ -27,15 +29,21 @@ export default async function WeightPage() {
   const stats = computeWeightStats(all);
   const nutrition = await getNutritionEntries({ source: "fddb" });
   const activity = await getDailyActivityEntries({ source: "garmin" });
+  const recommendation = buildNutritionRecommendation({
+    weightEntries: all,
+    phases,
+    nutrition,
+    todayIso: toLocalISODate(),
+  });
 
   return (
     <AppShell>
-      <main className="mx-auto w-full max-w-[1280px] space-y-10 px-5 py-10 sm:px-8 lg:px-10 lg:py-14">
+      <main className="mx-auto w-full max-w-[1280px] space-y-10 px-4 py-8 sm:px-8 sm:py-10 lg:px-10 lg:py-14">
       <header className="space-y-2">
         <p className="text-[11px] font-medium tracking-[0.22em] text-primary uppercase">
           Weight
         </p>
-        <h1 className="font-heading text-4xl font-semibold tracking-tight lg:text-5xl">
+        <h1 className="font-heading text-3xl font-semibold tracking-tight sm:text-4xl lg:text-5xl">
           Gewicht
         </h1>
         <p className="max-w-xl text-sm text-muted-foreground">
@@ -68,7 +76,7 @@ export default async function WeightPage() {
 
       <Link
         href="/weight/entries"
-        className="group block rounded-3xl bg-muted/60 p-8 ring-1 ring-black/5 transition-all hover:bg-muted hover:ring-black/10 lg:p-10"
+        className="group block rounded-3xl bg-muted/60 p-6 ring-1 ring-black/5 transition-all hover:bg-muted hover:ring-black/10 sm:p-8 lg:p-10"
       >
         <div className="flex items-center justify-between gap-6">
           <div className="space-y-1">
@@ -95,7 +103,7 @@ export default async function WeightPage() {
         <p className="text-[11px] font-medium tracking-[0.22em] text-primary uppercase">
           Weight · Ernährung
         </p>
-        <h2 className="font-heading text-4xl font-semibold tracking-tight lg:text-5xl">
+        <h2 className="font-heading text-3xl font-semibold tracking-tight sm:text-4xl lg:text-5xl">
           Nutrition
         </h2>
         <p className="max-w-xl text-sm text-muted-foreground">
@@ -103,6 +111,13 @@ export default async function WeightPage() {
           Details + Bilanz mit Garmin-Verbrauch zu sehen.
         </p>
       </header>
+
+      <Section
+        title="Kalorien-Empfehlung"
+        description="Kalorische Anpassung für deine aktuelle Phase — abgeleitet aus der Gewichts-Rate der laufenden Phase und deinem Ø-Intake."
+      >
+        <NutritionRecommendationCard rec={recommendation} />
+      </Section>
 
       <Section>
         <NutritionChartSection

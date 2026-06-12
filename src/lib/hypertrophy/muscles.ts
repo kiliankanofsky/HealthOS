@@ -118,6 +118,12 @@ export const AVATAR_REGION_TO_DB: Record<AvatarRegion, DbMuscleSlug[]> = (() => 
 
 export type HighlightLevel = "primary" | "secondary";
 
+// Schwellen für die Volumen-Färbung des Avatars (gewichtete Sätze/Woche).
+// Leben hier (und nicht in volume.ts), damit Client-Komponenten sie
+// importieren können, ohne den DB-Layer in den Browser-Bundle zu ziehen.
+export const VOLUME_PRIMARY_THRESHOLD = 10;
+export const VOLUME_SECONDARY_THRESHOLD = 4;
+
 /**
  * Aggregiert die Muskel-Markierungen einer Workout-Vorlage über alle Übungen.
  * Regel "höchste Stufe gewinnt": wenn irgendeine Übung den Muskel als primary

@@ -26,7 +26,7 @@ export default async function RunDetailPage({
 
   return (
     <AppShell>
-      <main className="mx-auto w-full max-w-3xl space-y-8 px-5 py-10 sm:px-8 lg:py-14">
+      <main className="mx-auto w-full max-w-3xl space-y-8 px-4 py-8 sm:px-8 sm:py-10 lg:py-14">
         <Link
           href="/endurance"
           className="inline-flex items-center gap-1.5 text-sm text-muted-foreground transition hover:text-foreground"

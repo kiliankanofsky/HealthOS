@@ -12,7 +12,7 @@ export default async function WeightEntriesPage() {
 
   return (
     <AppShell>
-      <main className="mx-auto w-full max-w-[1280px] space-y-8 px-5 py-10 sm:px-8 lg:px-10 lg:py-14">
+      <main className="mx-auto w-full max-w-[1280px] space-y-8 px-4 py-8 sm:px-8 sm:py-10 lg:px-10 lg:py-14">
         <header className="space-y-3">
           <Link
             href="/weight"
@@ -24,7 +24,7 @@ export default async function WeightEntriesPage() {
             <p className="text-[11px] font-medium tracking-[0.22em] text-primary uppercase">
               Alle Einträge
             </p>
-            <h1 className="font-heading text-4xl font-semibold tracking-tight lg:text-5xl">
+            <h1 className="font-heading text-3xl font-semibold tracking-tight sm:text-4xl lg:text-5xl">
               Detaillierte Ansicht
             </h1>
           </div>

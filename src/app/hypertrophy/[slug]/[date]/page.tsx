@@ -119,7 +119,7 @@ export default async function SessionPage({
   return (
     <AppShell>
       <SiblingSwipe prevHref={prevHref} nextHref={nextHref}>
-      <main className="mx-auto w-full max-w-[960px] space-y-8 px-5 py-10 sm:px-8 lg:px-10 lg:py-14">
+      <main className="mx-auto w-full max-w-[960px] space-y-8 px-4 py-8 sm:px-8 sm:py-10 lg:px-10 lg:py-14">
       <header className="space-y-3">
         <div className="flex items-center justify-between gap-3">
           <Link

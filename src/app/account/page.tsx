@@ -22,12 +22,12 @@ export default async function AccountPage() {
     const allowSignUp = !(await hasAnyUser());
     return (
       <AppShell>
-        <main className="mx-auto flex w-full max-w-3xl flex-col items-center gap-8 px-5 py-10 sm:px-8 lg:px-10 lg:py-14">
+        <main className="mx-auto flex w-full max-w-3xl flex-col items-center gap-8 px-4 py-8 sm:px-8 sm:py-10 lg:px-10 lg:py-14">
           <header className="space-y-2 text-center">
             <p className="text-[11px] font-medium tracking-[0.22em] text-primary uppercase">
               Konto
             </p>
-            <h1 className="font-heading text-4xl font-semibold tracking-tight lg:text-5xl">
+            <h1 className="font-heading text-3xl font-semibold tracking-tight sm:text-4xl lg:text-5xl">
               {allowSignUp ? "Konto erstellen" : "Anmelden"}
             </h1>
             <p className="mx-auto max-w-md text-base text-muted-foreground">
@@ -45,12 +45,12 @@ export default async function AccountPage() {
   const { user } = session;
   return (
     <AppShell>
-      <main className="mx-auto w-full max-w-3xl space-y-10 px-5 py-10 sm:px-8 lg:px-10 lg:py-14">
+      <main className="mx-auto w-full max-w-3xl space-y-10 px-4 py-8 sm:px-8 sm:py-10 lg:px-10 lg:py-14">
         <header className="space-y-2">
           <p className="text-[11px] font-medium tracking-[0.22em] text-primary uppercase">
             Konto
           </p>
-          <h1 className="font-heading text-4xl font-semibold tracking-tight lg:text-5xl">
+          <h1 className="font-heading text-3xl font-semibold tracking-tight sm:text-4xl lg:text-5xl">
             {user.name}
           </h1>
           <p className="text-base text-muted-foreground">

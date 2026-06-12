@@ -28,7 +28,7 @@ export function ComingSoon({ section, description }: Props) {
         <p className="text-[11px] font-medium tracking-[0.22em] text-primary uppercase">
           {section}
         </p>
-        <h1 className="font-heading text-5xl font-semibold tracking-tight lg:text-6xl">
+        <h1 className="font-heading text-4xl font-semibold tracking-tight sm:text-5xl lg:text-6xl">
           Bald verfügbar
         </h1>
         <p className="max-w-md text-base text-muted-foreground lg:text-lg">

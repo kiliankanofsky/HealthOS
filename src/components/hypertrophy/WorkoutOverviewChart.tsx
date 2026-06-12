@@ -13,6 +13,7 @@ import {
 } from "recharts";
 
 import { SegmentedControl } from "@/components/ui/segmented-control";
+import { loessSmooth, recommendedSpan } from "@/lib/utils/loess";
 import { bestE1RM, round1, volumeLoad } from "@/lib/utils/strength";
 
 export type SessionAggregate = {
@@ -48,6 +49,9 @@ type Row = {
   date: string;
   cycle: number;
   score: number;
+  // LOESS-geglätteter Score — Sessions liegen unregelmäßig (Tageslücken),
+  // die zeitbasierte Glättung macht den Trend trotzdem lesbar.
+  trend: number | null;
 };
 
 export function WorkoutOverviewChart({ sessions, templateSlug }: Props) {
@@ -56,7 +60,7 @@ export function WorkoutOverviewChart({ sessions, templateSlug }: Props) {
 
   const rows: Row[] = useMemo(() => {
     const sorted = [...sessions].sort((a, b) => a.date.localeCompare(b.date));
-    return sorted.map((s) => {
+    const base = sorted.map((s) => {
       let score = 0;
       for (const ex of s.exercises) {
         // Sätze mit Übungs-Kontext (unilateral) anreichern, damit
@@ -74,6 +78,20 @@ export function WorkoutOverviewChart({ sessions, templateSlug }: Props) {
       }
       return { date: s.date, cycle: s.cycle, score: round1(score) };
     });
+
+    // LOESS erst ab 5 Sessions — darunter ist die Glättung nur Deko.
+    if (base.length < 5) {
+      return base.map((r) => ({ ...r, trend: null }));
+    }
+    const smoothed = loessSmooth(
+      base.map((r) => ({ date: r.date, weight: r.score })),
+      recommendedSpan(base.length),
+    );
+    const trendByDate = new Map(smoothed.map((p) => [p.date, p.smoothed]));
+    return base.map((r) => ({
+      ...r,
+      trend: round1(trendByDate.get(r.date) ?? r.score),
+    }));
   }, [sessions, metric]);
 
   if (sessions.length < 2) {
@@ -94,9 +112,16 @@ export function WorkoutOverviewChart({ sessions, templateSlug }: Props) {
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <p className="text-xs font-medium tracking-[0.2em] text-muted-foreground uppercase">
-          Verlauf
-        </p>
+        <div className="flex flex-wrap items-baseline gap-x-2">
+          <p className="text-xs font-medium tracking-[0.2em] text-muted-foreground uppercase">
+            Verlauf
+          </p>
+          {rows.some((r) => r.trend !== null) && (
+            <p className="text-[10px] text-muted-foreground/70">
+              gestrichelt = LOESS-Trend
+            </p>
+          )}
+        </div>
         <SegmentedControl options={OPTIONS} value={metric} onChange={setMetric} size="sm" />
       </div>
 
@@ -136,11 +161,16 @@ export function WorkoutOverviewChart({ sessions, templateSlug }: Props) {
                 return (
                   <div className="rounded-lg bg-card px-3 py-2 text-xs shadow-md ring-1 ring-foreground/10">
                     <p className="mb-0.5 font-medium">{formatLong(String(label))}</p>
-                    <p className="text-muted-foreground">Cycle {row.cycle}</p>
+                    <p className="text-muted-foreground">{row.cycle}. Session</p>
                     <p className="mt-1 tabular-nums">
                       {OPTIONS.find((o) => o.value === metric)?.label}:{" "}
                       <span className="font-medium">{row.score.toLocaleString("de-DE")} {unit}</span>
                     </p>
+                    {row.trend !== null && (
+                      <p className="tabular-nums text-muted-foreground">
+                        Trend (LOESS): {row.trend.toLocaleString("de-DE")} {unit}
+                      </p>
+                    )}
                   </div>
                 );
               }}
@@ -152,6 +182,17 @@ export function WorkoutOverviewChart({ sessions, templateSlug }: Props) {
               strokeWidth={2}
               dot={{ r: 3, strokeWidth: 0, fill: PRIMARY }}
               activeDot={{ r: 5 }}
+              isAnimationActive={false}
+            />
+            {/* LOESS-Trend — gestrichelt, ohne Punkte, nicht klickbar. */}
+            <Line
+              type="monotone"
+              dataKey="trend"
+              stroke="#94a3b8"
+              strokeWidth={2}
+              strokeDasharray="6 4"
+              dot={false}
+              activeDot={false}
               isAnimationActive={false}
             />
           </LineChart>

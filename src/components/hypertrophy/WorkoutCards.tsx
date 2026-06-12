@@ -15,8 +15,10 @@ import {
 import { cn } from "@/lib/utils";
 import { bestE1RM, round1 } from "@/lib/utils/strength";
 
-// Pro Workout eine Card mit: Marker-Badge, Name, aktueller Cycle, letzte Session.
-// Jede Card linkt auf die Workout-Detail-Page.
+// Pro Workout eine Card mit: Marker-Badge, Name, Session-Anzahl, letzte Session.
+// Jede Card linkt auf die Workout-Detail-Page. Über den Cards steht EIN
+// globaler Cycle — ein Cycle ist eine volle Rotation (Upper A → Lower →
+// Upper B), nicht die Ausführungs-Anzahl eines einzelnen Workouts.
 export async function WorkoutCards() {
   const templates = await getAllTemplates();
   // In WORKOUT_ORDER sortieren.
@@ -29,7 +31,7 @@ export async function WorkoutCards() {
     ordered.map(async (tpl) => {
       const sessions = await getSessionsByTemplate(tpl.id);
       const lastSession = sessions[0]; // sessions sind desc nach Datum sortiert
-      const cycle = sessions.length;
+      const sessionCount = sessions.length;
       const colors = WORKOUT_COLORS[tpl.kind];
 
       // Unilateral-Flag pro Template-Exercise vorhalten, damit
@@ -85,13 +87,34 @@ export async function WorkoutCards() {
         };
       }
 
-      return { tpl, lastSession, cycle, colors, lastSummary };
+      return { tpl, lastSession, sessionCount, colors, lastSummary };
     }),
   );
 
+  // Globaler Cycle: wie oft wurde die volle Rotation durchlaufen. Der
+  // laufende Cycle ist min(Sessions pro Workout) + 1 — das Workout mit den
+  // wenigsten Ausführungen bestimmt, wie viele Rotationen komplett sind.
+  const currentCycle =
+    cards.length > 0
+      ? Math.min(...cards.map((c) => c.sessionCount)) + 1
+      : 1;
+
   return (
-    <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-      {cards.map(({ tpl, lastSession, cycle, colors, lastSummary }) => {
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+        <p className="text-xs font-medium tracking-[0.2em] text-muted-foreground uppercase">
+          Rotation
+        </p>
+        <p className="font-heading text-sm font-semibold">
+          Cycle {currentCycle}
+        </p>
+        <p className="text-xs text-muted-foreground">
+          Ein Cycle = einmal Upper A → Lower → Upper B
+        </p>
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+      {cards.map(({ tpl, lastSession, sessionCount, colors, lastSummary }) => {
         return (
           <Link
             key={tpl.id}
@@ -112,7 +135,7 @@ export async function WorkoutCards() {
                 {WORKOUT_MARKER_LETTER[tpl.kind]}
               </span>
               <span className="text-[10px] font-medium tracking-[0.2em] text-muted-foreground uppercase">
-                Cycle {cycle}
+                {sessionCount} Sessions
               </span>
             </div>
 
@@ -163,6 +186,7 @@ export async function WorkoutCards() {
           </Link>
         );
       })}
+      </div>
     </div>
   );
 }

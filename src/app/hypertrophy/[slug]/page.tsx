@@ -119,7 +119,7 @@ export default async function WorkoutPage({
 
   return (
     <AppShell>
-      <main className="mx-auto w-full max-w-[1100px] space-y-10 px-5 py-10 sm:px-8 lg:px-10 lg:py-14">
+      <main className="mx-auto w-full max-w-[1100px] space-y-10 px-4 py-8 sm:px-8 sm:py-10 lg:px-10 lg:py-14">
       <header className="space-y-3">
         <Link
           href="/hypertrophy"
@@ -142,11 +142,11 @@ export default async function WorkoutPage({
               <p className="text-xs font-medium tracking-[0.2em] text-primary uppercase">
                 Workout
               </p>
-              <h1 className="font-heading text-4xl font-semibold tracking-tight lg:text-5xl">
+              <h1 className="font-heading text-3xl font-semibold tracking-tight sm:text-4xl lg:text-5xl">
                 {WORKOUT_LABELS[template.kind]}
               </h1>
               <p className="text-sm text-muted-foreground">
-                Cycle {sessions.length} · {exerciseRows.length} Übungen
+                {sessions.length} Sessions · {exerciseRows.length} Übungen
               </p>
             </div>
           </div>
@@ -219,7 +219,7 @@ export default async function WorkoutPage({
                   <div>
                     <p className="font-medium">{formatLong(s.date)}</p>
                     <p className="text-xs text-muted-foreground">
-                      Cycle {sessions.length - idx}
+                      {sessions.length - idx}. Session
                     </p>
                   </div>
                   <span

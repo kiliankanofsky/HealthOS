@@ -48,7 +48,7 @@ export function GymCards({ summaries, todayIso }: Props) {
               {WORKOUT_MARKER_LETTER[last.kind]}
             </span>
             <span className="text-[10px] font-medium tracking-[0.2em] text-muted-foreground uppercase">
-              Cycle {last.cycle}
+              {last.cycle}. Session
             </span>
           </div>
           <div className="space-y-1">

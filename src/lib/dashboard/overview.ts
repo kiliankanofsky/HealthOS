@@ -52,7 +52,7 @@ const OVERVIEW_TOOL: Anthropic.Tool = {
       weight: {
         type: "string",
         description:
-          "1–3 kurze Sätze: Gewichtsentwicklung passend zur aktuellen Phase bewerten (Cut/Bulk/Maintenance).",
+          "1–3 kurze Sätze: Gewichtsentwicklung passend zur aktuellen Phase bewerten (Cut/Bulk/Maintenance) + eine konkrete Änderungs-Empfehlung (z.B. Kalorienziel anpassen oder beibehalten).",
       },
     },
     required: ["endurance", "hypertrophy", "weight"],
@@ -65,10 +65,11 @@ const SYSTEM = [
   `REGELN:`,
   `- Deutsch, direkt, ohne Begrüßung oder Floskeln. Pro Bereich 1–3 kurze Sätze.`,
   `- Nenne konkrete Zahlen aus den Daten (kg, km, Δ-Werte), erfinde nichts.`,
-  `- WEIGHT: Bewerte die Entwicklung relativ zur aktuellen Phase.`,
+  `- WEIGHT: Bewerte die Entwicklung relativ zur aktuellen Phase UND gib eine konkrete Änderungs-Empfehlung.`,
   `  · Cut → Abnahme-Rate der letzten Woche nennen und einordnen (läuft es nach Plan?).`,
   `  · Maintenance → Stabilität bewerten.`,
   `  · Bulk → Zunahme-Rate der letzten Woche nennen und einordnen.`,
+  `  · Empfehlung: Weicht die Rate vom Phasen-Ziel ab, empfiehl eine konkrete Anpassung — nutze dafür die "Kalorien-Empfehlung (deterministisch)" aus den Daten (kcal-Ziel rauf/runter). Passt die Rate, sage explizit "beibehalten".`,
   `- HYPERTROPHY: Wie entwickeln sich die letzten Sessions (Σe1RM-Deltas)? Gib eine sinnvolle, konkrete Empfehlung (z.B. welches Workout als Nächstes dran ist oder worauf zu achten ist).`,
   `- ENDURANCE: Sprich das kommende Training kurz an (was, wann, Umfang) und bewerte die Fitness-Entwicklung (CTL-Trend, Form/TSB, ggf. HRV/Erholung).`,
   `- Wenn für einen Bereich Daten fehlen, sage das in einem Satz — nicht spekulieren.`,

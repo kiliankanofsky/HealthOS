@@ -242,13 +242,13 @@ export default async function DashboardPage() {
 
   return (
     <AppShell>
-      <main className="mx-auto w-full max-w-[1280px] space-y-12 px-5 py-10 sm:px-8 lg:px-10 lg:py-14">
+      <main className="mx-auto w-full max-w-[1280px] space-y-12 px-4 py-8 sm:px-8 sm:py-10 lg:px-10 lg:py-14">
         {/* ---- Header ---- */}
         <header className="space-y-2">
           <p className="text-[11px] font-medium tracking-[0.22em] text-primary uppercase">
             Übersicht
           </p>
-          <h1 className="font-heading text-4xl font-semibold tracking-tight lg:text-5xl">
+          <h1 className="font-heading text-3xl font-semibold tracking-tight sm:text-4xl lg:text-5xl">
             Health and Performance Dashboard
           </h1>
           <p className="max-w-xl text-sm text-muted-foreground">
@@ -264,7 +264,7 @@ export default async function DashboardPage() {
         {/* items-start: Cards behalten ihre natürliche Höhe (Kalender wird
             sonst auf die Höhe der beiden Totals-Cards gestreckt). */}
         <div className="grid grid-cols-1 items-start gap-6 lg:grid-cols-3">
-          <section className="rounded-3xl bg-card p-6 ring-1 ring-black/5 shadow-sm lg:col-span-2 lg:p-8">
+          <section className="rounded-3xl bg-card p-4 ring-1 ring-black/5 shadow-sm sm:p-6 lg:col-span-2 lg:p-8">
             <MetaCalendar markers={markers} todayIso={todayIso} />
           </section>
           <div className="space-y-6">
@@ -382,7 +382,7 @@ function SectionHeader({
         <p className="text-[11px] font-medium tracking-[0.22em] text-primary uppercase">
           {kicker}
         </p>
-        <h2 className="font-heading text-3xl font-semibold tracking-tight">
+        <h2 className="font-heading text-2xl font-semibold tracking-tight sm:text-3xl">
           {title}
         </h2>
         <p className="max-w-xl text-sm text-muted-foreground">{sub}</p>

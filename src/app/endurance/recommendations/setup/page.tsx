@@ -8,12 +8,12 @@ export const dynamic = "force-dynamic";
 export default function PlanSetupPage() {
   return (
     <AppShell>
-      <main className="mx-auto w-full max-w-[840px] space-y-10 px-5 py-10 sm:px-8 lg:px-10 lg:py-14">
+      <main className="mx-auto w-full max-w-[840px] space-y-10 px-4 py-8 sm:px-8 sm:py-10 lg:px-10 lg:py-14">
         <header className="space-y-2">
           <p className="text-[11px] font-medium tracking-[0.22em] text-primary uppercase">
             Endurance · Goal-Race-Plan
           </p>
-          <h1 className="font-heading text-4xl font-semibold tracking-tight lg:text-5xl">
+          <h1 className="font-heading text-3xl font-semibold tracking-tight sm:text-4xl lg:text-5xl">
             Plan anlegen
           </h1>
           <p className="max-w-xl text-sm text-muted-foreground">

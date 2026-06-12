@@ -14,6 +14,8 @@ import {
   getAllTemplates,
 } from "@/lib/db/queries";
 import type { WorkoutKind } from "@/lib/db/schema";
+import { getMuscleVolumeBetween } from "@/lib/hypertrophy/volume";
+import { toLocalISODate } from "@/lib/utils/date";
 
 export const dynamic = "force-dynamic";
 
@@ -38,15 +40,24 @@ export default async function HypertrophyPage() {
     .filter((t) => t.cheatDay || t.alcohol)
     .map((t) => ({ date: t.date, cheatDay: t.cheatDay, alcohol: t.alcohol }));
 
+  // Volumen-Tracker: gewichtete Sätze pro Muskelgruppe, rollierende 7 Tage.
+  const todayIso = toLocalISODate();
+  const weekAgo = new Date(`${todayIso}T00:00:00`);
+  weekAgo.setDate(weekAgo.getDate() - 6);
+  const muscleVolume = await getMuscleVolumeBetween(
+    toLocalISODate(weekAgo),
+    todayIso,
+  );
+
   return (
     <AppShell>
-      <main className="mx-auto w-full max-w-[1280px] space-y-10 px-5 py-10 sm:px-8 lg:px-10 lg:py-14">
+      <main className="mx-auto w-full max-w-[1280px] space-y-10 px-4 py-8 sm:px-8 sm:py-10 lg:px-10 lg:py-14">
       <header className="flex flex-wrap items-end justify-between gap-4">
         <div className="space-y-2">
           <p className="text-[11px] font-medium tracking-[0.22em] text-primary uppercase">
             Hypertrophy
           </p>
-          <h1 className="font-heading text-4xl font-semibold tracking-tight lg:text-5xl">
+          <h1 className="font-heading text-3xl font-semibold tracking-tight sm:text-4xl lg:text-5xl">
             Gym Log
           </h1>
           <p className="max-w-xl text-sm text-muted-foreground">
@@ -66,10 +77,12 @@ export default async function HypertrophyPage() {
         auf Mobile (Kalender oben, Avatar darunter).
       */}
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
-        <section className="rounded-3xl bg-card p-6 ring-1 ring-black/5 shadow-sm lg:col-span-2 lg:p-8">
+        <section className="rounded-3xl bg-card p-4 ring-1 ring-black/5 shadow-sm sm:p-6 lg:col-span-2 lg:p-8">
           <Calendar markers={markers} tags={tags} />
         </section>
-        <OverviewAvatarPanel />
+        <OverviewAvatarPanel
+          volumeEntries={muscleVolume.map((v) => [v.muscle, v.sets])}
+        />
       </div>
       </main>
     </AppShell>
