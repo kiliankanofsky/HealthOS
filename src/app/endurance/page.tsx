@@ -20,6 +20,7 @@ import {
   getLatestRunSession,
   getWeeklyKmTotals,
 } from "@/lib/db/queries";
+import { estimateZonesFromRuns } from "@/lib/endurance/zone-estimation";
 
 export const dynamic = "force-dynamic";
 
@@ -90,6 +91,17 @@ export default async function EndurancePage() {
     newestFirst.find((m) => m.lactateThresholdHr != null)?.lactateThresholdHr ??
     null;
 
+  // Empirische Zonen-Schätzung aus den Splits der letzten 180 Tage
+  // (Steady-Läufe → Pace↔HF-Regression, Intervalle → Z5-Anker).
+  const estimationFrom = new Date(today);
+  estimationFrom.setDate(today.getDate() - 180);
+  const estimationFromIso = estimationFrom.toISOString().slice(0, 10);
+  const zoneEstimation = estimateZonesFromRuns(
+    runs.filter((r) => r.date >= estimationFromIso),
+    estimationFromIso,
+    toIso,
+  );
+
   return (
     <AppShell>
       <main className="mx-auto w-full max-w-[1280px] space-y-10 px-4 py-8 sm:px-8 sm:py-10 lg:px-10 lg:py-14">
@@ -126,11 +138,13 @@ export default async function EndurancePage() {
               Training Zone Calculator
             </h2>
             <p className="text-sm text-muted-foreground">
-              Pace- und HF-Zonen aus deiner Laktatschwelle — vorbefüllt aus
-              Garmin, manuell überschreibbar.
+              Pace- und HF-Zonen aus deinen echten Läufen: Steady-Splits
+              liefern die Pace↔HF-Beziehung, Intervalle den VO₂max-Anker.
+              LTHR aus Garmin, überschreibbar.
             </p>
           </div>
           <TrainingZoneCalculator
+            estimation={zoneEstimation}
             defaultThresholdPaceSecPerKm={defaultLtPace}
             defaultLthr={defaultLthr}
           />
