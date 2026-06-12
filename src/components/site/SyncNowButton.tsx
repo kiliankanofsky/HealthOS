@@ -12,7 +12,7 @@ import type { SyncSummary } from "@/lib/integrations/sync-all";
 // hilfreich wenn der morgendliche Cron noch partielle Daten gesehen hat
 // (Garmin-Aggregations-Verzögerung, FDDB-Cookie-Race) und du jetzt frische
 // Daten in der DB haben willst.
-export function SyncNowButton({ label = "Sync jetzt" }: { label?: string } = {}) {
+export function SyncNowButton({ label = "Sync" }: { label?: string } = {}) {
   const [isPending, startTransition] = useTransition();
   const [result, setResult] = useState<SyncSummary | null>(null);
   const [error, setError] = useState<string | null>(null);

@@ -6,7 +6,9 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
 import { sendDashboardChatMessage } from "@/app/actions";
+import { ChatModelPicker } from "@/components/endurance/PlanChat";
 import type { DashboardChatMessage } from "@/lib/dashboard/ai-chat";
+import { type ChatModel, chatModelLabel } from "@/lib/endurance/ai-models";
 import { cn } from "@/lib/utils";
 
 // Ganzheitlicher KI-Chat der Startseite — reduzierte Variante des Plan-Chats
@@ -33,6 +35,7 @@ export function DashboardChat() {
   const [messages, setMessages] = useState<DashboardChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [chatModel, setChatModel] = useState<ChatModel>("anthropic");
   const [pending, startTransition] = useTransition();
   const scrollRef = useRef<HTMLDivElement | null>(null);
 
@@ -47,7 +50,7 @@ export function DashboardChat() {
     setMessages(next);
     setInput("");
     startTransition(async () => {
-      const r = await sendDashboardChatMessage(next);
+      const r = await sendDashboardChatMessage(next, chatModel);
       if (!r.ok) {
         setError(r.error ?? "Etwas ist schiefgelaufen.");
         return;
@@ -65,9 +68,16 @@ export function DashboardChat() {
   return (
     <div className="flex h-full flex-col gap-3">
       <div>
-        <p className="text-xs font-medium tracking-[0.2em] text-muted-foreground uppercase">
-          Health-Assistent
-        </p>
+        <div className="flex items-center justify-between gap-2">
+          <p className="text-xs font-medium tracking-[0.2em] text-muted-foreground uppercase">
+            Health-Assistent
+          </p>
+          <ChatModelPicker
+            model={chatModel}
+            onChange={setChatModel}
+            disabled={pending}
+          />
+        </div>
         {messages.length === 0 && (
           <h3 className="mt-2 font-heading text-2xl font-medium tracking-tight">
             Wie kann ich helfen?
@@ -168,8 +178,9 @@ export function DashboardChat() {
         </p>
       ) : (
         <p className="text-xs text-muted-foreground">
-          Die KI kennt deine aktuellen Garmin-, Trainings-, Gewichts- und
-          Ernährungsdaten. Plan-Änderungen machst du im Endurance-Chat.
+          Die KI ({chatModelLabel(chatModel)}) kennt deine aktuellen Garmin-,
+          Trainings-, Gewichts- und Ernährungsdaten. Plan-Änderungen machst du
+          im Endurance-Chat.
         </p>
       )}
     </div>

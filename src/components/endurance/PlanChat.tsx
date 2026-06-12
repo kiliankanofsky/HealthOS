@@ -170,7 +170,8 @@ export function PlanChat({ planId }: Props) {
 
 // Modell-Wahl im Tooltip-Stil: schlichter Button (grau bei Hover), Klick öffnet
 // die Auswahl zwischen Anthropic (Claude) und dem kostenlosen OpenRouter-Modell.
-function ChatModelPicker({
+// Exportiert: auch der Dashboard-Chat (Startseite) nutzt den Picker.
+export function ChatModelPicker({
   model,
   onChange,
   disabled,

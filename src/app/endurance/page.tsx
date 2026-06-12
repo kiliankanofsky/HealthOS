@@ -89,7 +89,7 @@ export default async function EndurancePage() {
             — alles auf einer Seite.
           </p>
           <div className="flex flex-wrap items-center gap-2 pt-2">
-            <SyncNowButton label="Sync" />
+            <SyncNowButton />
           </div>
         </header>
 

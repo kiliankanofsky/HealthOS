@@ -10,7 +10,11 @@
 
 import Anthropic from "@anthropic-ai/sdk";
 
-import { CHAT_MODEL_INFO } from "@/lib/endurance/ai-models";
+import { CHAT_MODEL_INFO, type ChatModel } from "@/lib/endurance/ai-models";
+import {
+  openRouterChat,
+  type OpenAIMessage,
+} from "@/lib/endurance/ai-openrouter";
 import { buildHealthContext } from "./context";
 
 export type DashboardChatMessage = {
@@ -39,15 +43,35 @@ const PERSONA = [
   `- Du kannst nichts an Plänen oder Daten ändern — verweise dafür auf die jeweiligen Seiten (Plan-Anpassungen: Endurance → Empfohlene Trainings).`,
 ].join("\n");
 
+const FALLBACK_REPLY = "Dazu habe ich gerade keine Antwort.";
+
 export async function runDashboardChat(
   history: DashboardChatMessage[],
   todayIso: string,
+  model: ChatModel = "anthropic",
 ): Promise<{ reply: string }> {
   const context = await buildHealthContext(todayIso);
   const system = `${PERSONA}\n\n=== AKTUELLE DATEN ===\n${context}`;
+  const info = CHAT_MODEL_INFO[model];
+
+  // Gratis-OSS via OpenRouter (kein Tool-Use nötig — reiner Q&A-Chat).
+  if (info.provider === "openrouter") {
+    const messages: OpenAIMessage[] = [
+      { role: "system", content: system },
+      ...history.map((m) => ({ role: m.role, content: m.content })),
+    ];
+    const resp = await openRouterChat({
+      model: info.id,
+      fallbackModels: info.fallbacks,
+      messages,
+      maxTokens: 1536,
+    });
+    const reply = (resp.choices[0]?.message.content ?? "").trim();
+    return { reply: reply || FALLBACK_REPLY };
+  }
 
   const resp = await getClient().messages.create({
-    model: CHAT_MODEL_INFO.anthropic.id, // Haiku — wie der Plan-Chat.
+    model: info.id, // Haiku — wie der Plan-Chat.
     max_tokens: 1536,
     system,
     messages: history.map((m) => ({ role: m.role, content: m.content })),
@@ -59,5 +83,5 @@ export async function runDashboardChat(
     .join("\n")
     .trim();
 
-  return { reply: reply || "Dazu habe ich gerade keine Antwort." };
+  return { reply: reply || FALLBACK_REPLY };
 }

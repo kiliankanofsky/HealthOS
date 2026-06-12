@@ -256,7 +256,7 @@ export default async function DashboardPage() {
             KI-Einordnung und deine aktuellen Werte.
           </p>
           <div className="pt-2">
-            <SyncNowButton label="Sync" />
+            <SyncNowButton />
           </div>
         </header>
 

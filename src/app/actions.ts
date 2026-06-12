@@ -10,6 +10,7 @@ import {
   runDashboardChat,
   type DashboardChatMessage,
 } from "@/lib/dashboard/ai-chat";
+import type { ChatModel } from "@/lib/endurance/ai-models";
 import {
   ensureDailyOverview,
   generateDailyOverview,
@@ -45,12 +46,13 @@ export type DashboardChatState = {
 
 export async function sendDashboardChatMessage(
   history: DashboardChatMessage[],
+  model: ChatModel = "anthropic",
 ): Promise<DashboardChatState> {
   if (!Array.isArray(history) || history.length === 0) {
     return { ok: false, error: "Keine Nachricht." };
   }
   try {
-    const { reply } = await runDashboardChat(history, toLocalISODate());
+    const { reply } = await runDashboardChat(history, toLocalISODate(), model);
     return { ok: true, reply };
   } catch (e) {
     return {

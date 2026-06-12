@@ -226,7 +226,7 @@ export async function removePhase(id: number): Promise<{ ok: boolean }> {
   return { ok: true };
 }
 
-// Server Action für den "Sync jetzt"-Button auf der Weight-Page.
+// Server Action für den "Sync"-Button auf den Modul-Seiten.
 // Ruft denselben Code wie der tägliche Cron, gibt die Summary zurück und
 // invalidiert den Seiten-Cache, damit frische Daten gerendert werden.
 export async function syncNow(): Promise<SyncSummary> {
