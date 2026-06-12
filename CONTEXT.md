@@ -61,7 +61,7 @@ In Vercel → Settings → Environment Variables gesetzt für Production+Preview
 | `GARMIN_PASSWORD` | Garmin Connect Login |
 | `FDDB_COOKIE` | Cookie für FDDB-Scraping |
 | `BETTER_AUTH_SECRET` | Signier-Secret für Sessions/Cookies (`openssl rand -base64 32`) |
-| `BETTER_AUTH_URL` | Basis-URL der App (Production: `https://health-os-nine.vercel.app`, lokal: `http://localhost:3000`) |
+| `BETTER_AUTH_URL` | Basis-URL der App (Production: `https://health-os-nine.vercel.app`, lokal: `http://localhost:3000`). **Auf Vercel-Previews wird sie ignoriert** — `src/lib/auth.ts` nimmt dort `VERCEL_URL`/`VERCEL_BRANCH_URL` als baseURL/trustedOrigins, sonst scheitert der Login am Origin-Check (Preview-Domain ≠ Produktions-URL). |
 
 Lokal liegen die gleichen Werte in `.env.local` (gitignored). `.env.example` ist die Vorlage ohne Secrets.
 
