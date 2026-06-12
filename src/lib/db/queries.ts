@@ -42,6 +42,9 @@ import {
   trainingPlanSessions,
   trainingPlanWeeks,
   trainingPlans,
+  type DashboardOverview,
+  type NewDashboardOverview,
+  dashboardOverviews,
   type WeightEntry,
   type WeightPhase,
   type WorkoutKind,
@@ -1371,4 +1374,39 @@ export async function replacePlanBlocksForSession(
 
 export async function deletePlanBlock(id: number): Promise<void> {
   await db.delete(trainingPlanBlocks).where(eq(trainingPlanBlocks.id, id));
+}
+
+// ============================================================
+// Dashboard — tägliche KI-Overview (Startseite)
+// ============================================================
+
+export async function getDashboardOverviewForDate(
+  date: string,
+): Promise<DashboardOverview | undefined> {
+  return db
+    .select()
+    .from(dashboardOverviews)
+    .where(eq(dashboardOverviews.date, date))
+    .get();
+}
+
+// Upsert auf date — der Cron und das Self-Heal der Startseite dürfen sich
+// nicht gegenseitig duplizieren.
+export async function upsertDashboardOverview(
+  input: NewDashboardOverview,
+): Promise<DashboardOverview> {
+  const [row] = await db
+    .insert(dashboardOverviews)
+    .values(input)
+    .onConflictDoUpdate({
+      target: dashboardOverviews.date,
+      set: {
+        enduranceText: input.enduranceText,
+        hypertrophyText: input.hypertrophyText,
+        weightText: input.weightText,
+        model: input.model ?? null,
+      },
+    })
+    .returning();
+  return row;
 }

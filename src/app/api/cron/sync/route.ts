@@ -1,6 +1,8 @@
 import type { NextRequest } from "next/server";
 
+import { ensureDailyOverview } from "@/lib/dashboard/overview";
 import { runAllSyncs } from "@/lib/integrations/sync-all";
+import { toLocalISODate } from "@/lib/utils/date";
 
 // Daily Cron — alle externen Datenquellen in einem Rutsch syncen.
 // Vercel ruft GET mit `Authorization: Bearer ${CRON_SECRET}` auf
@@ -8,6 +10,13 @@ import { runAllSyncs } from "@/lib/integrations/sync-all";
 //
 // Sync-Logik selbst liegt in src/lib/integrations/sync-all.ts, damit der
 // UI-Button (Server Action) denselben Code aufruft.
+//
+// Nach den Syncs wird zusätzlich die KI-Tagesübersicht fürs Dashboard
+// generiert — BEST EFFORT: Vercel-Hobby erlaubt nur 2 Crons (beide belegt)
+// und 60s Laufzeit. Schlägt die Generierung fehl oder reißt das Zeitlimit,
+// holt die Startseite sie beim nächsten Aufruf selbst nach (Self-Heal in
+// DailyOverviewCard). ensureDailyOverview ist idempotent — der zweite
+// Cron-Lauf des Tages generiert nicht doppelt.
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -27,5 +36,17 @@ export async function GET(request: NextRequest) {
   }
 
   const summary = await runAllSyncs();
-  return Response.json(summary, { status: summary.ok ? 200 : 207 });
+
+  let overview: { ok: boolean; error?: string };
+  try {
+    await ensureDailyOverview(toLocalISODate());
+    overview = { ok: true };
+  } catch (e) {
+    overview = { ok: false, error: (e as Error).message };
+  }
+
+  return Response.json(
+    { ...summary, overview },
+    { status: summary.ok ? 200 : 207 },
+  );
 }

@@ -219,7 +219,9 @@ function todayAndUpcomingText(
   return lines.join("\n");
 }
 
-function metricsText(
+// Exportiert: auch der ganzheitliche Dashboard-Chat (src/lib/dashboard)
+// nutzt diese Kontext-Blöcke.
+export function metricsText(
   rows: Awaited<ReturnType<typeof getDailyMetricsBetween>>,
 ): string {
   if (rows.length === 0) return "(keine aktuellen Garmin-Daten)";
@@ -274,7 +276,7 @@ function describeLaps(laps: RunLap[] | null | undefined): string | null {
   return `variabel: ${laps.length} Laps, Pace-Spanne ${Math.round(spread)}s/km`;
 }
 
-function runsText(runs: Awaited<ReturnType<typeof getRunSessionsBetween>>): string {
+export function runsText(runs: Awaited<ReturnType<typeof getRunSessionsBetween>>): string {
   if (runs.length === 0) return "(keine Läufe erfasst)";
   // Neueste zuerst, max. 12.
   const recent = [...runs].slice(-12).reverse();
@@ -295,7 +297,7 @@ function runsText(runs: Awaited<ReturnType<typeof getRunSessionsBetween>>): stri
     .join("\n");
 }
 
-function fitnessText(fitness: ReturnType<typeof computeFitness>): string {
+export function fitnessText(fitness: ReturnType<typeof computeFitness>): string {
   if (fitness.daysCovered === 0) return "(zu wenig Lauf-Daten für Fitness/Fatigue)";
   const { ctl, atl, tsb } = fitness.current;
   const lines = [

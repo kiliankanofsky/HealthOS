@@ -801,6 +801,29 @@ export type TrainingPlanBlock = typeof trainingPlanBlocks.$inferSelect;
 export type NewTrainingPlanBlock = typeof trainingPlanBlocks.$inferInsert;
 
 // =============================================================
+// Dashboard — tägliche KI-Overview für die Startseite.
+// Eine Zeile pro Tag (UNIQUE auf date) mit je einem kurzen Bewertungs-Text
+// pro Modul. Wird vom Cron nach den Syncs generiert; fehlt die Zeile beim
+// Seitenaufruf, generiert die Startseite sie selbst nach (Self-Heal).
+// =============================================================
+
+export const dashboardOverviews = sqliteTable("dashboard_overviews", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  date: text("date").notNull().unique(), // YYYY-MM-DD
+  enduranceText: text("endurance_text").notNull(),
+  hypertrophyText: text("hypertrophy_text").notNull(),
+  weightText: text("weight_text").notNull(),
+  // Modell-ID, mit der generiert wurde (Debug/Nachvollziehbarkeit).
+  model: text("model"),
+  createdAt: text("created_at")
+    .notNull()
+    .default(sql`(CURRENT_TIMESTAMP)`),
+});
+
+export type DashboardOverview = typeof dashboardOverviews.$inferSelect;
+export type NewDashboardOverview = typeof dashboardOverviews.$inferInsert;
+
+// =============================================================
 // Auth (Better Auth) — user/session/account/verification.
 // Generiert via `npx @better-auth/cli generate`, lebt in auth-schema.ts.
 // =============================================================

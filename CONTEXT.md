@@ -84,7 +84,8 @@ Heißt: lokales `npm run dev` läuft gegen die lokale SQLite-Datei. Wenn man lok
 | Pfad | Typ | Zweck |
 |---|---|---|
 | `layout.tsx` | RSC | Root-Layout, Fonts, globaler `AppShell` |
-| `page.tsx` | RSC | Homescreen — Hero-Grid + PulseSection (Live-Stats Weight/Hypertrophy) |
+| `page.tsx` | RSC | **Start-Dashboard** (seit 2026-06-12): Meta-Kalender (Läufe + Gym + geplante Plan-Sessions), Running-/Gym-Wochen-Totals, Daily Overview (KI-Texte + ganzheitlicher Chat), Endurance- (Nächste Session + MetricsDashboard), Hypertrophy- (letzte Session + Rotation) und Weight-Sektion. `maxDuration=60` für die KI-Actions. Das alte Hero-Grid (`home/HeroGrid`) ist nicht mehr eingebunden. |
+| `actions.ts` | Server Action | Dashboard-Actions: `generateOverviewAction(force?)` (KI-Tagesübersicht generieren, Self-Heal/Refresh-Button) + `sendDashboardChatMessage(history)` (ganzheitlicher Chat, read-only) |
 | `weight/page.tsx` | RSC | Weight-Dashboard: Chart, Stats, Phasen, Day-Detail, Buttons (Sync / Tags) |
 | `weight/entries/page.tsx` | RSC | Tabelle aller Weight-Einträge |
 | `weight/tags/page.tsx` | RSC | Tag-Übersicht (Cheat-Day/Alkohol/Cheat-Meal) mit Editor — auch für Tage ohne Weight-Eintrag |
@@ -102,7 +103,7 @@ Heißt: lokales `npm run dev` läuft gegen die lokale SQLite-Datei. Wenn man lok
 | `endurance/recommendations/actions.ts` | Server Action | `createPlanFromSettings(prev, formData)` — validiert Form, extrahiert PDF-Text, archiviert vorhandenen aktiven Plan, schreibt training_plans + 16 Wochen-Slots, redirected zu /endurance/recommendations. |
 | `endurance/history/page.tsx` | RSC | Placeholder: historische Trainings-Liste |
 | `endurance/{longevity,performance}/{recommendations,history}/page.tsx` | RSC | Vier Sub-Placeholder (alt — verweist auf die unified Routes oben) |
-| `api/cron/sync/route.ts` | Route Handler | **GET** mit Bearer-Auth, führt 6 Syncs aus (sheets/strength/calories/runs/metrics/nutrition) |
+| `api/cron/sync/route.ts` | Route Handler | **GET** mit Bearer-Auth, führt 6 Syncs aus (sheets/strength/calories/runs/metrics/nutrition) und generiert danach **best effort** die KI-Tagesübersicht fürs Dashboard (`ensureDailyOverview`, idempotent; schlägt sie fehl, holt die Startseite sie per Self-Heal nach) |
 | `account/page.tsx` | RSC | Konto-Seite: ausgeloggt → AuthCard (Login; Registrierung nur solange kein User existiert), eingeloggt → Konto-Übersicht + Abmelden. Ziel des Proxy-Redirects. |
 | `api/auth/[...all]/route.ts` | Route Handler | Better-Auth-Endpunkte (sign-in/up/out, get-session, …) via `toNextJsHandler` |
 
@@ -113,6 +114,7 @@ Außerhalb von `app/`: `src/proxy.ts` (Login-Schutz aller Seiten, siehe §1 Auth
 Nach Modul gruppiert. **RSC** = Server Component, **CC** = Client Component (`"use client"`).
 
 - `site/` — `AppShell` (Wrapper), `SiteHeader` (mit `SettingsMenu`: Burger-Popover, Konto-Link + Hell/Dunkel-Toggle), `SiteFooter`, `ThemeProvider` (next-themes)
+- `dashboard/` — Start-Dashboard: `MetaCalendar` (CC, Monats-Grid; Läufe orange → `/endurance/[date]`, Gym in Template-Farbe → `/hypertrophy/[slug]/[date]?scope=all`, geplante Plan-Sessions hellgrau → `/endurance/recommendations`), `TotalsCard` (RSC, "This Week"-Card mit 3 Kennzahlen + 7-Tage-Balken + Tagesliste — Running- und Gym-Variante), `DailyOverviewCard` (CC, drei KI-Texte; Self-Heal generiert beim Mount nach, RefreshCw-Button erzwingt Neu-Generierung), `DashboardChat` (CC, ganzheitlicher read-only Chat, Markdown), `NextSessionCard` (RSC, read-only Variante der PlanBoard-Card mit Link statt Edit), `GymCards` (RSC, letzte Session + nächstes Workout laut Rotation), `WeightCards` (RSC, 3 Stat-Cards mit phasengerechter Delta-Färbung)
 - `account/` — `AuthCard` (CC, Login/Registrierung mit deutschen Fehlertexten), `LogoutButton` (CC)
 - `home/` — `HeroGrid`, `PromoBar`, `PulseSection` (RSC, lädt Live-Stats), `SectionHero`, `Topbar`
 - `weight/` — `WeightChart`/`Chart Section` (Recharts, CC), `WeightStats`, `WeightTable`, `WeightWeekMatrix`, `WeightDayList`, `WeightDayDetailDialog` (CC, nimmt jetzt `tag`-Prop), `WeightDetailView`, `WeightEntryForm` (CC), `PhaseEditDialog` (CC), `TagEditor` (CC, Tag-Übersicht + Edit-Dialog)
@@ -151,6 +153,7 @@ Nach Modul gruppiert. **RSC** = Server Component, **CC** = Client Component (`"u
 - `training_plans` — Endurance-Phase-4 Top-Level (Race-Datum, Ziel-Pace, Peak-km/Woche, Sessions/Woche, totalWeeks, planStartDate, paceZonesJson, **referencePdfText** als extrahierter Volltext, Status draft/active/completed/archived).
 - `training_plan_weeks` — eine Zeile pro Plan-Woche mit weekNumber, startDate/endDate, phase (base/build/peak/taper/race), targetVolumeKm. UNIQUE(planId, weekNumber).
 - `training_plan_sessions` — eine Zeile pro Plan-Slot. Self-FK `alternativeOfId` macht eine Zeile zur Alternative ("Option 2") einer Primär-Session. `aiLocked` = KI-Sperre. `runSessionId` (FK → run_sessions, ON DELETE SET NULL) verlinkt zum tatsächlich absolvierten Lauf. UNIQUE(planId, date, dayOrder, alternativeOfId) erlaubt Double-Days und unabhängige Alternativen.
+- `dashboard_overviews` — tägliche KI-Overview der Startseite (UNIQUE auf `date`): je ein kurzer Bewertungs-Text pro Modul (endurance/hypertrophy/weight) + Modell-ID. Geschrieben vom Cron bzw. Self-Heal der Startseite (Migration 0017).
 - `training_plan_blocks` — strukturierte Intervalle pro Session. `repetitions` × `segmentsJson` (TS-Typ `TrainingPlanBlockSegment[]` mit kind work/recovery/warmup/cooldown, durationSec/distanceMeters, zone/zoneMin/zoneMax, paceMinSec/paceMaxSec, hrMin/hrMax). UNIQUE(sessionId, blockOrder).
 
 ### 4.4 Integrationen (`src/lib/integrations/`)
@@ -186,6 +189,10 @@ Nach Modul gruppiert. **RSC** = Server Component, **CC** = Client Component (`"u
 | `endurance/pdf-extract.ts` | Phase 4: `extractPdfText(file)` via `pdf-parse` v2 (`PDFParse`-Klasse). Server-only, dynamischer Import. Seit Sprint 4.1 nur noch Fallback — Referenz geht nativ an Claude. |
 | `endurance/plan-format.ts` | Sprint 4: Anzeige-Helfer (Session-Typ-Labels/Farben, Phasen-Labels/-Farben, Zone→Pace, Block→Text, Distanz/Dauer-Formatter). Reine Formatierung, von allen Cards geteilt. |
 | `endurance/plan-splits.ts` | Sprint 4.1: `buildSplits(blocks, zones)` (km vs Runden) + `sessionTotals` (Distanz/Dauer aus Intervallen, fehlendes Maß über Pace abgeleitet). |
+| `dashboard/gym.ts` | Dashboard: `getRecentGymSummaries(limit)` — pro Gym-Session Σ Best-e1RM, Δ zur vorigen Session desselben Templates, Sätze, Volume Load, Cycle. Genutzt von Startseite (Gym-Totals + GymCards) und KI-Kontext. |
+| `dashboard/context.ts` | Dashboard: `buildHealthContext(todayIso)` — EIN deutscher Daten-Block über alle Module (Gewicht+Phase, Nutrition, Gym, Plan, Garmin-Erholung, Fitness, Läufe). Gemeinsame Quelle für Overview-Generierung UND Dashboard-Chat. Außerdem `phaseForDate(phases, iso)`. |
+| `dashboard/overview.ts` | Dashboard: `generateDailyOverview(todayIso)` (Haiku, forced tool-use → 3 Texte, upsert in `dashboard_overviews`) + `ensureDailyOverview` (idempotent — generiert nur, wenn der Tages-Eintrag fehlt). |
+| `dashboard/ai-chat.ts` | Dashboard: `runDashboardChat(history, todayIso)` — ganzheitlicher read-only Chat (Haiku, KEINE Tools; Plan-Mutationen bleiben im Endurance-Chat). Nutzt die aus `endurance/ai-chat.ts` exportierten Kontext-Helfer `metricsText`/`runsText`/`fitnessText`. |
 
 ### 4.6 Scripts (`scripts/`) — alle als `tsx` lokal, **nicht** in Vercel verfügbar
 
@@ -228,6 +235,7 @@ Sequenz `0000` → `0012`. **Nicht editieren** — Drizzle hält im `meta/_journ
 | `0014` | Sprint 4.1: `training_plans.reference_file_base64` + `reference_file_media_type` — Referenzdatei (PDF/Bild) base64-kodiert, wird nativ an Claude (Vision) übergeben statt nur als extrahierter Text. |
 | `0015` | `run_sessions.laps_json` (Garmin-Splits) + `training_plans.next_note_*` (KI-Tagesnotiz) |
 | `0016` | Auth (Better Auth): `user` + `session` + `account` + `verification`. Drizzle-Definitionen in `src/lib/db/auth-schema.ts` (via `npx @better-auth/cli generate` erzeugt, aus `schema.ts` re-exportiert). |
+| `0017` | Start-Dashboard: `dashboard_overviews` (tägliche KI-Overview, UNIQUE auf `date`). |
 
 ### 4.8 Konfig-Files (Root)
 
@@ -320,6 +328,9 @@ Alle Funktionen sind `async` und liefern `Promise<T>`. Wenn etwas fehlt, gehört
 - Weeks: `getWeeksForPlan(planId)`, `getWeekByNumber(planId, n)`, `getWeekForDate(planId, date)`, `createPlanWeek(input)`, `insertPlanWeeks(weeks[])` (Bulk-Insert), `updatePlanWeek(id, patch)`
 - Sessions: `getSessionsForPlan(planId)` (primary only), `getPlanSessionsForWeek(weekId)`, `getPlanSessionsForDateRange(planId, from, to)`, `getPlanSessionById(id)`, `getNextPlanSession(planId, todayIso)`, `getAlternativesForPlanSession(primaryId)`, `createPlanSession(input)`, `insertPlanSessions(sessions[])` (Bulk für KI-Generierung), `updatePlanSession(id, patch)`, `updatePlanSessionDate(id, newDate, dayOrder?)`, `setPlanSessionAiLocked(id, locked)`, `linkPlanSessionToRun(id, runSessionId)`, `deletePlanSession(id)`
 - Blocks: `getBlocksForPlanSession(sessionId)`, `createPlanBlock(input)`, `insertPlanBlocks(blocks[])` (Bulk), `replacePlanBlocksForSession(sessionId, blocks[])` (atomarer Ersatz aller Blocks einer Session), `deletePlanBlock(id)`
+
+**Dashboard (Startseite):**
+- `getDashboardOverviewForDate(date)` / `upsertDashboardOverview(input)` — tägliche KI-Overview, Upsert auf `date` (Cron und Self-Heal dürfen sich nicht duplizieren)
 
 ### Endurance Phase 4 — KI-Plan-Generierung (Sprint 3)
 
