@@ -91,8 +91,8 @@ export default async function EndurancePage() {
     newestFirst.find((m) => m.lactateThresholdHr != null)?.lactateThresholdHr ??
     null;
 
-  // Empirische Zonen-Schätzung aus den Splits der letzten 180 Tage
-  // (Steady-Läufe → Pace↔HF-Regression, Intervalle → Z5-Anker).
+  // Konsolidierte Zonen-Schätzung: Splits der letzten 180 Tage + Garmin-LT2
+  // + LTHR werden in zone-estimation.ts zu einer Schwellen-Pace gemischt.
   const estimationFrom = new Date(today);
   estimationFrom.setDate(today.getDate() - 180);
   const estimationFromIso = estimationFrom.toISOString().slice(0, 10);
@@ -100,6 +100,7 @@ export default async function EndurancePage() {
     runs.filter((r) => r.date >= estimationFromIso),
     estimationFromIso,
     toIso,
+    { garminLtPaceSecPerKm: defaultLtPace, lthr: defaultLthr },
   );
 
   return (
@@ -132,25 +133,22 @@ export default async function EndurancePage() {
           </section>
         </div>
 
+        <TrainingsSection latestRun={latestRun} />
+
         <section className="rounded-3xl bg-card p-4 ring-1 ring-black/5 shadow-sm sm:p-6 lg:p-8">
-          <div className="mb-5 space-y-1">
-            <h2 className="font-heading text-xl font-semibold tracking-tight">
-              Training Zone Calculator
-            </h2>
-            <p className="text-sm text-muted-foreground">
-              Pace- und HF-Zonen aus deinen echten Läufen: Steady-Splits
-              liefern die Pace↔HF-Beziehung, Intervalle den VO₂max-Anker.
-              LTHR aus Garmin, überschreibbar.
+          <div className="mb-4 space-y-1">
+            <p className="text-[10px] font-medium tracking-[0.22em] text-muted-foreground uppercase">
+              Trainingszonen
             </p>
+            <h2 className="font-heading text-lg font-semibold tracking-tight">
+              Pace &amp; Herzfrequenz pro Zone
+            </h2>
           </div>
           <TrainingZoneCalculator
             estimation={zoneEstimation}
-            defaultThresholdPaceSecPerKm={defaultLtPace}
             defaultLthr={defaultLthr}
           />
         </section>
-
-        <TrainingsSection latestRun={latestRun} />
       </main>
     </AppShell>
   );

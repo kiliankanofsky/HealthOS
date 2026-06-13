@@ -13,12 +13,121 @@
 // ============================================================
 
 import type {
+  DailyTag,
   NutritionEntry,
   WeightEntry,
   WeightPhase,
 } from "@/lib/db/schema";
 
 import { computeWeightStats, diff, phaseForDate } from "./weight-stats";
+
+// ============================================================
+// Cheat-Tag-Override
+//
+// Wenn für einen Tag ein Cheat-Day- oder Cheat-Meal-Tag gesetzt ist, ist das
+// fddb-Tracking nicht repräsentativ — der User trackt an diesen Tagen bewusst
+// nicht alles. Stattdessen gilt:
+//
+//   1. kcalTarget aus daily_tags ist gesetzt → dieser Wert IST die Wahrheit
+//      (z.B. "Cheat-Meal: 2000 kcal" überschreibt fddb 1000 kcal).
+//   2. cheatDay ohne kcalTarget → Aufschlag CHEAT_DAY_FALLBACK_FACTOR auf den
+//      fddb-Wert (Default 1.5×); existiert kein fddb-Wert, wird der Tag mit
+//      `kind: "cheat-day-unknown"` markiert und in der Mittelung übersprungen.
+//   3. cheatMeal ohne kcalTarget → Aufschlag CHEAT_MEAL_FALLBACK_FACTOR (1.25×).
+//
+// Genutzt von der Empfehlung UND vom Dashboard-KI-Kontext, damit beide dieselbe
+// "wahre" Intake-Reihe sehen.
+// ============================================================
+
+const CHEAT_DAY_FALLBACK_FACTOR = 1.5;
+const CHEAT_MEAL_FALLBACK_FACTOR = 1.25;
+
+export type EffectiveDay = {
+  date: string;
+  /** Effektive Kalorien für den Tag — null, wenn weder fddb noch Tag-Wert greift. */
+  caloriesKcal: number | null;
+  /** Wie kam der Wert zustande? */
+  kind:
+    | "fddb"
+    | "cheat-meal-target"
+    | "cheat-meal-fallback"
+    | "cheat-day-target"
+    | "cheat-day-fallback"
+    | "cheat-day-unknown";
+  /** Original-fddb-Wert (falls vorhanden), für Anzeige/Debug. */
+  fddbKcal: number | null;
+  cheatDay: boolean;
+  cheatMeal: boolean;
+};
+
+export function effectiveCaloriesForDay(
+  entry: { caloriesKcal: number } | null,
+  tag: Pick<DailyTag, "cheatDay" | "cheatMeal" | "kcalTarget"> | null,
+  date: string,
+): EffectiveDay {
+  const fddb = entry != null && entry.caloriesKcal > 0 ? entry.caloriesKcal : null;
+  const cheatDay = tag?.cheatDay === true;
+  const cheatMeal = tag?.cheatMeal === true;
+  const target = tag?.kcalTarget != null && tag.kcalTarget > 0 ? tag.kcalTarget : null;
+
+  if (cheatDay) {
+    if (target != null) {
+      return { date, caloriesKcal: target, kind: "cheat-day-target", fddbKcal: fddb, cheatDay, cheatMeal };
+    }
+    if (fddb != null) {
+      return {
+        date,
+        caloriesKcal: Math.round(fddb * CHEAT_DAY_FALLBACK_FACTOR),
+        kind: "cheat-day-fallback",
+        fddbKcal: fddb,
+        cheatDay,
+        cheatMeal,
+      };
+    }
+    return { date, caloriesKcal: null, kind: "cheat-day-unknown", fddbKcal: null, cheatDay, cheatMeal };
+  }
+
+  if (cheatMeal) {
+    if (target != null) {
+      return { date, caloriesKcal: target, kind: "cheat-meal-target", fddbKcal: fddb, cheatDay, cheatMeal };
+    }
+    if (fddb != null) {
+      return {
+        date,
+        caloriesKcal: Math.round(fddb * CHEAT_MEAL_FALLBACK_FACTOR),
+        kind: "cheat-meal-fallback",
+        fddbKcal: fddb,
+        cheatDay,
+        cheatMeal,
+      };
+    }
+  }
+
+  return { date, caloriesKcal: fddb, kind: "fddb", fddbKcal: fddb, cheatDay, cheatMeal };
+}
+
+/**
+ * Reduziert Nutrition-Einträge + Daily-Tags auf eine Reihe effektiver Tage —
+ * eine Zeile pro Datum, das mindestens eine Quelle (fddb oder Tag) hat.
+ * Sortiert chronologisch aufsteigend.
+ */
+export function buildEffectiveDays(
+  nutrition: NutritionEntry[],
+  tags: DailyTag[],
+): EffectiveDay[] {
+  const byDateNutrition = new Map<string, NutritionEntry>();
+  for (const n of nutrition) byDateNutrition.set(n.date, n);
+  const byDateTag = new Map<string, DailyTag>();
+  for (const t of tags) byDateTag.set(t.date, t);
+
+  const dates = new Set<string>([...byDateNutrition.keys(), ...byDateTag.keys()]);
+  const out: EffectiveDay[] = [];
+  for (const d of dates) {
+    out.push(effectiveCaloriesForDay(byDateNutrition.get(d) ?? null, byDateTag.get(d) ?? null, d));
+  }
+  out.sort((a, b) => a.date.localeCompare(b.date));
+  return out;
+}
 
 const KCAL_PER_KG = 7700;
 // Sicherheits-Deckel: größere Sprünge als ±500 kcal/Tag empfehlen wir nie
@@ -55,9 +164,11 @@ export function buildNutritionRecommendation(input: {
   weightEntries: WeightEntry[]; // chronologisch aufsteigend
   phases: WeightPhase[];
   nutrition: NutritionEntry[];
+  /** Daily-Tags mindestens für das Empfehlungsfenster (14 Tage). */
+  tags: DailyTag[];
   todayIso: string;
 }): NutritionRecommendation {
-  const { weightEntries, phases, nutrition, todayIso } = input;
+  const { weightEntries, phases, nutrition, tags, todayIso } = input;
   const phase = phaseForDate(phases, todayIso);
 
   // Vergleichsbasis: nur Wiegungen innerhalb der laufenden Phase, damit die
@@ -78,15 +189,17 @@ export function buildNutritionRecommendation(input: {
       ? Math.round(TARGET_WEEKLY_RATE[phase.kind] * referenceWeight * 100) / 100
       : null;
 
-  // Ø-Intake der letzten 14 Tage.
+  // Ø-Intake der letzten 14 Tage — Cheat-Day/Meal-Tags überschreiben fddb,
+  // damit Cheat-Phasen die "wahre" Aufnahme spiegeln, nicht den getrackten
+  // Teil-Wert.
   const fromIso = isoDaysAgo(todayIso, 13);
-  const recent = nutrition.filter(
-    (n) => n.date >= fromIso && n.date <= todayIso && n.caloriesKcal > 0,
+  const days = buildEffectiveDays(nutrition, tags).filter(
+    (d) => d.date >= fromIso && d.date <= todayIso && d.caloriesKcal != null,
   );
   const avgIntakeKcal =
-    recent.length >= 4
+    days.length >= 4
       ? Math.round(
-          recent.reduce((acc, n) => acc + n.caloriesKcal, 0) / recent.length,
+          days.reduce((acc, d) => acc + (d.caloriesKcal ?? 0), 0) / days.length,
         )
       : null;
 
@@ -116,7 +229,7 @@ export function buildNutritionRecommendation(input: {
     observedEntryCount,
     targetWeeklyDeltaKg,
     avgIntakeKcal,
-    intakeDayCount: recent.length,
+    intakeDayCount: days.length,
     adjustmentKcal,
     adjustmentCapped,
     recommendedIntakeKcal,

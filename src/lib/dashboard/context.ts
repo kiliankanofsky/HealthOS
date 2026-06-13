@@ -9,6 +9,7 @@
 // ============================================================
 
 import {
+  getAllDailyTags,
   getAllPhases,
   getAllWeightEntries,
   getCurrentTrainingPlan,
@@ -22,7 +23,11 @@ import { fitnessText, metricsText, runsText } from "@/lib/endurance/ai-chat";
 import { formatPace, formatSecondsAsHms } from "@/lib/endurance/plan";
 import { SESSION_TYPE_LABELS } from "@/lib/endurance/plan-format";
 import { computeFitness } from "@/lib/endurance/training-load";
-import { buildNutritionRecommendation } from "@/lib/utils/nutrition-recommendation";
+import {
+  buildEffectiveDays,
+  buildNutritionRecommendation,
+  type EffectiveDay,
+} from "@/lib/utils/nutrition-recommendation";
 import { computeWeightStats, diff, phaseForDate } from "@/lib/utils/weight-stats";
 import { getRecentGymSummaries } from "./gym";
 
@@ -60,6 +65,29 @@ function signedKg(v: number | null): string {
   return `${r > 0 ? "+" : ""}${r.toFixed(1)} kg`;
 }
 
+function formatEffectiveDayLine(d: EffectiveDay, proteinG: number | null): string {
+  const protein = proteinG != null ? ` · ${Math.round(proteinG)}g Protein` : "";
+  const annotations: string[] = [];
+  if (d.cheatDay) annotations.push("Cheat-Day");
+  if (d.cheatMeal) annotations.push("Cheat-Meal");
+  switch (d.kind) {
+    case "cheat-day-target":
+    case "cheat-meal-target":
+      annotations.push(`Tag-kcal verwendet${d.fddbKcal != null ? `; fddb ${d.fddbKcal} kcal ersetzt` : ""}`);
+      break;
+    case "cheat-day-fallback":
+      annotations.push(`Cheat-Day ohne kcal-Ziel → fddb ×1,5 (war ${d.fddbKcal} kcal)`);
+      break;
+    case "cheat-meal-fallback":
+      annotations.push(`Cheat-Meal ohne kcal-Ziel → fddb ×1,25 (war ${d.fddbKcal} kcal)`);
+      break;
+    case "cheat-day-unknown":
+      return `  ${d.date}: kein Tracking — Cheat-Day, deutlich höhere Aufnahme angenommen`;
+  }
+  const ann = annotations.length > 0 ? ` [${annotations.join(", ")}]` : "";
+  return `  ${d.date}: ${d.caloriesKcal ?? "—"} kcal${protein}${ann}`;
+}
+
 function planSessionLine(s: TrainingPlanSession): string {
   const km =
     s.targetDistanceMeters != null
@@ -73,6 +101,7 @@ export async function buildHealthContext(todayIso: string): Promise<string> {
     weightEntries,
     phases,
     nutrition,
+    allTags,
     gym,
     plan,
     metrics,
@@ -82,12 +111,17 @@ export async function buildHealthContext(todayIso: string): Promise<string> {
     getAllPhases(),
     // 14 Tage — die deterministische Kalorien-Empfehlung mittelt über 2 Wochen.
     getNutritionEntries({ from: isoDaysAgo(todayIso, 13), to: todayIso }),
+    getAllDailyTags(),
     getRecentGymSummaries(6),
     getCurrentTrainingPlan(),
     getDailyMetricsBetween(isoDaysAgo(todayIso, 14), todayIso),
     // 180 Tage, damit die 42-Tage-CTL gut "aufgewärmt" ist (wie Plan-Chat).
     getRunSessionsBetween(isoDaysAgo(todayIso, 180), todayIso),
   ]);
+
+  const fromIso = isoDaysAgo(todayIso, 13);
+  const tagsInWindow = allTags.filter((t) => t.date >= fromIso && t.date <= todayIso);
+  const effectiveDays = buildEffectiveDays(nutrition, tagsInWindow);
 
   const runs = [...runsRaw].sort((a, b) => a.date.localeCompare(b.date));
   const fitness = computeFitness(
@@ -112,6 +146,7 @@ export async function buildHealthContext(todayIso: string): Promise<string> {
     weightEntries,
     phases,
     nutrition,
+    tags: tagsInWindow,
     todayIso,
   });
   if (rec.phaseKind != null) {
@@ -125,14 +160,12 @@ export async function buildHealthContext(todayIso: string): Promise<string> {
     );
   }
 
-  // ---- Nutrition (letzte 7 Tage) ----
+  // ---- Nutrition (letzte 14 Tage, Cheat-Tags überschreiben fddb) ----
+  const proteinByDate = new Map(nutrition.map((n) => [n.date, n.proteinG]));
   const nutritionLines =
-    nutrition.length === 0
-      ? ["(keine Nutrition-Daten in den letzten 7 Tagen)"]
-      : nutrition.map(
-          (n) =>
-            `  ${n.date}: ${n.caloriesKcal} kcal · ${Math.round(n.proteinG)}g Protein`,
-        );
+    effectiveDays.length === 0
+      ? ["(keine Nutrition-Daten in den letzten 14 Tagen)"]
+      : effectiveDays.map((d) => formatEffectiveDayLine(d, proteinByDate.get(d.date) ?? null));
 
   // ---- Gym ----
   const gymLines =
@@ -179,7 +212,7 @@ export async function buildHealthContext(todayIso: string): Promise<string> {
     `GEWICHT:`,
     ...weightLines,
     ``,
-    `NUTRITION (letzte 7 Tage, fddb):`,
+    `NUTRITION (letzte 14 Tage; Cheat-Day/Cheat-Meal-Tags überschreiben den fddb-Wert):`,
     ...nutritionLines,
     ``,
     `GYM (letzte Sessions, neueste zuerst):`,

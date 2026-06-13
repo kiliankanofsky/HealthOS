@@ -1,23 +1,22 @@
 // ============================================================
-// Endurance — Trainingszonen aus echten Lauf-Daten schätzen.
+// Endurance — konsolidierte Trainingszonen aus mehreren Datenquellen.
 //
-// Statt fixer Faktoren auf die LT2-Pace nutzen wir die Splits (laps_json)
-// vergangener Läufe:
+// Modell: 5 Zonen, LTHR-verankert nach Joe Friel (Running):
+//   Z1 Recovery   < 85 % LTHR
+//   Z2 Endurance  85–89 %
+//   Z3 Tempo      90–94 %
+//   Z4 Threshold  95–99 %
+//   Z5 VO₂ Max    ≥ 100 % LTHR (Friels 5a/5b/5c zusammengefasst)
 //
-//   1. STEADY-LÄUFE (geringe Pace-Varianz über die Splits) liefern saubere
-//      Pace↔HF-Datenpunkte. Eine dauer-gewichtete lineare Regression
-//      (Speed [m/s] über HF) bildet das individuelle aerobe Profil ab —
-//      daraus kommt die Pace für jede HF-Zonengrenze (%LTHR).
-//   2. INTERVALLE taugen nicht für die HF-Beziehung (HF hinkt bei kurzen
-//      Belastungen nach) — dort wird gerechnet: Die Work-Splits (deutlich
-//      schneller als der Lauf-Median) liefern die schnellste kumulativ
-//      ≥5 min gehaltene Pace als VO₂max-Anker (Z5). Die schnellste
-//      kumulativ ≥20 min gehaltene Pace eines einzelnen Laufs dient als
-//      Schwellen-Cross-Check.
+// Schwellen-Pace wird aus drei Quellen konsolidiert (Median):
+//   A) Garmin LT2-Pace (Algorithmus)
+//   B) Empirisch via Pace↔HF-Regression aus Steady-Splits (Pace bei HF=LTHR)
+//   C) Beste 20-min-Pace innerhalb eines Laufs (Race-/Tempolauf-Surrogat)
 //
-// Die Funktionen sind pure (kein DB-Zugriff) — die Page lädt die Läufe und
-// reicht das Ergebnis serialisiert an den Client-Calculator weiter, der die
-// Zonen-Tabelle live aus Regression + LTHR-Eingabe ableitet.
+// Pace-Zonen werden, wenn eine belastbare Regression vorliegt, direkt aus
+// der Regression abgeleitet (paceAtHr für die HF-Grenzen) — sonst über
+// Friel-Faktoren auf die konsolidierte Schwellen-Pace.
+// Z5-Pace kommt aus Intervall-Work-Splits (kumulativ ≥ 5 min, schnellste).
 // ============================================================
 
 import type { RunLap } from "@/lib/db/schema";
@@ -41,6 +40,19 @@ export type PaceHrRegression = {
   r2: number;
 };
 
+export type PaceSource = "garmin" | "regression" | "best20";
+
+export type ThresholdPaceEstimate = {
+  /** Konsolidierte Schwellen-Pace (sec/km) — Median über alle vorhandenen Quellen. */
+  paceSecPerKm: number;
+  /** Welche Quellen haben dazu beigetragen? */
+  sources: PaceSource[];
+  /** Einzelwerte pro Quelle für den Tooltip. */
+  garminPace: number | null;
+  regressionPace: number | null;
+  best20Pace: number | null;
+};
+
 export type ZoneEstimation = {
   fromIso: string;
   toIso: string;
@@ -56,8 +68,10 @@ export type ZoneEstimation = {
   steadyLapPoints: SteadyLapPoint[];
   /** Schnellste kumulativ ≥5 min gehaltene Pace aus Intervall-Work-Splits (Z5-Anker). */
   vo2maxPaceSecPerKm: number | null;
-  /** Schnellste kumulativ ≥20 min gehaltene Pace innerhalb EINES Laufs (Schwellen-Cross-Check). */
+  /** Schnellste kumulativ ≥20 min gehaltene Pace innerhalb EINES Laufs. */
   best20minPaceSecPerKm: number | null;
+  /** Konsolidierte Schwellen-Pace + Quellen-Aufschlüsselung. null bei zu dünner Datenlage. */
+  thresholdPace: ThresholdPaceEstimate | null;
 };
 
 // Plausibilitäts-Grenzen.
@@ -79,6 +93,69 @@ const WORK_LAP_MAX_SEC = 600;
 const REGRESSION_MIN_POINTS = 10;
 const REGRESSION_MIN_RUNS = 3;
 const REGRESSION_MIN_HR_SPAN = 15;
+
+// Friel-HF-Zonen (% LTHR) für Running.
+export type FrielZone = {
+  zone: "Z1" | "Z2" | "Z3" | "Z4" | "Z5";
+  name: string;
+  description: string;
+  /** Untergrenze HF-% LTHR (null = offen nach unten). */
+  hrPctLow: number | null;
+  /** Obergrenze HF-% LTHR (null = offen nach oben). */
+  hrPctHigh: number | null;
+  /** Faktor auf die Schwellen-Pace für die SCHNELLE Grenze der Zone (null = offen). */
+  paceFactorFast: number | null;
+  /** Faktor auf die Schwellen-Pace für die LANGSAME Grenze. */
+  paceFactorSlow: number | null;
+};
+
+export const FRIEL_ZONES: FrielZone[] = [
+  {
+    zone: "Z1",
+    name: "Recovery",
+    description: "Regeneration, sehr lockerer Dauerlauf",
+    hrPctLow: null,
+    hrPctHigh: 84,
+    paceFactorFast: 1.29,
+    paceFactorSlow: null,
+  },
+  {
+    zone: "Z2",
+    name: "Endurance",
+    description: "Grundlagenausdauer, Long Runs",
+    hrPctLow: 85,
+    hrPctHigh: 89,
+    paceFactorFast: 1.14,
+    paceFactorSlow: 1.29,
+  },
+  {
+    zone: "Z3",
+    name: "Tempo",
+    description: "Marathon-/Half-Marathon-Effort",
+    hrPctLow: 90,
+    hrPctHigh: 94,
+    paceFactorFast: 1.06,
+    paceFactorSlow: 1.13,
+  },
+  {
+    zone: "Z4",
+    name: "Threshold",
+    description: "Schwellentempo (≈ 10 km/Stunden-Race)",
+    hrPctLow: 95,
+    hrPctHigh: 99,
+    paceFactorFast: 1.0,
+    paceFactorSlow: 1.05,
+  },
+  {
+    zone: "Z5",
+    name: "VO₂ Max",
+    description: "Intervalle 3–8 min, anaerob nahe Maximum",
+    hrPctLow: 100,
+    hrPctHigh: null,
+    paceFactorFast: 0.9,
+    paceFactorSlow: 0.99,
+  },
+];
 
 type ValidLap = {
   paceSecPerKm: number;
@@ -124,8 +201,6 @@ function fastestCumulativePace(
   let cum = 0;
   let weighted = 0;
   for (const l of sorted) {
-    // Nur so viel der Lap-Dauer mitnehmen, wie bis minTotalSec fehlt — sonst
-    // verwässert eine lange langsame Schluss-Lap das Ergebnis.
     const take = Math.min(l.durationSec, minTotalSec - cum);
     cum += take;
     weighted += l.paceSecPerKm * take;
@@ -138,12 +213,15 @@ export function estimateZonesFromRuns(
   runs: RunForEstimation[],
   fromIso: string,
   toIso: string,
+  options: { garminLtPaceSecPerKm: number | null; lthr: number | null } = {
+    garminLtPaceSecPerKm: null,
+    lthr: null,
+  },
 ): ZoneEstimation {
   let runCount = 0;
   let steadyRunCount = 0;
   let intervalRunCount = 0;
   const steadyPoints: SteadyLapPoint[] = [];
-  // Speed-Datenpunkte für die Regression: (hr, m/s, Gewicht=Dauer).
   const regPoints: { hr: number; speed: number; w: number }[] = [];
   const workLaps: { paceSecPerKm: number; durationSec: number }[] = [];
   let best20min: number | null = null;
@@ -161,15 +239,12 @@ export function estimateZonesFromRuns(
     const totalSec = laps.reduce((acc, l) => acc + l.durationSec, 0);
     const isSteady = cv <= STEADY_CV_MAX && totalSec >= STEADY_MIN_RUN_SEC;
 
-    // Schwellen-Cross-Check über alle Läufe (auch Intervall-Einheiten —
-    // kumulativ schnellste ≥20 min innerhalb eines Laufs).
     const p20 = fastestCumulativePace(laps, 20 * 60);
     if (p20 != null && (best20min == null || p20 < best20min)) best20min = p20;
 
     if (isSteady) {
       steadyRunCount++;
-      // Erste Lap überspringen: HF läuft beim Einlaufen der Pace hinterher
-      // und würde den Fit nach "zu schnell bei niedriger HF" verzerren.
+      // Erste Lap überspringen: HF läuft beim Einlaufen der Pace hinterher.
       for (const l of laps.slice(1)) {
         if (l.hr == null || l.durationSec < 120) continue;
         steadyPoints.push({ hr: l.hr, durationSec: l.durationSec });
@@ -214,8 +289,6 @@ export function estimateZonesFromRuns(
       if (Math.abs(denom) > 1e-9) {
         const slope = (swxy - sw * meanX * meanY) / denom;
         const intercept = meanY - slope * meanX;
-        // Negative/Null-Steigung = Datenlage widerspricht der Physiologie
-        // (mehr HF müsste mehr Speed bedeuten) → kein belastbarer Fit.
         if (slope > 0) {
           let ssRes = 0, ssTot = 0;
           for (const p of regPoints) {
@@ -230,8 +303,18 @@ export function estimateZonesFromRuns(
     }
   }
 
-  // ---- VO₂max-Anker aus Intervall-Work-Splits (kumulativ ≥5 min) ----
   const vo2maxPace = fastestCumulativePace(workLaps, 5 * 60);
+
+  // ---- Konsolidierte Schwellen-Pace ----
+  const regressionPace =
+    regression != null && options.lthr != null
+      ? paceAtHr(regression, options.lthr)
+      : null;
+  const thresholdPace = consolidateThresholdPace({
+    garminPace: options.garminLtPaceSecPerKm,
+    regressionPace,
+    best20Pace: best20min,
+  });
 
   return {
     fromIso,
@@ -245,6 +328,29 @@ export function estimateZonesFromRuns(
     steadyLapPoints: steadyPoints,
     vo2maxPaceSecPerKm: vo2maxPace,
     best20minPaceSecPerKm: best20min,
+    thresholdPace,
+  };
+}
+
+function consolidateThresholdPace(input: {
+  garminPace: number | null;
+  regressionPace: number | null;
+  best20Pace: number | null;
+}): ThresholdPaceEstimate | null {
+  const values: { source: PaceSource; value: number }[] = [];
+  if (input.garminPace != null) values.push({ source: "garmin", value: input.garminPace });
+  if (input.regressionPace != null)
+    values.push({ source: "regression", value: input.regressionPace });
+  if (input.best20Pace != null) values.push({ source: "best20", value: input.best20Pace });
+  if (values.length === 0) return null;
+
+  const med = median(values.map((v) => v.value));
+  return {
+    paceSecPerKm: Math.round(med),
+    sources: values.map((v) => v.source),
+    garminPace: input.garminPace,
+    regressionPace: input.regressionPace,
+    best20Pace: input.best20Pace,
   };
 }
 
@@ -254,8 +360,85 @@ export function paceAtHr(
   hr: number,
 ): number | null {
   const speed = regression.intercept + regression.slope * hr;
-  if (speed <= 0.5) return null; // < 1,8 km/h — Extrapolation kaputt
+  if (speed <= 0.5) return null;
   const pace = 1000 / speed;
   if (pace < 120 || pace > 720) return null;
   return Math.round(pace);
+}
+
+// ---- Pro-Zone Ableitung ----
+
+export type ZoneRow = {
+  zone: FrielZone;
+  /** HF-Untergrenze (bpm) — null wenn offen nach unten. */
+  hrLow: number | null;
+  /** HF-Obergrenze (bpm) — null wenn offen nach oben. */
+  hrHigh: number | null;
+  /** Pace (sec/km) am schnellen Ende der Zone — null wenn offen. */
+  paceFast: number | null;
+  /** Pace (sec/km) am langsamen Ende der Zone — null wenn offen. */
+  paceSlow: number | null;
+  /** Beobachtete Steady-Minuten in dieser HF-Zone. */
+  evidenceMinutes: number;
+  /** Welche Quelle hat die Pace-Range geliefert? */
+  paceSource: "regression" | "factor" | "vo2max-anchor" | null;
+};
+
+export function buildZoneRows(
+  estimation: ZoneEstimation,
+  lthr: number | null,
+): ZoneRow[] {
+  return FRIEL_ZONES.map((z) => {
+    const hrLow = z.hrPctLow != null && lthr != null
+      ? Math.round((lthr * z.hrPctLow) / 100)
+      : null;
+    const hrHigh = z.hrPctHigh != null && lthr != null
+      ? Math.round((lthr * z.hrPctHigh) / 100)
+      : null;
+
+    let paceFast: number | null = null;
+    let paceSlow: number | null = null;
+    let paceSource: ZoneRow["paceSource"] = null;
+
+    if (z.zone === "Z5") {
+      // Z5 kommt aus Intervall-Splits — Regression extrapoliert oberhalb der
+      // Schwelle schlecht.
+      paceSlow = estimation.thresholdPace?.paceSecPerKm ?? null;
+      paceFast =
+        estimation.vo2maxPaceSecPerKm ??
+        (paceSlow != null ? Math.round(paceSlow * 0.92) : null);
+      paceSource = estimation.vo2maxPaceSecPerKm != null ? "vo2max-anchor" : "factor";
+    } else if (estimation.regression != null && hrLow != null && hrHigh != null) {
+      paceFast = paceAtHr(estimation.regression, hrHigh);
+      paceSlow = paceAtHr(estimation.regression, hrLow);
+      paceSource = "regression";
+    } else if (estimation.thresholdPace != null) {
+      const tp = estimation.thresholdPace.paceSecPerKm;
+      paceFast = z.paceFactorFast != null ? Math.round(tp * z.paceFactorFast) : null;
+      paceSlow = z.paceFactorSlow != null ? Math.round(tp * z.paceFactorSlow) : null;
+      paceSource = "factor";
+    } else if (estimation.regression != null) {
+      // Nur eine HF-Grenze vorhanden (Z1 unten offen, Z5 oben offen).
+      if (hrHigh != null) paceFast = paceAtHr(estimation.regression, hrHigh);
+      if (hrLow != null) paceSlow = paceAtHr(estimation.regression, hrLow);
+      paceSource = "regression";
+    }
+
+    let evidenceSec = 0;
+    for (const p of estimation.steadyLapPoints) {
+      if (hrLow != null && p.hr < hrLow) continue;
+      if (hrHigh != null && p.hr > hrHigh) continue;
+      evidenceSec += p.durationSec;
+    }
+
+    return {
+      zone: z,
+      hrLow,
+      hrHigh,
+      paceFast,
+      paceSlow,
+      evidenceMinutes: Math.round(evidenceSec / 60),
+      paceSource,
+    };
+  });
 }

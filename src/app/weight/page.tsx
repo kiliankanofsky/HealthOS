@@ -33,6 +33,7 @@ export default async function WeightPage() {
     weightEntries: all,
     phases,
     nutrition,
+    tags,
     todayIso: toLocalISODate(),
   });
 
