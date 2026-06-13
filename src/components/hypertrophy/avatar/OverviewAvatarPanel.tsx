@@ -18,10 +18,6 @@ import { cn } from "@/lib/utils";
 
 import { MuscleAvatar } from "./MuscleAvatar";
 
-type ViewMode = "list" | "bars";
-
-const COLLAPSED_MAX_H = "max-h-[180px]";
-
 export function OverviewAvatarPanel({
   volumeEntries,
 }: {
@@ -31,7 +27,6 @@ export function OverviewAvatarPanel({
   const [mobileView, setMobileView] = useState<"anterior" | "posterior">(
     "anterior",
   );
-  const [viewMode, setViewMode] = useState<ViewMode>("bars");
   const [expanded, setExpanded] = useState(false);
 
   const volumeBySlug = useMemo(
@@ -65,7 +60,7 @@ export function OverviewAvatarPanel({
   return (
     <section
       className={cn(
-        "relative overflow-hidden rounded-3xl",
+        "relative h-full overflow-hidden rounded-3xl",
         "bg-white/55 dark:bg-white/[0.04]",
         "backdrop-blur-xl backdrop-saturate-150",
         "ring-1 ring-black/5",
@@ -154,34 +149,47 @@ export function OverviewAvatarPanel({
         </div>
       </div>
 
-      <div className="mt-5 flex flex-col">
-        <div className="mb-3 flex items-center justify-between gap-2">
-          <p className="text-[10px] font-medium tracking-[0.22em] text-muted-foreground uppercase">
-            Aggregation
-          </p>
-          {hasVolume && (
-            <SegmentedControl
-              size="sm"
-              options={[
-                { value: "bars", label: "Balken" },
-                { value: "list", label: "Text" },
-              ]}
-              value={viewMode}
-              onChange={setViewMode}
-            />
-          )}
-        </div>
-
+      {/*
+        Aggregation unten an die Card gepinnt (mt-auto): eingeklappt schneidet
+        die Card direkt unter dem "Aggregation"-Header ab — die Höhe entspricht
+        damit (via Grid-Stretch) dem Kalender daneben. Klick auf den Header
+        klappt die Balkenliste darunter auf, erst dann wächst die Card.
+      */}
+      <div className="mt-auto flex flex-col pt-5">
         {hasVolume ? (
           <>
+            <button
+              type="button"
+              onClick={() => setExpanded((v) => !v)}
+              aria-expanded={expanded}
+              className="flex w-full items-center justify-between gap-2 rounded-lg py-1 text-left hover:opacity-80"
+            >
+              <span className="text-[10px] font-medium tracking-[0.22em] text-muted-foreground uppercase">
+                Aggregation
+              </span>
+              <span className="inline-flex items-center gap-1 text-[11px] font-medium text-muted-foreground">
+                {expanded ? "Einklappen" : `${volumeEntries.length} Muskelgruppen`}
+                <ChevronDown
+                  className={cn(
+                    "size-3.5 transition-transform duration-200",
+                    expanded && "rotate-180",
+                  )}
+                />
+              </span>
+            </button>
+
+            {/*
+              Höhen-Animation 0fr↔1fr: klappt sauber von 0 auf "auto" auf, ohne
+              feste max-height. Eingeklappt ist die Liste vollständig verborgen.
+            */}
             <div
               className={cn(
-                "relative overflow-hidden transition-[max-height] duration-300",
-                expanded ? "max-h-[1200px]" : COLLAPSED_MAX_H,
+                "grid transition-[grid-template-rows] duration-300 ease-out",
+                expanded ? "grid-rows-[1fr]" : "grid-rows-[0fr]",
               )}
             >
-              {viewMode === "bars" ? (
-                <ul className="space-y-2">
+              <div className="overflow-hidden">
+                <ul className="space-y-2 pt-3">
                   {volumeEntries.map(([slug, sets]) => (
                     <li key={slug} className="flex items-center gap-3">
                       <span className="w-32 shrink-0 truncate text-xs text-muted-foreground">
@@ -200,66 +208,22 @@ export function OverviewAvatarPanel({
                           style={{ width: `${Math.min(100, (sets / 20) * 100)}%` }}
                         />
                       </span>
-                      <span className="w-10 shrink-0 text-right text-xs font-medium tabular-nums">
-                        {formatSets(sets)}
+                      <span className="w-12 shrink-0 text-right text-xs font-medium tabular-nums">
+                        {formatSets(sets)} S
                       </span>
                     </li>
                   ))}
                 </ul>
-              ) : (
-                <ul className="space-y-1 text-xs">
-                  {volumeEntries.map(([slug, sets]) => (
-                    <li
-                      key={slug}
-                      className="flex items-center justify-between gap-3 border-b border-border/40 pb-1 last:border-0"
-                    >
-                      <span
-                        className={cn(
-                          "truncate",
-                          sets >= VOLUME_PRIMARY_THRESHOLD
-                            ? "font-medium text-foreground"
-                            : sets >= VOLUME_SECONDARY_THRESHOLD
-                              ? "text-foreground/80"
-                              : "text-muted-foreground",
-                        )}
-                      >
-                        {MUSCLE_LABELS[slug]}
-                      </span>
-                      <span className="tabular-nums text-foreground/90">
-                        {formatSets(sets)} Sätze
-                      </span>
-                    </li>
-                  ))}
-                </ul>
-              )}
-              {!expanded && (
-                <div className="pointer-events-none absolute inset-x-0 bottom-0 h-12 bg-gradient-to-t from-white/80 to-transparent dark:from-zinc-900/80" />
-              )}
+                <p className="mt-3 text-center text-[10px] tracking-wide text-muted-foreground/60">
+                  Gewichtete Sätze (primär 1,0 / sekundär 0,5) · dunkel ≥{" "}
+                  {VOLUME_PRIMARY_THRESHOLD}, hell ≥ {VOLUME_SECONDARY_THRESHOLD}{" "}
+                  · Balken relativ zu 20 Sätzen/Woche
+                </p>
+              </div>
             </div>
-
-            <button
-              type="button"
-              onClick={() => setExpanded((v) => !v)}
-              className="mt-2 inline-flex items-center justify-center gap-1 self-center rounded-full px-3 py-1 text-[11px] font-medium text-muted-foreground hover:bg-muted/60 hover:text-foreground"
-              aria-expanded={expanded}
-            >
-              {expanded ? "Einklappen" : "Alle anzeigen"}
-              <ChevronDown
-                className={cn(
-                  "size-3.5 transition-transform",
-                  expanded && "rotate-180",
-                )}
-              />
-            </button>
-
-            <p className="mt-3 text-center text-[10px] tracking-wide text-muted-foreground/60">
-              Gewichtete Sätze (primär 1,0 / sekundär 0,5) · dunkel ≥{" "}
-              {VOLUME_PRIMARY_THRESHOLD}, hell ≥ {VOLUME_SECONDARY_THRESHOLD} ·
-              Balken relativ zu 20 Sätzen/Woche
-            </p>
           </>
         ) : (
-          <p className="mt-2 text-center text-xs text-muted-foreground/70">
+          <p className="text-center text-xs text-muted-foreground/70">
             Keine Sätze in den letzten 7 Tagen geloggt.
           </p>
         )}

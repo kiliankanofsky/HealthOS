@@ -91,6 +91,16 @@ export default async function EndurancePage() {
     newestFirst.find((m) => m.lactateThresholdHr != null)?.lactateThresholdHr ??
     null;
 
+  // Garmin-Marathon-Renn-Prognose (Sekunden) → Z3-Pace-Anker. Garmin liefert
+  // Race-Predictions nicht jeden Tag → jüngsten nicht-leeren Wert nehmen.
+  const marathonPredSec =
+    latestMetrics?.racePredictionMarathon ??
+    newestFirst.find((m) => m.racePredictionMarathon != null)
+      ?.racePredictionMarathon ??
+    null;
+  const defaultMarathonPredPace =
+    marathonPredSec != null ? Math.round(marathonPredSec / 42.195) : null;
+
   // Konsolidierte Zonen-Schätzung: Splits der letzten 180 Tage + Garmin-LT2
   // + LTHR werden in zone-estimation.ts zu einer Schwellen-Pace gemischt.
   const estimationFrom = new Date(today);
@@ -100,7 +110,11 @@ export default async function EndurancePage() {
     runs.filter((r) => r.date >= estimationFromIso),
     estimationFromIso,
     toIso,
-    { garminLtPaceSecPerKm: defaultLtPace, lthr: defaultLthr },
+    {
+      garminLtPaceSecPerKm: defaultLtPace,
+      lthr: defaultLthr,
+      marathonPredSec,
+    },
   );
 
   return (
@@ -147,6 +161,7 @@ export default async function EndurancePage() {
           <TrainingZoneCalculator
             estimation={zoneEstimation}
             defaultLthr={defaultLthr}
+            defaultMarathonPredPace={defaultMarathonPredPace}
           />
         </section>
       </main>
