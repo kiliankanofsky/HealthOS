@@ -1,8 +1,8 @@
 "use client";
 
 import { CalendarDays, Pencil, Route, Sparkles, Timer } from "lucide-react";
-import { useRouter } from "next/navigation";
-import { useState, useTransition } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { useCallback, useEffect, useRef, useState, useTransition } from "react";
 
 import {
   createBlankSession,
@@ -16,11 +16,13 @@ import {
 } from "@/components/endurance/PlanCalendar";
 import { EditSessionDialog } from "@/components/endurance/EditSessionDialog";
 import type { TrainingPlanBlockSegment } from "@/lib/db/schema";
-import { formatSecondsAsHms, type PaceZones } from "@/lib/endurance/plan";
+import { formatSecondsAsHms, type HrZones, type PaceZones } from "@/lib/endurance/plan";
 import {
   describeBlock,
   formatDistance,
+  formatSegmentHr,
   formatSegmentPace,
+  paceZonesForSessionType,
   SESSION_STATUS_LABELS,
   sessionTone,
   sessionTypeLabel,
@@ -43,6 +45,7 @@ type Props = {
   planStartDate: string;
   raceDate: string | null;
   paceZones: PaceZones | null;
+  hrZones: HrZones | null;
   initialMonth: string;
   // Vom Server berechnet, damit SSR und Client identisch rendern (kein
   // `new Date()` im Client → keine Hydration-Mismatches).
@@ -60,11 +63,13 @@ export function PlanBoard({
   planStartDate,
   raceDate,
   paceZones,
+  hrZones,
   initialMonth,
   todayIso,
   nextSessionNote,
 }: Props) {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [editingId, setEditingId] = useState<number | null>(null);
   const [detail, setDetail] = useState<SessionDetail | null>(null);
   const [loadingDetail, setLoadingDetail] = useState(false);
@@ -74,7 +79,7 @@ export function PlanBoard({
 
   // Klick auf eine Session: Dialog öffnen und Detail (inkl. Blocks) nachladen.
   // Läuft im Event-Handler, nicht im Effect — kein synchrones setState im Effect.
-  function handleSelect(id: number) {
+  const handleSelect = useCallback((id: number) => {
     setEditingId(id);
     setDetail(null);
     setLoadingDetail(true);
@@ -82,7 +87,21 @@ export function PlanBoard({
       setDetail(d);
       setLoadingDetail(false);
     });
-  }
+  }, []);
+
+  // Deep-Link von der Empfehlungs-Card (/endurance): ?session=<id> öffnet die
+  // passende Session direkt im Edit-Dialog. Nur einmal pro Param-Wert. Das
+  // Öffnen wird in einen Microtask verschoben, damit kein State synchron im
+  // Effekt-Body gesetzt wird (cascading-render-Lint).
+  const openedParamRef = useRef<string | null>(null);
+  useEffect(() => {
+    const param = searchParams.get("session");
+    if (!param || openedParamRef.current === param) return;
+    const id = Number(param);
+    if (!Number.isFinite(id) || !sessions.some((s) => s.id === id)) return;
+    openedParamRef.current = param;
+    queueMicrotask(() => handleSelect(id));
+  }, [searchParams, sessions, handleSelect]);
 
   function handleClose() {
     setEditingId(null);
@@ -149,6 +168,7 @@ export function PlanBoard({
           <NextSessionCard
             data={nextSession}
             paceZones={paceZones}
+            hrZones={hrZones}
             todayIso={todayIso}
             note={nextSessionNote}
             onEdit={handleSelect}
@@ -173,16 +193,21 @@ export function PlanBoard({
 function NextSessionCard({
   data,
   paceZones,
+  hrZones,
   todayIso,
   note,
   onEdit,
 }: {
   data: NextSessionData | null;
   paceZones: PaceZones | null;
+  hrZones: HrZones | null;
   todayIso: string;
   note: string | null;
   onEdit: (id: number) => void;
 }) {
+  // Bei Long/Easy/Recovery konservativ (langsamere Hälfte der Zone); HF bleibt
+  // das volle physiologische Band.
+  const pZones = data ? paceZonesForSessionType(paceZones, data.sessionType) : null;
   return (
     <div className="flex h-full flex-col">
       <p className="text-xs font-medium tracking-[0.2em] text-muted-foreground uppercase">
@@ -234,13 +259,15 @@ function NextSessionCard({
           {data.blocks.length > 0 && (
             <ul className="mt-4 space-y-1.5 border-t border-border/60 pt-4">
               {data.blocks.map((b, i) => {
-                const pace = paceForBlock(b, paceZones);
+                const pace = paceForBlock(b, pZones);
+                const hr = hrForBlock(b, hrZones);
                 return (
                   <li key={i} className="flex items-baseline justify-between gap-3 text-sm">
                     <span className="text-foreground">{describeBlock(b)}</span>
-                    {pace && (
-                      <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
-                        {pace}
+                    {(pace || hr) && (
+                      <span className="shrink-0 text-right text-xs tabular-nums text-muted-foreground">
+                        {pace && <span className="block">{pace}</span>}
+                        {hr && <span className="block">{hr}</span>}
                       </span>
                     )}
                   </li>
@@ -283,6 +310,16 @@ function paceForBlock(
   const segs = block.segmentsJson ?? [];
   const work = segs.find((s) => s.kind === "work") ?? segs[0];
   return work ? formatSegmentPace(work, zones) : null;
+}
+
+// HF-Band eines Blocks (analog) — aus den Live-Trainingszonen.
+function hrForBlock(
+  block: NextSessionBlock,
+  zones: HrZones | null,
+): string | null {
+  const segs = block.segmentsJson ?? [];
+  const work = segs.find((s) => s.kind === "work") ?? segs[0];
+  return work ? formatSegmentHr(work, zones) : null;
 }
 
 // "Mo, 8. Juni"

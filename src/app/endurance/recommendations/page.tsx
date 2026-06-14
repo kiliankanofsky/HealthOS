@@ -18,6 +18,7 @@ import {
   getWeeksForPlan,
 } from "@/lib/db/queries";
 import type { TrainingPlan, TrainingPlanSession } from "@/lib/db/schema";
+import { getLiveZoneContext } from "@/lib/endurance/live-zones";
 import { formatPace, formatSecondsAsHms } from "@/lib/endurance/plan";
 import { toLocalISODate } from "@/lib/utils/date";
 
@@ -75,9 +76,13 @@ function toCalendarSession(s: TrainingPlanSession): CalendarSession {
 }
 
 async function PlanView({ plan }: { plan: TrainingPlan }) {
-  const [weeks, sessions] = await Promise.all([
+  const [weeks, sessions, live] = await Promise.all([
     getWeeksForPlan(plan.id),
     getSessionsForPlan(plan.id),
+    // Pace/HF pro Zone aus den echten Lauf-Daten (= Trainingszonen-Card auf
+    // /endurance). Fallback auf die statischen Setup-Zonen, wenn die Datenlage
+    // (noch) nicht reicht.
+    getLiveZoneContext(),
   ]);
 
   // Noch keine Sessions generiert → Generator-Ansicht (Draft-Fall).
@@ -121,7 +126,8 @@ async function PlanView({ plan }: { plan: TrainingPlan }) {
         nextSession={nextData}
         planStartDate={plan.planStartDate}
         raceDate={plan.raceDate}
-        paceZones={plan.paceZonesJson ?? null}
+        paceZones={live.paceZones ?? plan.paceZonesJson ?? null}
+        hrZones={live.hrZones}
         initialMonth={initialMonth}
         todayIso={todayIso}
         nextSessionNote={nextSessionNote}

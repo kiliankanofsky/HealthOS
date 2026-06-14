@@ -23,6 +23,7 @@ import {
 import { formatSecondsAsHms, type PaceZones } from "@/lib/endurance/plan";
 import {
   formatDistance,
+  paceZonesForSessionType,
   SEGMENT_KIND_LABELS,
   SESSION_STATUS_LABELS,
   SESSION_TYPE_LABELS,
@@ -151,14 +152,20 @@ function SessionEditForm({
   }
 
   const splitBlocks = useMemo(() => blocksToSplitBlocks(blocks), [blocks]);
+  // Bei Long/Easy/Recovery konservativ am langsameren Ende der Zone rechnen
+  // (gleiche Logik wie in der Anzeige) — bei Qualität volle Spanne.
+  const effectivePaceZones = useMemo(
+    () => paceZonesForSessionType(paceZones, sessionType),
+    [paceZones, sessionType],
+  );
   const totals = useMemo(
-    () => sessionTotals(splitBlocks, paceZones),
-    [splitBlocks, paceZones],
+    () => sessionTotals(splitBlocks, effectivePaceZones),
+    [splitBlocks, effectivePaceZones],
   );
   const dominantZone = useMemo(() => dominantZoneOf(blocks), [blocks]);
   const splits = useMemo(
-    () => buildSplits(splitBlocks, paceZones),
-    [splitBlocks, paceZones],
+    () => buildSplits(splitBlocks, effectivePaceZones),
+    [splitBlocks, effectivePaceZones],
   );
   const tone = sessionTone(sessionType);
 

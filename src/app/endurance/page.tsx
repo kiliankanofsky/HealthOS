@@ -15,12 +15,14 @@ import { SyncNowButton } from "@/components/site/SyncNowButton";
 import {
   getAllDailyTags,
   getAllRunSessions,
+  getCurrentTrainingPlan,
   getDailyMetricsBetween,
   getLatestDailyMetrics,
-  getLatestRunSession,
+  getUpcomingPlanSessions,
   getWeeklyKmTotals,
 } from "@/lib/db/queries";
-import { estimateZonesFromRuns } from "@/lib/endurance/zone-estimation";
+import { getLiveZoneContext } from "@/lib/endurance/live-zones";
+import { toLocalISODate } from "@/lib/utils/date";
 
 export const dynamic = "force-dynamic";
 
@@ -68,7 +70,6 @@ export default async function EndurancePage() {
 
   // Jüngste Snapshots + 8-Wochen-Historie für die Popover-Charts.
   const latestMetrics = await getLatestDailyMetrics();
-  const latestRun = await getLatestRunSession();
   const metricsHistoryFrom = new Date(today);
   metricsHistoryFrom.setDate(today.getDate() - 56);
   const metricsHistory = await getDailyMetricsBetween(
@@ -76,46 +77,19 @@ export default async function EndurancePage() {
     toIso,
   );
 
-  // Zone-Calculator-Defaults: jüngster nicht-leerer Lactate-Threshold-Wert
-  // (Garmin liefert die LT-Felder nicht jeden Tag).
-  const newestFirst = [...metricsHistory].sort((a, b) =>
-    b.date.localeCompare(a.date),
-  );
-  const defaultLtPace =
-    latestMetrics?.lactateThresholdPaceSecPerKm ??
-    newestFirst.find((m) => m.lactateThresholdPaceSecPerKm != null)
-      ?.lactateThresholdPaceSecPerKm ??
-    null;
-  const defaultLthr =
-    latestMetrics?.lactateThresholdHr ??
-    newestFirst.find((m) => m.lactateThresholdHr != null)?.lactateThresholdHr ??
-    null;
+  // Empfohlene Trainings (Card): nächste 3 Sessions aus dem aktiven Plan.
+  // Historische Trainings (Card): letzte 3 Läufe (runs ist DESC).
+  const todayIso = toLocalISODate();
+  const plan = await getCurrentTrainingPlan();
+  const upcoming = plan
+    ? await getUpcomingPlanSessions(plan.id, todayIso, 3)
+    : [];
+  const recentRuns = runs.slice(0, 3);
 
-  // Garmin-Marathon-Renn-Prognose (Sekunden) → Z3-Pace-Anker. Garmin liefert
-  // Race-Predictions nicht jeden Tag → jüngsten nicht-leeren Wert nehmen.
-  const marathonPredSec =
-    latestMetrics?.racePredictionMarathon ??
-    newestFirst.find((m) => m.racePredictionMarathon != null)
-      ?.racePredictionMarathon ??
-    null;
-  const defaultMarathonPredPace =
-    marathonPredSec != null ? Math.round(marathonPredSec / 42.195) : null;
-
-  // Konsolidierte Zonen-Schätzung: Splits der letzten 180 Tage + Garmin-LT2
-  // + LTHR werden in zone-estimation.ts zu einer Schwellen-Pace gemischt.
-  const estimationFrom = new Date(today);
-  estimationFrom.setDate(today.getDate() - 180);
-  const estimationFromIso = estimationFrom.toISOString().slice(0, 10);
-  const zoneEstimation = estimateZonesFromRuns(
-    runs.filter((r) => r.date >= estimationFromIso),
-    estimationFromIso,
-    toIso,
-    {
-      garminLtPaceSecPerKm: defaultLtPace,
-      lthr: defaultLthr,
-      marathonPredSec,
-    },
-  );
+  // Pace/HF pro Zone aus echten Lauf-Daten — zentral in live-zones.ts (gleiche
+  // Quelle wie Plan-Paces auf /endurance/recommendations + Dashboard). runs und
+  // Metrics sind schon geladen → wiederverwenden.
+  const live = await getLiveZoneContext({ runs, latestMetrics, metricsHistory });
 
   return (
     <AppShell>
@@ -147,7 +121,20 @@ export default async function EndurancePage() {
           </section>
         </div>
 
-        <TrainingsSection latestRun={latestRun} />
+        <TrainingsSection
+          upcoming={upcoming.map((s) => ({
+            id: s.id,
+            date: s.date,
+            sessionType: s.sessionType,
+            title: s.title,
+            targetDistanceMeters: s.targetDistanceMeters,
+            targetDurationSec: s.targetDurationSec,
+            primaryZone: s.primaryZone,
+          }))}
+          recentRuns={recentRuns}
+          hasPlan={plan != null}
+          todayIso={todayIso}
+        />
 
         <section className="rounded-3xl bg-card p-4 ring-1 ring-black/5 shadow-sm sm:p-6 lg:p-8">
           <div className="mb-4 space-y-1">
@@ -159,9 +146,9 @@ export default async function EndurancePage() {
             </h2>
           </div>
           <TrainingZoneCalculator
-            estimation={zoneEstimation}
-            defaultLthr={defaultLthr}
-            defaultMarathonPredPace={defaultMarathonPredPace}
+            estimation={live.estimation}
+            defaultLthr={live.lthr}
+            defaultMarathonPredPace={live.defaultMarathonPredPace}
           />
         </section>
       </main>

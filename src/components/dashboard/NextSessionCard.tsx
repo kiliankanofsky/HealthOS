@@ -5,11 +5,13 @@ import type {
   TrainingPlanBlockSegment,
   TrainingPlanSession,
 } from "@/lib/db/schema";
-import { formatSecondsAsHms, type PaceZones } from "@/lib/endurance/plan";
+import { formatSecondsAsHms, type HrZones, type PaceZones } from "@/lib/endurance/plan";
 import {
   describeBlock,
   formatDistance,
+  formatSegmentHr,
   formatSegmentPace,
+  paceZonesForSessionType,
   sessionTone,
   sessionTypeLabel,
 } from "@/lib/endurance/plan-format";
@@ -28,10 +30,15 @@ type Props = {
   session: TrainingPlanSession | null;
   blocks: NextSessionBlockData[];
   paceZones: PaceZones | null;
+  hrZones: HrZones | null;
   todayIso: string;
 };
 
-export function NextSessionCard({ session, blocks, paceZones, todayIso }: Props) {
+export function NextSessionCard({ session, blocks, paceZones, hrZones, todayIso }: Props) {
+  // Konservative Pace (langsamere Hälfte) bei Long/Easy/Recovery; HF voll.
+  const pZones = session
+    ? paceZonesForSessionType(paceZones, session.sessionType)
+    : null;
   return (
     <div className="flex h-full flex-col">
       <p className="text-xs font-medium tracking-[0.2em] text-muted-foreground uppercase">
@@ -90,16 +97,18 @@ export function NextSessionCard({ session, blocks, paceZones, todayIso }: Props)
           {blocks.length > 0 && (
             <ul className="mt-4 space-y-1.5 border-t border-border/60 pt-4">
               {blocks.map((b, i) => {
-                const pace = paceForBlock(b, paceZones);
+                const pace = paceForBlock(b, pZones);
+                const hr = hrForBlock(b, hrZones);
                 return (
                   <li
                     key={i}
                     className="flex items-baseline justify-between gap-3 text-sm"
                   >
                     <span className="text-foreground">{describeBlock(b)}</span>
-                    {pace && (
-                      <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
-                        {pace}
+                    {(pace || hr) && (
+                      <span className="shrink-0 text-right text-xs tabular-nums text-muted-foreground">
+                        {pace && <span className="block">{pace}</span>}
+                        {hr && <span className="block">{hr}</span>}
                       </span>
                     )}
                   </li>
@@ -131,6 +140,16 @@ function paceForBlock(
   const segs = block.segmentsJson ?? [];
   const work = segs.find((s) => s.kind === "work") ?? segs[0];
   return work ? formatSegmentPace(work, zones) : null;
+}
+
+// HF-Band eines Blocks (analog) — aus den Live-Trainingszonen.
+function hrForBlock(
+  block: NextSessionBlockData,
+  zones: HrZones | null,
+): string | null {
+  const segs = block.segmentsJson ?? [];
+  const work = segs.find((s) => s.kind === "work") ?? segs[0];
+  return work ? formatSegmentHr(work, zones) : null;
 }
 
 // "Mo, 8. Juni"

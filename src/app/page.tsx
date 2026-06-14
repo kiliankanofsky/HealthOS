@@ -41,6 +41,7 @@ import {
   getSessionsForPlan,
 } from "@/lib/db/queries";
 import type { WorkoutKind } from "@/lib/db/schema";
+import { getLiveZoneContext } from "@/lib/endurance/live-zones";
 import { sessionTypeLabel } from "@/lib/endurance/plan-format";
 import { WORKOUT_COLORS, WORKOUT_LABELS } from "@/lib/hypertrophy/workouts";
 import { toLocalISODate } from "@/lib/utils/date";
@@ -81,6 +82,14 @@ export default async function DashboardPage() {
     isoAddDays(todayIso, -56),
     todayIso,
   );
+
+  // Pace/HF pro Zone aus den echten Lauf-Daten (= Trainingszonen-Card) für die
+  // Nächste-Session-Card; runs + Metrics sind schon geladen → wiederverwenden.
+  const liveZones = await getLiveZoneContext({
+    runs,
+    latestMetrics,
+    metricsHistory,
+  });
 
   // ---- Meta-Kalender: Läufe + Gym + geplante Plan-Sessions ----
   const templateById = new Map(templates.map((t) => [t.id, t]));
@@ -319,7 +328,8 @@ export default async function DashboardPage() {
               <NextSessionCard
                 session={nextSession}
                 blocks={nextBlocks}
-                paceZones={plan?.paceZonesJson ?? null}
+                paceZones={liveZones.paceZones ?? plan?.paceZonesJson ?? null}
+                hrZones={liveZones.hrZones}
                 todayIso={todayIso}
               />
             </div>
