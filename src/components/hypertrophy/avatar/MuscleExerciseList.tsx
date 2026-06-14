@@ -13,9 +13,13 @@ export type MuscleExerciseEntry = {
   exerciseName: string;
   /** Niveau dieser Übung für die gehoverte Region (primary > secondary). */
   level: HighlightLevel;
-  /** Position innerhalb des Workouts — bestimmt Reihenfolge. */
-  position: number;
-  unilateral: boolean;
+  /** Position innerhalb des Workouts — bestimmt Reihenfolge (Workout-Detail). */
+  position?: number;
+  unilateral?: boolean;
+  /** Overview: Template-Slug für den Link (überschreibt den Listen-Prop). */
+  templateSlug?: string;
+  /** Overview: gewichtete Sätze dieser Übung für die Muskelgruppe (7 Tage). */
+  sets?: number;
 };
 
 type Props = {
@@ -36,12 +40,14 @@ export function MuscleExerciseList({
   entries,
   onSelect,
 }: Props) {
-  const primaries = entries
-    .filter((e) => e.level === "primary")
-    .sort((a, b) => a.position - b.position);
-  const secondaries = entries
-    .filter((e) => e.level === "secondary")
-    .sort((a, b) => a.position - b.position);
+  // Reihenfolge: wenn Satz-Daten vorhanden (Overview), nach Sätzen absteigend,
+  // sonst nach Workout-Position (Workout-Detail).
+  const order = (a: MuscleExerciseEntry, b: MuscleExerciseEntry) =>
+    a.sets != null || b.sets != null
+      ? (b.sets ?? 0) - (a.sets ?? 0)
+      : (a.position ?? 0) - (b.position ?? 0);
+  const primaries = entries.filter((e) => e.level === "primary").sort(order);
+  const secondaries = entries.filter((e) => e.level === "secondary").sort(order);
 
   const dbSlugs = AVATAR_REGION_TO_DB[region] ?? [];
   const headline = dbSlugs
@@ -117,7 +123,7 @@ function Section({
         {entries.map((e) => (
           <li key={e.exerciseSlug}>
             <Link
-              href={`/hypertrophy/${templateSlug}/exercise/${e.exerciseSlug}`}
+              href={`/hypertrophy/${e.templateSlug ?? templateSlug}/exercise/${e.exerciseSlug}`}
               onClick={onSelect}
               className={cn(
                 "group flex items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-sm transition-colors",
@@ -127,11 +133,18 @@ function Section({
               )}
             >
               <span className="truncate">{e.exerciseName}</span>
-              <span
-                aria-hidden
-                className="text-xs text-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:text-foreground"
-              >
-                →
+              <span className="flex shrink-0 items-center gap-1.5">
+                {e.sets != null && (
+                  <span className="text-xs tabular-nums text-muted-foreground">
+                    {formatSets(e.sets)} S
+                  </span>
+                )}
+                <span
+                  aria-hidden
+                  className="text-xs text-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:text-foreground"
+                >
+                  →
+                </span>
               </span>
             </Link>
           </li>
@@ -139,4 +152,8 @@ function Section({
       </ul>
     </div>
   );
+}
+
+function formatSets(sets: number): string {
+  return Number.isInteger(sets) ? String(sets) : sets.toFixed(1).replace(".", ",");
 }

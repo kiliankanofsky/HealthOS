@@ -7,7 +7,8 @@
 //   - Referenzrahmen: ~10–20 gewichtete Sätze pro Muskelgruppe und Woche
 //     gelten als solides Hypertrophie-Volumen.
 //
-// Genutzt von der Anatomie-Card auf /hypertrophy (Avatar-Färbung + Liste).
+// Genutzt von der Anatomie-Card auf /hypertrophy (Avatar-Färbung + Liste +
+// Hover mit den beitragenden Übungen).
 // ============================================================
 
 import {
@@ -25,10 +26,32 @@ export type MuscleVolumeEntry = {
   sets: number;
 };
 
-export async function getMuscleVolumeBetween(
+// Eine Übung, die zum Volumen einer Muskelgruppe beigetragen hat.
+export type MuscleExerciseVolume = {
+  exerciseSlug: string;
+  exerciseName: string;
+  /** Template, unter dem die Übung gelaufen ist — für den Detail-Link. */
+  templateSlug: string;
+  /** Rolle für DIESE Muskelgruppe (primär 1,0 / sekundär 0,5). */
+  level: "primary" | "secondary";
+  /** Gewichteter Satz-Beitrag dieser Übung zu dieser Muskelgruppe. */
+  sets: number;
+};
+
+export type MuscleVolumeDetail = {
+  muscle: DbMuscleSlug;
+  /** Gewichtete Sätze gesamt (Summe über alle Übungen). */
+  sets: number;
+  /** Beitragende Übungen, absteigend nach Sätzen. */
+  exercises: MuscleExerciseVolume[];
+};
+
+// Volle Aufschlüsselung: pro Muskelgruppe die gewichteten Sätze UND die
+// Übungen, die sie verursacht haben (für den Avatar-Hover).
+export async function getMuscleVolumeDetailBetween(
   fromIso: string,
   toIso: string,
-): Promise<MuscleVolumeEntry[]> {
+): Promise<MuscleVolumeDetail[]> {
   const [templates, sessions] = await Promise.all([
     getAllTemplates(),
     getAllSessions(),
@@ -36,40 +59,90 @@ export async function getMuscleVolumeBetween(
   const inRange = sessions.filter((s) => s.date >= fromIso && s.date <= toIso);
   if (inRange.length === 0) return [];
 
-  // templateExerciseId → Muskelgruppen der Stamm-Übung.
-  const musclesByTplEx = new Map<
+  const templateById = new Map(templates.map((t) => [t.id, t]));
+
+  // templateExerciseId → Stamm-Übung (Slug/Name + Muskelgruppen).
+  const exByTplEx = new Map<
     number,
-    { primary: string[]; secondary: string[] }
+    { slug: string; name: string; primary: string[]; secondary: string[] }
   >();
   for (const t of templates) {
     const rows = await getTemplateExercises(t.id);
     for (const r of rows) {
-      musclesByTplEx.set(r.templateExercise.id, {
+      exByTplEx.set(r.templateExercise.id, {
+        slug: r.exercise.slug,
+        name: r.exercise.name,
         primary: r.exercise.primaryMuscles,
         secondary: r.exercise.secondaryMuscles,
       });
     }
   }
 
+  const isDbSlug = (s: string): s is DbMuscleSlug =>
+    (DB_MUSCLE_SLUGS as readonly string[]).includes(s);
+
   const totals = new Map<DbMuscleSlug, number>();
-  const add = (slug: string, amount: number) => {
-    if (!(DB_MUSCLE_SLUGS as readonly string[]).includes(slug)) return;
-    const key = slug as DbMuscleSlug;
-    totals.set(key, (totals.get(key) ?? 0) + amount);
+  // muscle → (exerciseSlug → Akkumulator)
+  const byMuscle = new Map<DbMuscleSlug, Map<string, MuscleExerciseVolume>>();
+
+  const add = (
+    muscle: string,
+    ex: { slug: string; name: string },
+    templateSlug: string,
+    level: "primary" | "secondary",
+    weight: number,
+  ) => {
+    if (!isDbSlug(muscle)) return;
+    totals.set(muscle, (totals.get(muscle) ?? 0) + weight);
+    let map = byMuscle.get(muscle);
+    if (!map) {
+      map = new Map();
+      byMuscle.set(muscle, map);
+    }
+    const existing = map.get(ex.slug);
+    if (existing) {
+      existing.sets += weight;
+      // Erst-Template behalten (jedes Vorkommen ist ein gültiger Link-Ziel).
+      if (!existing.templateSlug && templateSlug) existing.templateSlug = templateSlug;
+    } else {
+      map.set(ex.slug, {
+        exerciseSlug: ex.slug,
+        exerciseName: ex.name,
+        templateSlug,
+        level,
+        sets: weight,
+      });
+    }
   };
 
   for (const session of inRange) {
+    const templateSlug = templateById.get(session.templateId)?.slug ?? "";
     const sets = await getSetsBySession(session.id);
     for (const set of sets) {
       if (set.reps <= 0) continue;
-      const muscles = musclesByTplEx.get(set.templateExerciseId);
-      if (!muscles) continue;
-      for (const m of muscles.primary) add(m, 1);
-      for (const m of muscles.secondary) add(m, 0.5);
+      const ex = exByTplEx.get(set.templateExerciseId);
+      if (!ex) continue;
+      for (const m of ex.primary) add(m, ex, templateSlug, "primary", 1);
+      for (const m of ex.secondary) add(m, ex, templateSlug, "secondary", 0.5);
     }
   }
 
   return [...totals.entries()]
-    .map(([muscle, sets]) => ({ muscle, sets: Math.round(sets * 10) / 10 }))
+    .map(([muscle, sets]) => ({
+      muscle,
+      sets: Math.round(sets * 10) / 10,
+      exercises: [...(byMuscle.get(muscle)?.values() ?? [])]
+        .map((e) => ({ ...e, sets: Math.round(e.sets * 10) / 10 }))
+        .sort((a, b) => b.sets - a.sets),
+    }))
     .sort((a, b) => b.sets - a.sets);
+}
+
+// Schlanke Variante (nur Muskel + Sätze) — delegiert an die Detail-Funktion.
+export async function getMuscleVolumeBetween(
+  fromIso: string,
+  toIso: string,
+): Promise<MuscleVolumeEntry[]> {
+  const detail = await getMuscleVolumeDetailBetween(fromIso, toIso);
+  return detail.map((d) => ({ muscle: d.muscle, sets: d.sets }));
 }

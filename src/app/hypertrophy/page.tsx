@@ -14,7 +14,7 @@ import {
   getAllTemplates,
 } from "@/lib/db/queries";
 import type { WorkoutKind } from "@/lib/db/schema";
-import { getMuscleVolumeBetween } from "@/lib/hypertrophy/volume";
+import { getMuscleVolumeDetailBetween } from "@/lib/hypertrophy/volume";
 import { toLocalISODate } from "@/lib/utils/date";
 
 export const dynamic = "force-dynamic";
@@ -44,7 +44,7 @@ export default async function HypertrophyPage() {
   const todayIso = toLocalISODate();
   const weekAgo = new Date(`${todayIso}T00:00:00`);
   weekAgo.setDate(weekAgo.getDate() - 6);
-  const muscleVolume = await getMuscleVolumeBetween(
+  const muscleVolume = await getMuscleVolumeDetailBetween(
     toLocalISODate(weekAgo),
     todayIso,
   );
@@ -82,6 +82,16 @@ export default async function HypertrophyPage() {
         </section>
         <OverviewAvatarPanel
           volumeEntries={muscleVolume.map((v) => [v.muscle, v.sets])}
+          exercisesByMuscleEntries={muscleVolume.map((v) => [
+            v.muscle,
+            v.exercises.map((e) => ({
+              exerciseSlug: e.exerciseSlug,
+              exerciseName: e.exerciseName,
+              level: e.level,
+              templateSlug: e.templateSlug,
+              sets: e.sets,
+            })),
+          ])}
         />
       </div>
       </main>

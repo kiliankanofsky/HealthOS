@@ -1,7 +1,7 @@
 "use client";
 
-import { ChevronDown } from "lucide-react";
-import { useMemo, useState } from "react";
+import { ChevronDown, X } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
 
 import { SegmentedControl } from "@/components/ui/segmented-control";
 import {
@@ -17,13 +17,22 @@ import {
 import { cn } from "@/lib/utils";
 
 import { MuscleAvatar } from "./MuscleAvatar";
+import {
+  MuscleExerciseList,
+  type MuscleExerciseEntry,
+} from "./MuscleExerciseList";
 
 export function OverviewAvatarPanel({
   volumeEntries,
+  exercisesByMuscleEntries,
 }: {
   volumeEntries: [DbMuscleSlug, number][];
+  // DB-Slug → Übungen (mit Sätzen), die diese Muskelgruppe in den letzten 7
+  // Tagen trainiert haben — für den Hover/Tap mit der Übungsliste.
+  exercisesByMuscleEntries: [DbMuscleSlug, MuscleExerciseEntry[]][];
 }) {
-  const [hovered, setHovered] = useState<AvatarRegion | null>(null);
+  const [active, setActive] = useState<AvatarRegion | null>(null);
+  const [sticky, setSticky] = useState(false);
   const [mobileView, setMobileView] = useState<"anterior" | "posterior">(
     "anterior",
   );
@@ -32,6 +41,10 @@ export function OverviewAvatarPanel({
   const volumeBySlug = useMemo(
     () => new Map<DbMuscleSlug, number>(volumeEntries),
     [volumeEntries],
+  );
+  const exercisesByMuscle = useMemo(
+    () => new Map(exercisesByMuscleEntries),
+    [exercisesByMuscleEntries],
   );
 
   const highlights = useMemo(() => {
@@ -43,17 +56,63 @@ export function OverviewAvatarPanel({
     return projectMuscleMapToAvatar(dbMap);
   }, [volumeBySlug]);
 
-  const hoveredLabel = useMemo(() => {
-    if (!hovered) return null;
-    const dbSlugs = AVATAR_REGION_TO_DB[hovered] ?? [];
+  const activeLabel = useMemo(() => {
+    if (!active) return null;
+    const dbSlugs = AVATAR_REGION_TO_DB[active] ?? [];
     const parts = dbSlugs
       .map((s) => {
         const sets = volumeBySlug.get(s) ?? 0;
         return `${MUSCLE_LABELS[s]} ${formatSets(sets)}`;
       })
       .filter((v, i, a) => a.indexOf(v) === i);
-    return parts.join(" · ") || hovered;
-  }, [hovered, volumeBySlug]);
+    return parts.join(" · ") || active;
+  }, [active, volumeBySlug]);
+
+  // Übungs-Aggregation über alle DB-Slugs der aktiven Region (dedup).
+  const activeEntries = useMemo<MuscleExerciseEntry[]>(() => {
+    if (!active) return [];
+    const dbSlugs = AVATAR_REGION_TO_DB[active] ?? [];
+    const seen = new Set<string>();
+    const out: MuscleExerciseEntry[] = [];
+    for (const slug of dbSlugs) {
+      for (const e of exercisesByMuscle.get(slug) ?? []) {
+        if (seen.has(e.exerciseSlug)) continue;
+        seen.add(e.exerciseSlug);
+        out.push(e);
+      }
+    }
+    return out;
+  }, [active, exercisesByMuscle]);
+
+  // Esc schließt das sticky Popover/Sheet.
+  useEffect(() => {
+    if (!active) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setActive(null);
+        setSticky(false);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [active]);
+
+  const handleEnter = (r: AvatarRegion) => {
+    if (sticky) return;
+    setActive(r);
+  };
+  const handleLeave = () => {
+    if (sticky) return;
+    setActive(null);
+  };
+  const handleClick = (r: AvatarRegion) => {
+    setActive(r);
+    setSticky(true);
+  };
+  const handleClose = () => {
+    setActive(null);
+    setSticky(false);
+  };
 
   const hasVolume = volumeEntries.length > 0;
 
@@ -80,13 +139,13 @@ export function OverviewAvatarPanel({
           <p
             className={cn(
               "mt-0.5 text-xs transition-colors duration-150",
-              hoveredLabel
+              activeLabel
                 ? "font-medium text-foreground"
                 : "text-muted-foreground/70",
             )}
             aria-live="polite"
           >
-            {hoveredLabel ?? "Hover/Tap auf eine Muskelgruppe"}
+            {activeLabel ?? "Hover/Tap auf eine Muskelgruppe"}
           </p>
         </div>
         <div className="md:hidden">
@@ -114,10 +173,10 @@ export function OverviewAvatarPanel({
             <MuscleAvatar
               view="anterior"
               highlights={highlights}
-              activeRegion={hovered}
-              onRegionEnter={setHovered}
-              onRegionLeave={() => setHovered(null)}
-              onRegionClick={(r) => setHovered((cur) => (cur === r ? null : r))}
+              activeRegion={active}
+              onRegionEnter={handleEnter}
+              onRegionLeave={handleLeave}
+              onRegionClick={handleClick}
               tone="neutral"
             />
           </div>
@@ -136,10 +195,10 @@ export function OverviewAvatarPanel({
             <MuscleAvatar
               view="posterior"
               highlights={highlights}
-              activeRegion={hovered}
-              onRegionEnter={setHovered}
-              onRegionLeave={() => setHovered(null)}
-              onRegionClick={(r) => setHovered((cur) => (cur === r ? null : r))}
+              activeRegion={active}
+              onRegionEnter={handleEnter}
+              onRegionLeave={handleLeave}
+              onRegionClick={handleClick}
               tone="neutral"
             />
           </div>
@@ -148,6 +207,38 @@ export function OverviewAvatarPanel({
           </p>
         </div>
       </div>
+
+      {/* Desktop-Popover mit den beitragenden Übungen — wie auf der Workout-
+          Detailseite. */}
+      {active && activeEntries.length > 0 && (
+        <div
+          role="dialog"
+          aria-modal={sticky ? "true" : undefined}
+          className={cn(
+            "hidden md:block",
+            "absolute right-4 top-4 z-20 w-64",
+            "rounded-2xl border border-white/40 bg-white/90 p-4 shadow-xl",
+            "backdrop-blur-xl backdrop-saturate-150",
+            "dark:border-white/10 dark:bg-zinc-900/90",
+            "animate-in fade-in slide-in-from-right-2 duration-150",
+          )}
+        >
+          <button
+            type="button"
+            onClick={handleClose}
+            aria-label="Schließen"
+            className="absolute right-2 top-2 inline-flex size-6 items-center justify-center rounded-full text-muted-foreground hover:bg-muted hover:text-foreground"
+          >
+            <X className="size-3.5" />
+          </button>
+          <MuscleExerciseList
+            region={active}
+            templateSlug={activeEntries[0]?.templateSlug ?? ""}
+            entries={activeEntries}
+            onSelect={handleClose}
+          />
+        </div>
+      )}
 
       {/*
         Aggregation unten an die Card gepinnt (mt-auto): eingeklappt schneidet
@@ -228,6 +319,45 @@ export function OverviewAvatarPanel({
           </p>
         )}
       </div>
+
+      {/* Mobile-Bottom-Sheet mit den Übungen. */}
+      {active && activeEntries.length > 0 && (
+        <div
+          className="md:hidden fixed inset-0 z-50 flex flex-col justify-end"
+          role="dialog"
+          aria-modal="true"
+        >
+          <button
+            type="button"
+            aria-label="Schließen"
+            onClick={handleClose}
+            className="absolute inset-0 bg-black/30 backdrop-blur-sm"
+          />
+          <div
+            className={cn(
+              "relative max-h-[80vh] overflow-y-auto rounded-t-3xl bg-white p-5 pb-8 shadow-2xl",
+              "dark:bg-zinc-900",
+              "animate-in slide-in-from-bottom duration-200",
+            )}
+          >
+            <div className="mx-auto mb-3 h-1 w-10 rounded-full bg-muted" />
+            <button
+              type="button"
+              onClick={handleClose}
+              aria-label="Schließen"
+              className="absolute right-3 top-3 inline-flex size-8 items-center justify-center rounded-full text-muted-foreground hover:bg-muted hover:text-foreground"
+            >
+              <X className="size-4" />
+            </button>
+            <MuscleExerciseList
+              region={active}
+              templateSlug={activeEntries[0]?.templateSlug ?? ""}
+              entries={activeEntries}
+              onSelect={handleClose}
+            />
+          </div>
+        </div>
+      )}
     </section>
   );
 }
