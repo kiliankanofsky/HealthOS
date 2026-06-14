@@ -50,3 +50,4 @@ next-env.d.ts
 # scratch files
 b.txt
 test-in-repo.txt
+.screenshots/
