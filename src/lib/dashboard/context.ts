@@ -159,6 +159,17 @@ export async function buildHealthContext(todayIso: string): Promise<string> {
           : `(zu wenig Daten für eine konkrete Anpassung)`),
     );
   }
+  // Explizite Cheat-Tag-Warnung für die KI (verlässlicher als das Zählen der
+  // Tageszeilen) — die Rechnung oben ist dann zwangsläufig unsicher.
+  if (rec.cheatDaysInWindow > 0 || rec.cheatMealsInWindow > 0) {
+    weightLines.push(
+      `⚠ Cheat-Tags im 14-Tage-Fenster: ${rec.cheatDaysInWindow} Cheat-Day(s), ${rec.cheatMealsInWindow} Cheat-Meal(s)` +
+        (rec.cheatDayUnknownCount > 0
+          ? ` (${rec.cheatDayUnknownCount} ohne Tracking, aus Schnitt entfernt)`
+          : "") +
+        ` → beobachtete Rate (Wasser-Einlagerung) und Ø-Intake verzerrt, Empfehlung unsicher.`,
+    );
+  }
 
   // ---- Nutrition (letzte 14 Tage, Cheat-Tags überschreiben fddb) ----
   const proteinByDate = new Map(nutrition.map((n) => [n.date, n.proteinG]));

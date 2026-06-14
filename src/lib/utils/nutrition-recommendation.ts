@@ -158,6 +158,13 @@ export type NutritionRecommendation = {
   adjustmentCapped: boolean;
   /** Ø-Intake + Anpassung = empfohlenes Tagesziel. */
   recommendedIntakeKcal: number | null;
+  // ---- Tag-Einfluss auf die Verlässlichkeit der Rechnung ----
+  /** Cheat-Days im 14-Tage-Fenster — verzerren Rate (Wasser) UND Ø-Intake. */
+  cheatDaysInWindow: number;
+  /** Cheat-Meals (ohne Cheat-Day) im 14-Tage-Fenster. */
+  cheatMealsInWindow: number;
+  /** Cheat-Days ohne Tracking — aus der Intake-Mittelung herausgenommen. */
+  cheatDayUnknownCount: number;
 };
 
 export function buildNutritionRecommendation(input: {
@@ -193,9 +200,20 @@ export function buildNutritionRecommendation(input: {
   // damit Cheat-Phasen die "wahre" Aufnahme spiegeln, nicht den getrackten
   // Teil-Wert.
   const fromIso = isoDaysAgo(todayIso, 13);
-  const days = buildEffectiveDays(nutrition, tags).filter(
-    (d) => d.date >= fromIso && d.date <= todayIso && d.caloriesKcal != null,
+  const effectiveInWindow = buildEffectiveDays(nutrition, tags).filter(
+    (d) => d.date >= fromIso && d.date <= todayIso,
   );
+  const days = effectiveInWindow.filter((d) => d.caloriesKcal != null);
+  // Cheat-Tags im selben Fenster — sie verfälschen sowohl die beobachtete
+  // Gewichts-Rate (Wasser-Einlagerung) als auch den Ø-Intake; deshalb wird die
+  // Rechnung in der Card als "unsicher" markiert, wenn welche vorkommen.
+  const cheatDaysInWindow = effectiveInWindow.filter((d) => d.cheatDay).length;
+  const cheatMealsInWindow = effectiveInWindow.filter(
+    (d) => d.cheatMeal && !d.cheatDay,
+  ).length;
+  const cheatDayUnknownCount = effectiveInWindow.filter(
+    (d) => d.kind === "cheat-day-unknown",
+  ).length;
   const avgIntakeKcal =
     days.length >= 4
       ? Math.round(
@@ -233,6 +251,9 @@ export function buildNutritionRecommendation(input: {
     adjustmentKcal,
     adjustmentCapped,
     recommendedIntakeKcal,
+    cheatDaysInWindow,
+    cheatMealsInWindow,
+    cheatDayUnknownCount,
   };
 }
 

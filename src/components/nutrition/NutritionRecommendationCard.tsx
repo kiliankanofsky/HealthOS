@@ -1,4 +1,10 @@
-import { Flame, MoveDownRight, MoveRight, MoveUpRight } from "lucide-react";
+import {
+  Flame,
+  MoveDownRight,
+  MoveRight,
+  MoveUpRight,
+  TriangleAlert,
+} from "lucide-react";
 
 import type { WeightPhase } from "@/lib/db/schema";
 import type { NutritionRecommendation } from "@/lib/utils/nutrition-recommendation";
@@ -38,6 +44,8 @@ export function NutritionRecommendationCard({ rec }: Props) {
 
   return (
     <div className="space-y-5">
+      <CheatDayNotice rec={rec} />
+
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         <Stat
           label="Phase"
@@ -95,6 +103,34 @@ export function NutritionRecommendationCard({ rec }: Props) {
         gedeckelt auf ±500 kcal. Basis ist die laufende Phase aus dem
         Weight-Chart.
       </p>
+    </div>
+  );
+}
+
+// Hinweis, wenn Cheat-Tags im Berechnungsfenster liegen: dann ist die
+// deterministische Rechnung (Rate + Intake) zwangsläufig unsicher.
+function CheatDayNotice({ rec }: { rec: NutritionRecommendation }) {
+  if (rec.cheatDaysInWindow === 0 && rec.cheatMealsInWindow === 0) return null;
+  const parts: string[] = [];
+  if (rec.cheatDaysInWindow > 0)
+    parts.push(`${rec.cheatDaysInWindow} Cheat-Day${rec.cheatDaysInWindow > 1 ? "s" : ""}`);
+  if (rec.cheatMealsInWindow > 0)
+    parts.push(`${rec.cheatMealsInWindow} Cheat-Meal${rec.cheatMealsInWindow > 1 ? "s" : ""}`);
+  return (
+    <div className="flex gap-2.5 rounded-2xl bg-amber-50 px-4 py-3 text-sm ring-1 ring-amber-200 dark:bg-amber-500/10 dark:ring-amber-500/20">
+      <TriangleAlert className="mt-0.5 size-4 shrink-0 text-amber-600 dark:text-amber-400" />
+      <div className="space-y-0.5">
+        <p className="font-medium text-amber-900 dark:text-amber-200">
+          Rechnung nur eingeschränkt belastbar
+        </p>
+        <p className="text-amber-800/90 dark:text-amber-200/80">
+          {parts.join(" · ")} in den letzten 14 Tagen — Cheat-Tage verzerren
+          sowohl die beobachtete Gewichts-Rate (Wasser-Einlagerung) als auch den
+          Ø-Intake. Empfehlung entsprechend vorsichtig interpretieren.
+          {rec.cheatDayUnknownCount > 0 &&
+            ` ${rec.cheatDayUnknownCount} Cheat-Day${rec.cheatDayUnknownCount > 1 ? "s" : ""} ohne Tracking wurde${rec.cheatDayUnknownCount > 1 ? "n" : ""} aus dem Schnitt herausgenommen.`}
+        </p>
+      </div>
     </div>
   );
 }
