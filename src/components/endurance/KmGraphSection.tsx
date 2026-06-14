@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import {
   Area,
   AreaChart,
@@ -11,6 +11,15 @@ import {
   YAxis,
 } from "recharts";
 
+import type { RunSession } from "@/lib/db/schema";
+
+import {
+  getCutoffIso,
+  PeriodPicker,
+  RANGE_TITLE,
+  type Range,
+} from "./PeriodPicker";
+
 // Strava-Akzent für die Lauf-Linie (siehe Plan).
 const STRAVA_ORANGE = "#FC5200";
 
@@ -19,38 +28,69 @@ export type WeekKm = {
   km: number;
 };
 
+// Minimale Run-Felder, die KmGraphSection braucht (kein lapsJson etc.).
+type RunStats = Pick<
+  RunSession,
+  "date" | "distanceMeters" | "durationSeconds" | "elevationGainMeters"
+>;
+
 type Props = {
-  weeks: WeekKm[];
-  // Stats für die aktuelle Woche (oben links, ShareAura-Header).
-  thisWeek: {
-    distanceKm: number;
-    durationSec: number;
-    elevationMeters: number;
-  };
+  /** Alle Wochen-Totals aus der DB — die Komponente schneidet selbst. */
+  allWeeks: WeekKm[];
+  /** Alle Run-Sessions für die Stats-Berechnung im gewählten Zeitraum. */
+  runs: RunStats[];
 };
 
-export function KmGraphSection({ weeks, thisWeek }: Props) {
-  // Wir zeigen die letzten 12 Wochen — füllen Lücken (keine Läufe) mit 0,
-  // damit der Chart kontinuierlich wirkt wie im Strava-Referenzbild.
-  const series = useMemo(() => fillTo12Weeks(weeks), [weeks]);
+export function KmGraphSection({ allWeeks, runs }: Props) {
+  const [range, setRange] = useState<Range>("1w");
 
-  const max = Math.max(1, ...series.map((s) => s.km));
-  // Halbe Skalen-Linie und Top-Linie — analog Strava-Screenshot.
+  const cutoffIso = useMemo(() => getCutoffIso(range), [range]);
+
+  // Stats für den gewählten Zeitraum (Distanz, Zeit, Höhenmeter).
+  const stats = useMemo(() => {
+    const filtered = cutoffIso
+      ? runs.filter((r) => r.date >= cutoffIso)
+      : runs;
+    return {
+      distanceKm: filtered.reduce((s, r) => s + r.distanceMeters / 1000, 0),
+      durationSec: filtered.reduce((s, r) => s + r.durationSeconds, 0),
+      elevationMeters: filtered.reduce(
+        (s, r) => s + (r.elevationGainMeters ?? 0),
+        0,
+      ),
+    };
+  }, [runs, cutoffIso]);
+
+  // Chart: Wochen-Balken für den gewählten Zeitraum (min 4 Wochen für gute
+  // Optik; "1w" und "4w" teilen sich das 4-Wochen-Fenster).
+  const chartWeeks = useMemo(
+    () => buildChartWeeks(allWeeks, range),
+    [allWeeks, range],
+  );
+
+  const max = Math.max(1, ...chartWeeks.map((s) => s.km));
   const topTick = niceCeil(max);
   const midTick = topTick / 2;
 
-  // Monatslabels: nur an Wochen anzeigen, in denen der Monat wechselt.
-  const monthLabels = useMemo(() => buildMonthLabels(series), [series]);
+  const monthLabels = useMemo(
+    () => buildMonthLabels(chartWeeks),
+    [chartWeeks],
+  );
 
-  const hours = Math.floor(thisWeek.durationSec / 3600);
-  const minutes = Math.floor((thisWeek.durationSec % 3600) / 60);
+  const title = RANGE_TITLE[range];
+
+  const hours = Math.floor(stats.durationSec / 3600);
+  const minutes = Math.floor((stats.durationSec % 3600) / 60);
 
   return (
     <section className="rounded-2xl border border-border/60 bg-card/40 p-5 shadow-sm">
-      <h2 className="font-heading text-2xl font-semibold">Diese Woche</h2>
+      <div className="flex items-start justify-between gap-2">
+        <h2 className="font-heading text-2xl font-semibold">{title}</h2>
+        <PeriodPicker value={range} onChange={setRange} />
+      </div>
 
       <div className="mt-4 grid grid-cols-3 gap-6">
-        <Stat label="Distanz" value={formatKm(thisWeek.distanceKm)} unit="km" />
+        <Stat label="Distanz" value={formatKm(stats.distanceKm)} unit="km" />
         <Stat
           label="Zeit"
           value={
@@ -58,27 +98,33 @@ export function KmGraphSection({ weeks, thisWeek }: Props) {
               ? `${hours}h ${String(minutes).padStart(2, "0")}`
               : `${minutes}`
           }
-          unit={hours > 0 ? "min" : "min"}
+          unit="min"
         />
         <Stat
           label="Höhenmeter"
-          value={Math.round(thisWeek.elevationMeters).toString()}
+          value={Math.round(stats.elevationMeters).toString()}
           unit="m"
         />
       </div>
 
-      <p className="mt-6 text-sm text-muted-foreground">Letzte 12 Wochen</p>
-
       <div className="mt-3 h-44">
         <ResponsiveContainer width="100%" height="100%">
           <AreaChart
-            data={series}
+            data={chartWeeks}
             margin={{ top: 8, right: 56, bottom: 8, left: 0 }}
           >
             <defs>
               <linearGradient id="km-area" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stopColor={STRAVA_ORANGE} stopOpacity={0.35} />
-                <stop offset="100%" stopColor={STRAVA_ORANGE} stopOpacity={0.0} />
+                <stop
+                  offset="0%"
+                  stopColor={STRAVA_ORANGE}
+                  stopOpacity={0.35}
+                />
+                <stop
+                  offset="100%"
+                  stopColor={STRAVA_ORANGE}
+                  stopOpacity={0.0}
+                />
               </linearGradient>
             </defs>
             <CartesianGrid
@@ -129,8 +175,18 @@ export function KmGraphSection({ weeks, thisWeek }: Props) {
               stroke={STRAVA_ORANGE}
               strokeWidth={2.5}
               fill="url(#km-area)"
-              dot={{ r: 4, fill: STRAVA_ORANGE, stroke: "#fff", strokeWidth: 1.5 }}
-              activeDot={{ r: 6, fill: STRAVA_ORANGE, stroke: "#fff", strokeWidth: 2 }}
+              dot={{
+                r: 4,
+                fill: STRAVA_ORANGE,
+                stroke: "#fff",
+                strokeWidth: 1.5,
+              }}
+              activeDot={{
+                r: 6,
+                fill: STRAVA_ORANGE,
+                stroke: "#fff",
+                strokeWidth: 2,
+              }}
               isAnimationActive={false}
             />
           </AreaChart>
@@ -176,7 +232,6 @@ function formatDe(iso: string): string {
   return d.toLocaleDateString("de-DE", { day: "2-digit", month: "short" });
 }
 
-// Rundet auf eine "schöne" obere Skalenmarke (5, 10, 20, 25, 50, …).
 function niceCeil(v: number): number {
   if (v <= 5) return 5;
   if (v <= 10) return 10;
@@ -186,18 +241,31 @@ function niceCeil(v: number): number {
   return Math.ceil(v / 25) * 25;
 }
 
-// Liefert für 12 zurückliegende Wochen die aggregierten km — fehlende
-// Wochen werden mit 0 ergänzt, damit die Linie nicht "springt".
-function fillTo12Weeks(weeks: WeekKm[]): WeekKm[] {
-  const byWeek = new Map(weeks.map((w) => [w.weekStartIso, w.km]));
+// Chartfenster für den gewählten Zeitraum:
+//  · "1w" / "4w" → letzte 8 Wochen anzeigen (genug Kontext, nie "1 Balken")
+//  · "12w"       → letzte 12 Wochen
+//  · "6m"        → letzte 26 Wochen (~6 Monate)
+//  · "max"       → alle vorhandenen Wochen, aufsteigend
+function buildChartWeeks(allWeeks: WeekKm[], range: Range): WeekKm[] {
+  const byWeek = new Map(allWeeks.map((w) => [w.weekStartIso, w.km]));
+
+  if (range === "max") {
+    return [...allWeeks].sort((a, b) =>
+      a.weekStartIso.localeCompare(b.weekStartIso),
+    );
+  }
+
+  const chartCount =
+    range === "6m" ? 26 : range === "12w" ? 12 : 8; // "1w" und "4w" → 8
+
   const today = new Date();
   today.setHours(0, 0, 0, 0);
-  const dow = (today.getDay() + 6) % 7; // 0=Mo
+  const dow = (today.getDay() + 6) % 7;
   const monday = new Date(today);
   monday.setDate(today.getDate() - dow);
 
   const out: WeekKm[] = [];
-  for (let i = 11; i >= 0; i--) {
+  for (let i = chartCount - 1; i >= 0; i--) {
     const d = new Date(monday);
     d.setDate(monday.getDate() - i * 7);
     const iso = toIso(d);
@@ -208,18 +276,8 @@ function fillTo12Weeks(weeks: WeekKm[]): WeekKm[] {
 
 function buildMonthLabels(series: WeekKm[]): Map<string, string> {
   const MONTHS_DE = [
-    "JAN",
-    "FEB",
-    "MÄR",
-    "APR",
-    "MAI",
-    "JUN",
-    "JUL",
-    "AUG",
-    "SEP",
-    "OKT",
-    "NOV",
-    "DEZ",
+    "JAN", "FEB", "MÄR", "APR", "MAI", "JUN",
+    "JUL", "AUG", "SEP", "OKT", "NOV", "DEZ",
   ];
   const m = new Map<string, string>();
   let lastMonth = -1;

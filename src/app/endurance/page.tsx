@@ -1,7 +1,5 @@
-import {
-  KmGraphSection,
-  type WeekKm,
-} from "@/components/endurance/KmGraphSection";
+import { KmGraphSection, type WeekKm } from "@/components/endurance/KmGraphSection";
+import { ZoneTimeCard } from "@/components/endurance/ZoneTimeCard";
 import { MetricsDashboard } from "@/components/endurance/MetricsDashboard";
 import {
   type CalendarTag,
@@ -39,34 +37,15 @@ export default async function EndurancePage() {
     .filter((t) => t.cheatDay || t.alcohol)
     .map((t) => ({ date: t.date, cheatDay: t.cheatDay, alcohol: t.alcohol }));
 
-  // 12-Wochen-Fenster für die Kilometergrafik (90 Tage zurück bis heute).
+  // Alle Wochen-Totals für den KmGraph — der Client-Switcher schneidet selbst.
+  // "2020-01-01" als sicheres Frühestdatum (vor allen möglichen Einträgen).
   const today = new Date();
   const toIso = today.toISOString().slice(0, 10);
-  const from = new Date(today);
-  from.setDate(today.getDate() - 90);
-  const fromIso = from.toISOString().slice(0, 10);
-  const weeklyRaw = await getWeeklyKmTotals(fromIso, toIso);
-  const weeks: WeekKm[] = weeklyRaw.map((w) => ({
+  const weeklyRaw = await getWeeklyKmTotals("2020-01-01", toIso);
+  const allWeeks: WeekKm[] = weeklyRaw.map((w) => ({
     weekStartIso: w.weekStartIso,
     km: w.km,
   }));
-
-  // Aktuelle Woche aggregieren (Mo bis heute, lokal).
-  const dow = (today.getDay() + 6) % 7;
-  const monday = new Date(today);
-  monday.setDate(today.getDate() - dow);
-  monday.setHours(0, 0, 0, 0);
-  const mondayIso = monday.toISOString().slice(0, 10);
-  const thisWeekRuns = runs.filter((r) => r.date >= mondayIso);
-  const thisWeek = {
-    distanceKm:
-      thisWeekRuns.reduce((acc, r) => acc + r.distanceMeters, 0) / 1000,
-    durationSec: thisWeekRuns.reduce((acc, r) => acc + r.durationSeconds, 0),
-    elevationMeters: thisWeekRuns.reduce(
-      (acc, r) => acc + (r.elevationGainMeters ?? 0),
-      0,
-    ),
-  };
 
   // Jüngste Snapshots + 8-Wochen-Historie für die Popover-Charts.
   const latestMetrics = await getLatestDailyMetrics();
@@ -110,7 +89,7 @@ export default async function EndurancePage() {
           </div>
         </header>
 
-        <KmGraphSection weeks={weeks} thisWeek={thisWeek} />
+        <KmGraphSection allWeeks={allWeeks} runs={runs} />
 
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
           <section className="rounded-3xl bg-card p-4 ring-1 ring-black/5 shadow-sm sm:p-6 lg:col-span-2 lg:p-8">
@@ -151,6 +130,16 @@ export default async function EndurancePage() {
             defaultMarathonPredPace={live.defaultMarathonPredPace}
           />
         </section>
+
+        <ZoneTimeCard
+          runs={runs.map((r) => ({
+            date: r.date,
+            durationSeconds: r.durationSeconds,
+            avgHeartRate: r.avgHeartRate,
+            lapsJson: r.lapsJson,
+          }))}
+          hrZones={live.hrZones}
+        />
       </main>
     </AppShell>
   );
