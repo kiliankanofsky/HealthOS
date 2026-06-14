@@ -14,7 +14,7 @@ import type {
   TrainingPlanSessionStatus,
   TrainingPlanSessionType,
 } from "@/lib/db/schema";
-import { formatPace, type PaceZones } from "@/lib/endurance/plan";
+import { formatPace, type HrZones, type PaceZones } from "@/lib/endurance/plan";
 
 // ---- Labels (Deutsch) ----
 
@@ -170,6 +170,82 @@ export function formatSegmentPace(
   }
   if (Math.round(min) === Math.round(max)) return formatPace(min, { withUnit: true });
   return `${formatPace(min)}–${formatPace(max, { withUnit: true })}`;
+}
+
+// ---- Konservative Pace-Zonen je Session-Typ ----
+
+// Lockere Einheiten (Long/Easy/Recovery) sollen NICHT am schnellen Ende der
+// Zone laufen — sonst kippt der lockere Reiz ins Tempo. Für diese Typen wird
+// jede Zonen-Spanne auf die LANGSAMERE HÄLFTE beschnitten (neues schnelles Ende
+// = Mittelwert der Spanne). Qualitäts-Einheiten bleiben unverändert (volle
+// Spanne). Rückgabe ist wieder PaceZones → alle Formatter funktionieren weiter.
+const CONSERVATIVE_TYPES = new Set<TrainingPlanSessionType>([
+  "long",
+  "easy",
+  "recovery",
+]);
+
+export function paceZonesForSessionType(
+  zones: PaceZones | null | undefined,
+  sessionType: TrainingPlanSessionType,
+): PaceZones | null {
+  if (!zones) return null;
+  if (!CONSERVATIVE_TYPES.has(sessionType)) return zones;
+  const slowerHalf = (z: { minSec: number; maxSec: number }) => ({
+    minSec: Math.round((z.minSec + z.maxSec) / 2),
+    maxSec: z.maxSec,
+  });
+  return {
+    z1: slowerHalf(zones.z1),
+    z2: slowerHalf(zones.z2),
+    z3: slowerHalf(zones.z3),
+    z4: slowerHalf(zones.z4),
+    z5: slowerHalf(zones.z5),
+  };
+}
+
+// ---- Zone → HF ----
+
+// Eine Zone (1..5) oder Range (zoneMin..zoneMax) → HF-Fenster in bpm.
+// Höhere Zone = höhere HF. Eine Range "Z1–Z2" spannt vom unteren Ende der
+// niedrigeren Zone bis zum oberen Ende der höheren.
+export function hrRangeForZone(
+  seg: Pick<TrainingPlanBlockSegment, "zone" | "zoneMin" | "zoneMax">,
+  zones: HrZones | null | undefined,
+): { minBpm: number | null; maxBpm: number | null } | null {
+  if (!zones) return null;
+  const lo = seg.zoneMin ?? seg.zone;
+  const hi = seg.zoneMax ?? seg.zone;
+  if (lo == null || hi == null) return null;
+  const low = Math.min(lo, hi);
+  const high = Math.max(lo, hi);
+  const lowZone = zones[`z${low}` as keyof HrZones];
+  const highZone = zones[`z${high}` as keyof HrZones];
+  if (!lowZone || !highZone) return null;
+  return { minBpm: lowZone.minBpm, maxBpm: highZone.maxBpm };
+}
+
+// "145–158 bpm" — bevorzugt explizite HF-Werte des Segments, sonst aus der Zone.
+// Offene Enden (Z1 nach unten, Z5 nach oben) werden als "< x" / "> x" gezeigt.
+// null, wenn weder explizite Werte noch HF-Zonen vorliegen.
+export function formatSegmentHr(
+  seg: TrainingPlanBlockSegment,
+  zones: HrZones | null | undefined,
+): string | null {
+  let min: number | null = seg.hrMin ?? null;
+  let max: number | null = seg.hrMax ?? null;
+  if (min == null && max == null) {
+    const derived = hrRangeForZone(seg, zones);
+    if (!derived) return null;
+    min = derived.minBpm;
+    max = derived.maxBpm;
+  }
+  const lo = min != null ? Math.round(min) : null;
+  const hi = max != null ? Math.round(max) : null;
+  if (lo != null && hi != null) return lo === hi ? `${lo} bpm` : `${lo}–${hi} bpm`;
+  if (hi != null) return `< ${hi} bpm`;
+  if (lo != null) return `> ${lo} bpm`;
+  return null;
 }
 
 // ---- Segment / Block → lesbarer Text ----

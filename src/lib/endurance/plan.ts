@@ -25,6 +25,20 @@ export type PaceZones = {
   z5: { minSec: number; maxSec: number };
 };
 
+// HF-Bänder pro Zone (bpm) — Gegenstück zu PaceZones. minBpm = unteres Ende
+// der Zone, maxBpm = oberes Ende; null = nach unten (Z1) bzw. oben (Z5) offen,
+// genau wie die Trainingszonen-Card auf /endurance es zeigt ("< 158" / "> 178").
+// Stammen (anders als die statischen PaceZones aus dem Setup) aus den Live-
+// Trainingszonen (siehe live-zones.ts), damit die auf dem Plan angezeigte HF
+// identisch zur Trainingszonen-Card ist.
+export type HrZones = {
+  z1: { minBpm: number | null; maxBpm: number | null };
+  z2: { minBpm: number | null; maxBpm: number | null };
+  z3: { minBpm: number | null; maxBpm: number | null };
+  z4: { minBpm: number | null; maxBpm: number | null };
+  z5: { minBpm: number | null; maxBpm: number | null };
+};
+
 export function derivePaceZones(targetPaceSecPerKm: number): PaceZones {
   const mp = targetPaceSecPerKm;
   return {
