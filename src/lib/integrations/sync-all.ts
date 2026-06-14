@@ -1,6 +1,11 @@
 import {
+  getActiveTrainingPlan,
+  getBlocksForPlanSession,
   getDailyActivityForDate,
   getNutritionForDate,
+  getRunSessionsForDate,
+  getSessionsForPlan,
+  linkPlanSessionToRun,
   upsertDailyActivity,
   upsertNutritionEntry,
 } from "@/lib/db/queries";
@@ -12,6 +17,8 @@ import { getGarminClient } from "@/lib/integrations/garmin-strength";
 import { syncGarminStrength } from "@/lib/integrations/garmin-strength-import";
 import { sheetsAdapter } from "@/lib/integrations/sheets";
 import { refreshNextSessionNote } from "@/lib/endurance/ai-note";
+import { getLiveZoneContext } from "@/lib/endurance/live-zones";
+import { matchRunToSession } from "@/lib/endurance/run-match";
 
 // Shared sync runner — vom täglichen Cron (/api/cron/sync) UND vom UI-Button
 // (Server Action `syncNow`) verwendet, damit beide Wege identisch laufen.
@@ -29,6 +36,9 @@ export type SyncSummary = {
     garminCalories: SyncResult;
     garminRuns: SyncResult;
     garminMetrics: SyncResult;
+    // Ordnet absolvierte Läufe automatisch geplanten Sessions zu (läuft nach
+    // Runs + Metrics, da es die daraus abgeleiteten Live-Zonen braucht).
+    planMatch: SyncResult;
     nutrition: SyncResult;
     // #10: KI-Tagesnotiz für die nächste Session (nutzt die frisch gesyncten
     // Metrics — läuft daher als letzter Schritt).
@@ -160,6 +170,56 @@ async function syncNutrition(): Promise<Record<string, unknown>> {
   return { days: entries.length, inserted, updated };
 }
 
+// Ordnet frisch gesyncte Läufe automatisch geplanten Sessions zu (Status →
+// "completed"), wenn Distanz/Struktur/Intensität passen. Idempotent: bereits
+// verlinkte Sessions/Läufe werden übersprungen. Nutzt die Live-Trainingszonen
+// (gleiche Quelle wie die Plan-Paces).
+export async function matchRunsToPlanSessions(): Promise<Record<string, unknown>> {
+  const plan = await getActiveTrainingPlan();
+  if (!plan) return { matched: 0, skipped: "kein aktiver Plan" };
+
+  const today = todayUtcIso();
+  const since = isoDaysAgo(14);
+  const live = await getLiveZoneContext();
+  const paceZones = live.paceZones ?? plan.paceZonesJson ?? null;
+  const hrZones = live.hrZones;
+
+  const sessions = await getSessionsForPlan(plan.id);
+  // Läufe, die schon einer Session zugeordnet sind, nicht doppelt vergeben.
+  const usedRunIds = new Set<number>();
+  for (const s of sessions) {
+    if (s.runSessionId != null) usedRunIds.add(s.runSessionId);
+  }
+
+  let matched = 0;
+  const log: string[] = [];
+  for (const s of sessions) {
+    if (s.status !== "planned" || s.runSessionId != null) continue;
+    if (s.date < since || s.date > today) continue;
+
+    const runs = await getRunSessionsForDate(s.date);
+    const candidates = runs.filter((r) => !usedRunIds.has(r.id));
+    if (candidates.length === 0) continue;
+
+    const blocks = (await getBlocksForPlanSession(s.id)).map((b) => ({
+      repetitions: b.repetitions,
+      segmentsJson: b.segmentsJson,
+    }));
+
+    for (const run of candidates) {
+      const res = matchRunToSession({ session: s, blocks, run, paceZones, hrZones });
+      if (res.matched) {
+        await linkPlanSessionToRun(s.id, run.id);
+        usedRunIds.add(run.id);
+        matched++;
+        log.push(`${s.date} ${s.sessionType} ← #${run.id}: ${res.reason}`);
+        break;
+      }
+    }
+  }
+  return { matched, log };
+}
+
 export async function runAllSyncs(): Promise<SyncSummary> {
   const ranAt = new Date().toISOString();
   const results = {
@@ -168,6 +228,8 @@ export async function runAllSyncs(): Promise<SyncSummary> {
     garminCalories: await safe(syncCalories),
     garminRuns: await safe(syncRuns),
     garminMetrics: await safe(syncMetrics),
+    // Nach Runs+Metrics: absolvierte Läufe geplanten Sessions zuordnen.
+    planMatch: await safe(matchRunsToPlanSessions),
     nutrition: await safe(syncNutrition),
     // Zuletzt: Tagesnotiz aus den frisch gesyncten Erholungsdaten ableiten.
     nextSessionNote: await safe(syncNextSessionNote),

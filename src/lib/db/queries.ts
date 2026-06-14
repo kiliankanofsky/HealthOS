@@ -1245,6 +1245,29 @@ export async function getNextPlanSession(
     .get();
 }
 
+// Die nächsten N anstehenden Sessions ab heute (für die Empfehlungs-Card auf
+// /endurance). Nur primary, nur status="planned".
+export async function getUpcomingPlanSessions(
+  planId: number,
+  todayIso: string,
+  limit = 3,
+): Promise<TrainingPlanSession[]> {
+  return db
+    .select()
+    .from(trainingPlanSessions)
+    .where(
+      and(
+        eq(trainingPlanSessions.planId, planId),
+        gte(trainingPlanSessions.date, todayIso),
+        eq(trainingPlanSessions.status, "planned"),
+        isNull(trainingPlanSessions.alternativeOfId),
+      ),
+    )
+    .orderBy(asc(trainingPlanSessions.date), asc(trainingPlanSessions.dayOrder))
+    .limit(limit)
+    .all();
+}
+
 // Alle Alternativen ("Option 2") einer Primär-Session.
 export async function getAlternativesForPlanSession(
   primarySessionId: number,

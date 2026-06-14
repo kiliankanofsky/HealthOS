@@ -58,6 +58,7 @@ function SyncResultBadge({ summary }: { summary: SyncSummary }) {
     { label: "Strength", result: results.garminStrength },
     { label: "Kalorien", result: results.garminCalories },
     { label: "FDDB", result: results.nutrition },
+    { label: "Plan-Match", result: results.planMatch },
   ];
   return (
     <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
