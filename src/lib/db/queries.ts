@@ -522,6 +522,72 @@ export async function deleteSessionExerciseOverride(
     .run();
 }
 
+// ---- Tausch-Übungen (global, slot-übergreifend) ----
+
+export type SwapNameSummary = {
+  name: string;
+  lastUsed: string;
+  count: number;
+};
+
+// Alle jemals als Tausch eingesetzten Übungs-Namen (DISTINCT, global über alle
+// Slots). Mit letztem Nutzungsdatum + Häufigkeit, neueste zuerst. Speist die
+// Auswahl-Chips im SessionLogger sowie das Reverse-Lookup der Tracker-Seite.
+export async function getAllSwapNames(): Promise<SwapNameSummary[]> {
+  return db
+    .select({
+      name: sessionExerciseOverrides.name,
+      lastUsed: sql<string>`max(${workoutSessions.date})`,
+      count: sql<number>`count(*)`,
+    })
+    .from(sessionExerciseOverrides)
+    .innerJoin(
+      workoutSessions,
+      eq(workoutSessions.id, sessionExerciseOverrides.sessionId),
+    )
+    .groupBy(sessionExerciseOverrides.name)
+    .orderBy(sql`max(${workoutSessions.date}) desc`)
+    .all();
+}
+
+// Alle Sätze einer Tausch-Übung über alle Sessions/Slots hinweg (für den
+// Tausch-Progress-Tracker). Sätze werden weiter unter der ursprünglichen
+// templateExerciseId geloggt — wir verknüpfen sie über den Override, dessen
+// (sessionId, templateExerciseId) zum geloggten Satz passt.
+export async function getSetsForSwapName(
+  name: string,
+): Promise<SetWithDate[]> {
+  return db
+    .select({
+      id: workoutSets.id,
+      sessionId: workoutSets.sessionId,
+      templateExerciseId: workoutSets.templateExerciseId,
+      setNumber: workoutSets.setNumber,
+      weightKg: workoutSets.weightKg,
+      reps: workoutSets.reps,
+      weightMode: workoutSets.weightMode,
+      restSeconds: workoutSets.restSeconds,
+      notes: workoutSets.notes,
+      createdAt: workoutSets.createdAt,
+      date: workoutSessions.date,
+    })
+    .from(workoutSets)
+    .innerJoin(workoutSessions, eq(workoutSessions.id, workoutSets.sessionId))
+    .innerJoin(
+      sessionExerciseOverrides,
+      and(
+        eq(sessionExerciseOverrides.sessionId, workoutSets.sessionId),
+        eq(
+          sessionExerciseOverrides.templateExerciseId,
+          workoutSets.templateExerciseId,
+        ),
+      ),
+    )
+    .where(eq(sessionExerciseOverrides.name, name))
+    .orderBy(asc(workoutSessions.date), asc(workoutSets.setNumber))
+    .all();
+}
+
 // ---- Progress-Indikator: Vorheriges Training pro Übungs-Slot ----
 
 export type PreviousSetEntry = {

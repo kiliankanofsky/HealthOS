@@ -47,7 +47,7 @@ import {
 } from "@/lib/endurance/plan";
 import { sessionTotals } from "@/lib/endurance/plan-splits";
 import { runPlanChat, type ChatMessage } from "@/lib/endurance/ai-chat";
-import { toLocalISODate } from "@/lib/utils/date";
+import { todayBerlinISO } from "@/lib/utils/date";
 import { extractPdfText } from "@/lib/endurance/pdf-extract";
 
 // Hinweis zum Vercel-Timeout: dieser "use server"-File darf nur async
@@ -703,7 +703,7 @@ export async function sendPlanChatMessage(
     const { reply, changed } = await runPlanChat(
       planId,
       history,
-      toLocalISODate(),
+      todayBerlinISO(),
       model,
     );
     if (changed) {

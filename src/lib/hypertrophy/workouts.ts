@@ -45,3 +45,17 @@ export const WORKOUT_COLORS: Record<
 
 // Reihenfolge fürs Rendern.
 export const WORKOUT_ORDER: WorkoutKind[] = ["upper-a", "lower", "upper-b"];
+
+// Tausch-Übungen haben keinen DB-Slug (nur einen freien Namen). Für die
+// URL der Tracker-Seite (/hypertrophy/alt/<slug>) leiten wir den Slug aus dem
+// Namen ab. Reverse-Lookup auf der Seite vergleicht die slugifizierten Namen —
+// Kollisionen sind bei einem Single-User unkritisch (erster Treffer gewinnt).
+export function swapNameToSlug(name: string): string {
+  return name
+    .toLowerCase()
+    .replace(/ß/g, "ss")
+    .normalize("NFKD")
+    .replace(/[̀-ͯ]/g, "") // diakritische Zeichen entfernen
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}

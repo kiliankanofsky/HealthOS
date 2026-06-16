@@ -2,7 +2,7 @@ import type { NextRequest } from "next/server";
 
 import { ensureDailyOverview } from "@/lib/dashboard/overview";
 import { runAllSyncs } from "@/lib/integrations/sync-all";
-import { toLocalISODate } from "@/lib/utils/date";
+import { todayBerlinISO } from "@/lib/utils/date";
 
 // Daily Cron — alle externen Datenquellen in einem Rutsch syncen.
 // Vercel ruft GET mit `Authorization: Bearer ${CRON_SECRET}` auf
@@ -39,7 +39,7 @@ export async function GET(request: NextRequest) {
 
   let overview: { ok: boolean; error?: string };
   try {
-    await ensureDailyOverview(toLocalISODate());
+    await ensureDailyOverview(todayBerlinISO());
     overview = { ok: true };
   } catch (e) {
     overview = { ok: false, error: (e as Error).message };

@@ -1,13 +1,18 @@
 import Link from "next/link";
 import { AppShell } from "@/components/site/AppShell";
 import { WeightDetailView } from "@/components/weight/WeightDetailView";
-import { getAllDailyTags, getAllWeightEntries } from "@/lib/db/queries";
+import {
+  getAllDailyTags,
+  getAllWeightEntries,
+  getNutritionEntries,
+} from "@/lib/db/queries";
 
 export const dynamic = "force-dynamic";
 
 export default async function WeightEntriesPage() {
   const entries = await getAllWeightEntries();
   const tags = await getAllDailyTags();
+  const nutrition = await getNutritionEntries();
   const matrixYear = new Date().getFullYear();
 
   return (
@@ -30,7 +35,12 @@ export default async function WeightEntriesPage() {
           </div>
         </header>
 
-        <WeightDetailView entries={entries} tags={tags} matrixYear={matrixYear} />
+        <WeightDetailView
+          entries={entries}
+          tags={tags}
+          nutrition={nutrition}
+          matrixYear={matrixYear}
+        />
       </main>
     </AppShell>
   );

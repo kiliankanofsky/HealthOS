@@ -13,6 +13,7 @@ import {
 } from "@/app/hypertrophy/actions";
 import { Button } from "@/components/ui/button";
 import type { WeightMode, WorkoutSet } from "@/lib/db/schema";
+import { swapNameToSlug } from "@/lib/hypertrophy/workouts";
 import { effectiveE1RM, round1 } from "@/lib/utils/strength";
 import { cn } from "@/lib/utils";
 
@@ -41,11 +42,19 @@ type Props = {
   sessionId: number;
   templateSlug: string;
   exerciseRows: ExerciseLogRow[];
+  // Alle jemals als Tausch eingesetzten Übungs-Namen (global, slot-übergreifend)
+  // — als schnell wählbare Optionen beim Austauschen.
+  swapOptions: string[];
 };
 
 // Auto-Save-Logger: pro Set zwei Inputs (Gewicht / Reps), Speichern beim Blur.
 // Optimistic update — wir merken uns den lokalen State und revidieren nur bei Fehler.
-export function SessionLogger({ sessionId, templateSlug, exerciseRows }: Props) {
+export function SessionLogger({
+  sessionId,
+  templateSlug,
+  exerciseRows,
+  swapOptions,
+}: Props) {
   return (
     <div className="space-y-4">
       {exerciseRows.map((row) => (
@@ -54,6 +63,7 @@ export function SessionLogger({ sessionId, templateSlug, exerciseRows }: Props) 
           row={row}
           sessionId={sessionId}
           templateSlug={templateSlug}
+          swapOptions={swapOptions}
         />
       ))}
     </div>
@@ -90,10 +100,12 @@ function ExerciseCard({
   row,
   sessionId,
   templateSlug,
+  swapOptions,
 }: {
   row: ExerciseLogRow;
   sessionId: number;
   templateSlug: string;
+  swapOptions: string[];
 }) {
   const [drafts, setDrafts] = useState<DraftSet[]>(() => setsToDraft(row.sets));
   const [pending, startTransition] = useTransition();
@@ -182,9 +194,9 @@ function ExerciseCard({
     });
   };
 
-  const saveOverride = () => {
+  const commitOverride = (rawName: string) => {
     setError(null);
-    const trimmed = overrideDraft.trim();
+    const trimmed = rawName.trim();
     if (trimmed.length === 0) {
       // Leerer Name = Override löschen (zurück zur Original-Übung).
       startTransition(async () => {
@@ -209,6 +221,16 @@ function ExerciseCard({
       setEditingOverride(false);
     });
   };
+  const saveOverride = () => commitOverride(overrideDraft);
+
+  // Frühere Tausch-Übungen als schnell wählbare Optionen — global, ohne die
+  // Slot-Stamm-Übung und den aktuell gewählten Override (per Lowercase-Vergleich).
+  const swapChoices = useMemo(() => {
+    const exclude = new Set(
+      [row.name, row.overrideName ?? ""].map((n) => n.toLowerCase()),
+    );
+    return swapOptions.filter((opt) => !exclude.has(opt.toLowerCase()));
+  }, [swapOptions, row.name, row.overrideName]);
 
   return (
     <div
@@ -222,50 +244,72 @@ function ExerciseCard({
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
           {editingOverride ? (
-            <div className="flex items-center gap-2">
-              <input
-                type="text"
-                value={overrideDraft}
-                onChange={(e) => setOverrideDraft(e.target.value)}
-                placeholder={`Alternative für ${row.name}`}
-                autoFocus
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") saveOverride();
-                  if (e.key === "Escape") {
+            <div className="space-y-2">
+              <div className="flex items-center gap-2">
+                <input
+                  type="text"
+                  value={overrideDraft}
+                  onChange={(e) => setOverrideDraft(e.target.value)}
+                  placeholder={`Alternative für ${row.name}`}
+                  autoFocus
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") saveOverride();
+                    if (e.key === "Escape") {
+                      setOverrideDraft(row.overrideName ?? "");
+                      setEditingOverride(false);
+                    }
+                  }}
+                  className="min-w-0 flex-1 rounded-lg border border-border bg-background px-2.5 py-1 font-heading text-lg font-semibold tracking-tight outline-none focus:ring-2 focus:ring-ring/40"
+                />
+                <button
+                  type="button"
+                  onClick={saveOverride}
+                  disabled={pending}
+                  aria-label="Übernehmen"
+                  className="inline-flex size-7 items-center justify-center rounded-full text-emerald-600 transition-colors hover:bg-emerald-500/10"
+                >
+                  <Check className="size-4" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
                     setOverrideDraft(row.overrideName ?? "");
                     setEditingOverride(false);
-                  }
-                }}
-                className="min-w-0 flex-1 rounded-lg border border-border bg-background px-2.5 py-1 font-heading text-lg font-semibold tracking-tight outline-none focus:ring-2 focus:ring-ring/40"
-              />
-              <button
-                type="button"
-                onClick={saveOverride}
-                disabled={pending}
-                aria-label="Übernehmen"
-                className="inline-flex size-7 items-center justify-center rounded-full text-emerald-600 transition-colors hover:bg-emerald-500/10"
-              >
-                <Check className="size-4" />
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setOverrideDraft(row.overrideName ?? "");
-                  setEditingOverride(false);
-                }}
-                aria-label="Abbrechen"
-                className="inline-flex size-7 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-              >
-                <X className="size-4" />
-              </button>
+                  }}
+                  aria-label="Abbrechen"
+                  className="inline-flex size-7 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                >
+                  <X className="size-4" />
+                </button>
+              </div>
+              {swapChoices.length > 0 && (
+                <div className="flex flex-wrap gap-1.5">
+                  {swapChoices.map((opt) => (
+                    <button
+                      key={opt}
+                      type="button"
+                      onClick={() => commitOverride(opt)}
+                      disabled={pending}
+                      title={`„${opt}" als Tausch übernehmen`}
+                      className="inline-flex items-center rounded-full bg-muted px-2.5 py-0.5 text-xs font-medium text-muted-foreground ring-1 ring-foreground/10 transition-colors hover:bg-foreground/10 hover:text-foreground"
+                    >
+                      {opt}
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
           ) : (
             <div className="flex items-baseline gap-2">
               <h3 className="font-heading text-lg font-semibold tracking-tight">
                 <Link
-                  href={`/hypertrophy/${templateSlug}/exercise/${row.exerciseSlug}`}
+                  href={
+                    isOverridden
+                      ? `/hypertrophy/alt/${swapNameToSlug(displayName)}`
+                      : `/hypertrophy/${templateSlug}/exercise/${row.exerciseSlug}`
+                  }
                   className="decoration-1 underline-offset-4 hover:underline"
-                  title={`Verlauf von ${row.name} ansehen`}
+                  title={`Verlauf von ${displayName} ansehen`}
                 >
                   {displayName}
                 </Link>

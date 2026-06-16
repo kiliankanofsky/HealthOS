@@ -43,6 +43,7 @@ import { formatPace, formatSecondsAsHms, type PaceZones } from "@/lib/endurance/
 import { formatDistance, SESSION_TYPE_LABELS } from "@/lib/endurance/plan-format";
 import { sessionTotals, type SplitsBlock } from "@/lib/endurance/plan-splits";
 import { computeFitness } from "@/lib/endurance/training-load";
+import { germanDateWithWeekday } from "@/lib/utils/date";
 import { CHAT_MODEL_INFO, type ChatModel } from "@/lib/endurance/ai-models";
 import {
   openRouterChat,
@@ -323,6 +324,8 @@ function buildSystem(args: {
 }): string {
   const { plan, sessions, todayIso, metrics, runs, fitness } = args;
   return [
+    `Heute ist ${germanDateWithWeekday(todayIso)} (ISO ${todayIso}). Das ist das aktuelle Datum — alle zeitbezogenen Aussagen ("heute", "morgen", "diese Woche", "kommend") beziehen sich ausschließlich darauf.`,
+    ``,
     `Du bist der Trainings-Assistent für HealthOS und hilfst dem Nutzer, seinen Lauf-Trainingsplan im Dialog anzupassen.`,
     ``,
     `ARBEITSWEISE:`,

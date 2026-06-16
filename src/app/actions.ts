@@ -15,7 +15,7 @@ import {
   ensureDailyOverview,
   generateDailyOverview,
 } from "@/lib/dashboard/overview";
-import { toLocalISODate } from "@/lib/utils/date";
+import { todayBerlinISO } from "@/lib/utils/date";
 
 export type OverviewActionState = { ok: boolean; error?: string };
 
@@ -25,7 +25,7 @@ export async function generateOverviewAction(
   force = false,
 ): Promise<OverviewActionState> {
   try {
-    const today = toLocalISODate();
+    const today = todayBerlinISO();
     if (force) {
       await generateDailyOverview(today);
     } else {
@@ -52,7 +52,7 @@ export async function sendDashboardChatMessage(
     return { ok: false, error: "Keine Nachricht." };
   }
   try {
-    const { reply } = await runDashboardChat(history, toLocalISODate(), model);
+    const { reply } = await runDashboardChat(history, todayBerlinISO(), model);
     return { ok: true, reply };
   } catch (e) {
     return {

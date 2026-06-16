@@ -18,6 +18,7 @@ import {
 } from "@/lib/db/queries";
 import type { DashboardOverview } from "@/lib/db/schema";
 import { CHAT_MODEL_INFO } from "@/lib/endurance/ai-models";
+import { germanDateWithWeekday } from "@/lib/utils/date";
 import { buildHealthContext } from "./context";
 
 let cachedClient: Anthropic | null = null;
@@ -59,7 +60,10 @@ const OVERVIEW_TOOL: Anthropic.Tool = {
   },
 };
 
-const SYSTEM = [
+function buildSystem(todayIso: string): string {
+  return [
+  `Heute ist ${germanDateWithWeekday(todayIso)} (ISO ${todayIso}). Das ist das aktuelle Datum — alle zeitbezogenen Aussagen ("heute", "diese Woche", "kommend", "zuletzt") beziehen sich ausschließlich darauf.`,
+  ``,
   `Du schreibst die tägliche Kurz-Bewertung für das persönliche Health-Dashboard des Nutzers (Gewicht, Krafttraining, Lauftraining).`,
   ``,
   `REGELN:`,
@@ -74,7 +78,8 @@ const SYSTEM = [
   `- HYPERTROPHY: Wie entwickeln sich die letzten Sessions (Σe1RM-Deltas)? Gib eine sinnvolle, konkrete Empfehlung (z.B. welches Workout als Nächstes dran ist oder worauf zu achten ist).`,
   `- ENDURANCE: Sprich das kommende Training kurz an (was, wann, Umfang) und bewerte die Fitness-Entwicklung (CTL-Trend, Form/TSB, ggf. HRV/Erholung).`,
   `- Wenn für einen Bereich Daten fehlen, sage das in einem Satz — nicht spekulieren.`,
-].join("\n");
+  ].join("\n");
+}
 
 export async function generateDailyOverview(
   todayIso: string,
@@ -85,7 +90,7 @@ export async function generateDailyOverview(
   const resp = await getClient().messages.create({
     model: modelId,
     max_tokens: 1024,
-    system: SYSTEM,
+    system: buildSystem(todayIso),
     tools: [OVERVIEW_TOOL],
     tool_choice: { type: "tool", name: "write_daily_overview" },
     messages: [{ role: "user", content: context }],

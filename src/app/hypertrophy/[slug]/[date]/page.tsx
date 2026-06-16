@@ -10,6 +10,7 @@ import {
   cycleNumberFor,
   getAllPhases,
   getAllSessions,
+  getAllSwapNames,
   getAllTemplates,
   getOverridesForSession,
   getPreviousSessionSetsForSlot,
@@ -68,6 +69,8 @@ export default async function SessionPage({
   const exerciseRows = await getTemplateExercises(template.id);
   const sets = await getSetsBySession(session.id);
   const overrides = await getOverridesForSession(session.id);
+  // Global wählbare Tausch-Übungen (alle je eingesetzten Alternativen).
+  const swapOptions = (await getAllSwapNames()).map((s) => s.name);
   const overrideByTemplateExerciseId = new Map(
     overrides.map((o) => [o.templateExerciseId, o.name]),
   );
@@ -196,6 +199,7 @@ export default async function SessionPage({
       <SessionLogger
         sessionId={session.id}
         templateSlug={template.slug}
+        swapOptions={swapOptions}
         exerciseRows={await Promise.all(exerciseRows.map(async (row) => {
           const overrideName =
             overrideByTemplateExerciseId.get(row.templateExercise.id) ?? null;
