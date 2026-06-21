@@ -14,16 +14,17 @@ import {
   getSetsBySession,
   getTemplateExercises,
 } from "@/lib/db/queries";
-import type { WorkoutKind } from "@/lib/db/schema";
-import { WORKOUT_LABELS } from "@/lib/hypertrophy/workouts";
+import { templateVisuals } from "@/lib/hypertrophy/workouts";
 import { bestE1RM, round1, volumeLoad } from "@/lib/utils/strength";
 
 export type GymSessionSummary = {
   sessionId: number;
   date: string; // YYYY-MM-DD
-  kind: WorkoutKind;
   slug: string;
   label: string;
+  // Visuals der Einheit (Palette-Key + Marker-Buchstabe).
+  color: string | null;
+  letter: string;
   // Wievielte Ausführung dieses Templates ("n. Session" — der globale
   // Cycle bezieht sich dagegen auf die volle Rotation, siehe WorkoutCards).
   cycle: number;
@@ -114,12 +115,14 @@ export async function getRecentGymSummaries(
         ? round1(totals.totalE1 - prevTotals.totalE1)
         : null;
 
+    const v = templateVisuals(tpl);
     result.push({
       sessionId: s.id,
       date: s.date,
-      kind: tpl.kind as WorkoutKind,
       slug: tpl.slug,
-      label: WORKOUT_LABELS[tpl.kind as WorkoutKind],
+      label: tpl.name,
+      color: tpl.color,
+      letter: v.letter,
       cycle,
       setCount: totals.setCount,
       totalE1: totals.totalE1,

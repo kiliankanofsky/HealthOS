@@ -4,17 +4,20 @@ import {
   type CalendarTag,
 } from "@/components/hypertrophy/Calendar";
 import { NewSessionDialog } from "@/components/hypertrophy/NewSessionDialog";
-import { WorkoutCards } from "@/components/hypertrophy/WorkoutCards";
+import { NewTrainingUnitDialog } from "@/components/hypertrophy/NewTrainingUnitDialog";
+import { RotationSection } from "@/components/hypertrophy/RotationSection";
 import { OverviewAvatarPanel } from "@/components/hypertrophy/avatar/OverviewAvatarPanel";
 import { AppShell } from "@/components/site/AppShell";
 import { SyncNowButton } from "@/components/site/SyncNowButton";
 import {
   getAllDailyTags,
+  getAllExerciseNamesEverUsed,
   getAllSessions,
   getAllTemplates,
+  getManageableTemplates,
 } from "@/lib/db/queries";
-import type { WorkoutKind } from "@/lib/db/schema";
 import { getMuscleVolumeDetailBetween } from "@/lib/hypertrophy/volume";
+import { templateVisuals } from "@/lib/hypertrophy/workouts";
 import { toLocalISODate } from "@/lib/utils/date";
 
 export const dynamic = "force-dynamic";
@@ -27,13 +30,26 @@ export default async function HypertrophyPage() {
     .map((s) => {
       const t = templateById.get(s.templateId);
       if (!t) return null;
+      // Marker zeigen Sessions ALLER Einheiten (auch archivierte) — die
+      // Historie bleibt unabhängig von der aktuellen Rotation indiziert.
       return {
         date: s.date,
-        kind: t.kind as WorkoutKind,
+        color: t.color ?? null,
+        name: t.name,
         templateSlug: t.slug,
       };
     })
     .filter((m): m is CalendarMarker => m !== null);
+
+  // Übungs-Katalog (alle je benutzten Namen, inkl. getauschter) für den
+  // "Neue Trainingseinheit"-Dialog.
+  const exerciseNames = await getAllExerciseNamesEverUsed();
+
+  // Einheiten für den "Neue Session"-Dialog (alle nicht-archivierten).
+  const sessionUnits = (await getManageableTemplates()).map((t) => {
+    const v = templateVisuals(t);
+    return { slug: t.slug, name: t.name, color: t.color, letter: v.letter };
+  });
 
   // Cheat-Day / Alkohol kommen aus daily_tags (Single Source of Truth).
   const tags: CalendarTag[] = (await getAllDailyTags())
@@ -61,16 +77,19 @@ export default async function HypertrophyPage() {
             Gym Log
           </h1>
           <p className="max-w-xl text-sm text-muted-foreground">
-            Drei Workouts, e1RM-Verlauf pro Satz, Garmin-Sync per `npm run db:sync:garmin`.
+            e1RM-Verlauf pro Satz, übungs-übergreifend getrackt. Garmin-Sync per `npm run db:sync:garmin`.
           </p>
           <div className="pt-2">
             <SyncNowButton />
           </div>
         </div>
-        <NewSessionDialog />
+        <div className="flex flex-wrap items-center gap-2">
+          <NewTrainingUnitDialog exerciseNames={exerciseNames} />
+          <NewSessionDialog units={sessionUnits} />
+        </div>
       </header>
 
-      <WorkoutCards />
+      <RotationSection />
 
       {/*
         Kalender + Avatar nebeneinander auf Desktop (lg+, ⅔ / ⅓), gestapelt

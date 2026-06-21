@@ -6,13 +6,12 @@ import { SiblingNavButtons } from "@/components/hypertrophy/SiblingNavButtons";
 import { SiblingSwipe } from "@/components/hypertrophy/SiblingSwipe";
 import { AppShell } from "@/components/site/AppShell";
 import {
-  getSetsByTemplateExercise,
-  getSwapDatesForTemplateExercise,
+  getSetsForExercise,
   getTemplateBySlug,
   getTemplateExerciseBySlug,
   getTemplateExercises,
 } from "@/lib/db/queries";
-import { WORKOUT_LABELS } from "@/lib/hypertrophy/workouts";
+import { templateVisuals } from "@/lib/hypertrophy/workouts";
 import { effectiveE1RM, round1 } from "@/lib/utils/strength";
 
 export const dynamic = "force-dynamic";
@@ -31,10 +30,11 @@ export default async function ExerciseProgressPage({
   const row = await getTemplateExerciseBySlug(template.id, exerciseSlug);
   if (!row) notFound();
 
-  const sets = await getSetsByTemplateExercise(row.templateExercise.id);
-  // Tage, an denen dieser Slot durch eine andere Übung ersetzt war — sie zählen
-  // nicht zum Verlauf der Stamm-Übung, werden aber als Indikator-Punkt gezeigt.
-  const swaps = await getSwapDatesForTemplateExercise(row.templateExercise.id);
+  // Trainingseinheit-ÜBERGREIFENDER Verlauf: alle Sätze dieser Übung über alle
+  // Einheiten und Tausche hinweg (namens-basierte Identität, siehe
+  // getSetsForExercise). Damit zählt z. B. Dumbbell Incline Press in Upper A,
+  // Push und als Tausch zum selben 1RM-Verlauf.
+  const sets = await getSetsForExercise(row.exercise.name);
   const repMin = row.templateExercise.repMin ?? row.exercise.defaultRepMin;
   const repMax = row.templateExercise.repMax ?? row.exercise.defaultRepMax;
 
@@ -95,7 +95,7 @@ export default async function ExerciseProgressPage({
             href={`/hypertrophy/${template.slug}`}
             className="inline-flex items-center gap-1 text-xs tracking-wide uppercase text-muted-foreground hover:text-foreground"
           >
-            ← {WORKOUT_LABELS[template.kind]}
+            ← {templateVisuals(template).label}
           </Link>
           <SiblingNavButtons
             prevHref={prevHref}
@@ -141,7 +141,6 @@ export default async function ExerciseProgressPage({
         <ExerciseProgressChart
           sets={sets}
           unilateral={row.exercise.unilateral}
-          swaps={swaps}
         />
       </section>
 

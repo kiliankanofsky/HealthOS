@@ -1,5 +1,6 @@
 import { and, asc, desc, eq, gte, isNull, lte, sql } from "drizzle-orm";
 import { db } from "./index";
+import { swapNameToSlug } from "@/lib/hypertrophy/workouts";
 import {
   type ActivitySource,
   dailyActivity,
@@ -282,6 +283,216 @@ export async function getExerciseBySlug(
   slug: string,
 ): Promise<Exercise | undefined> {
   return db.select().from(exercises).where(eq(exercises.slug, slug)).get();
+}
+
+// ---- Übungs-Katalog (trainingseinheit-übergreifend) ----
+
+// Alle Stamm-Übungen, alphabetisch — Quelle für den Übungs-Picker.
+export async function getAllExercises(): Promise<Exercise[]> {
+  return db.select().from(exercises).orderBy(asc(exercises.name)).all();
+}
+
+// Case-insensitiver Lookup einer Übung anhand des Namens.
+export async function getExerciseByName(
+  name: string,
+): Promise<Exercise | undefined> {
+  return db
+    .select()
+    .from(exercises)
+    .where(sql`lower(${exercises.name}) = lower(${name})`)
+    .get();
+}
+
+// Slug eindeutig machen (Übungen) — Basis aus dem Namen, bei Kollision -2, -3 …
+async function uniqueExerciseSlug(name: string): Promise<string> {
+  const base = swapNameToSlug(name) || "uebung";
+  let slug = base;
+  let n = 2;
+  while (await getExerciseBySlug(slug)) slug = `${base}-${n++}`;
+  return slug;
+}
+
+// Neue Stamm-Übung anlegen. Muskelgruppen optional (Default leer) — der
+// Avatar-Volumen-Tracker zeigt sie dann erst nach manueller Pflege an.
+export async function createExercise(input: {
+  name: string;
+  defaultRepMin: number;
+  defaultRepMax: number;
+  unilateral?: boolean;
+  primaryMuscles?: string[];
+  secondaryMuscles?: string[];
+}): Promise<Exercise> {
+  const slug = await uniqueExerciseSlug(input.name);
+  const [row] = await db
+    .insert(exercises)
+    .values({
+      slug,
+      name: input.name.trim(),
+      primaryMuscles: input.primaryMuscles ?? [],
+      secondaryMuscles: input.secondaryMuscles ?? [],
+      defaultRepMin: input.defaultRepMin,
+      defaultRepMax: input.defaultRepMax,
+      unilateral: input.unilateral ?? false,
+    })
+    .returning();
+  return row;
+}
+
+// Alle je benutzten Übungs-Namen (Stamm-Übungen ∪ Tausch-Namen), distinct &
+// alphabetisch — speist die Auswahl im "Neue Trainingseinheit"-Dialog.
+export async function getAllExerciseNamesEverUsed(): Promise<string[]> {
+  const ex = await db.select({ name: exercises.name }).from(exercises).all();
+  const swaps = await getAllSwapNames();
+  const byLower = new Map<string, string>();
+  for (const e of ex) byLower.set(e.name.toLowerCase(), e.name);
+  for (const s of swaps)
+    if (!byLower.has(s.name.toLowerCase())) byLower.set(s.name.toLowerCase(), s.name);
+  return [...byLower.values()].sort((a, b) => a.localeCompare(b));
+}
+
+// ---- Trainingseinheiten (Templates): Rotation + Verwaltung ----
+
+// Aktuell aktive Einheiten (in Rotation, nicht archiviert), in Anzeige-Reihenfolge.
+export async function getRotationTemplates(): Promise<WorkoutTemplate[]> {
+  return db
+    .select()
+    .from(workoutTemplates)
+    .where(
+      and(
+        eq(workoutTemplates.inRotation, true),
+        eq(workoutTemplates.archived, false),
+      ),
+    )
+    .orderBy(asc(workoutTemplates.sortOrder), asc(workoutTemplates.id))
+    .all();
+}
+
+// Alle verwaltbaren Einheiten (nicht archiviert) für den Rotations-Manager.
+export async function getManageableTemplates(): Promise<WorkoutTemplate[]> {
+  return db
+    .select()
+    .from(workoutTemplates)
+    .where(eq(workoutTemplates.archived, false))
+    .orderBy(asc(workoutTemplates.sortOrder), asc(workoutTemplates.id))
+    .all();
+}
+
+async function uniqueTemplateSlug(name: string): Promise<string> {
+  const base = swapNameToSlug(name) || "einheit";
+  let slug = base;
+  let n = 2;
+  while (await getTemplateBySlug(slug)) slug = `${base}-${n++}`;
+  return slug;
+}
+
+// Neue Einheit. kind = slug (seit Migration 0018 frei), sortOrder default ans Ende.
+export async function createTemplate(input: {
+  name: string;
+  color?: string | null;
+  letter?: string | null;
+  inRotation?: boolean;
+  sortOrder?: number;
+}): Promise<WorkoutTemplate> {
+  const slug = await uniqueTemplateSlug(input.name);
+  const [row] = await db
+    .insert(workoutTemplates)
+    .values({
+      slug,
+      kind: slug,
+      name: input.name.trim(),
+      color: input.color ?? null,
+      letter: input.letter ?? null,
+      inRotation: input.inRotation ?? true,
+      sortOrder: input.sortOrder ?? 0,
+    })
+    .returning();
+  return row;
+}
+
+export async function updateTemplate(
+  id: number,
+  patch: Partial<{
+    name: string;
+    color: string | null;
+    letter: string | null;
+    inRotation: boolean;
+    sortOrder: number;
+    archived: boolean;
+  }>,
+): Promise<WorkoutTemplate | undefined> {
+  const [row] = await db
+    .update(workoutTemplates)
+    .set(patch)
+    .where(eq(workoutTemplates.id, id))
+    .returning();
+  return row;
+}
+
+// Hard-Delete — nur erlaubt, wenn keine Sessions existieren (FK RESTRICT).
+// Sonst archiviert die Action stattdessen (Historie bleibt erhalten).
+export async function deleteTemplate(id: number): Promise<void> {
+  await db.delete(workoutTemplates).where(eq(workoutTemplates.id, id)).run();
+}
+
+// ---- Template-Slots (Übungen einer Einheit) ----
+
+export async function getMaxTemplatePosition(templateId: number): Promise<number> {
+  const row = await db
+    .select({ max: sql<number | null>`max(${workoutTemplateExercises.position})` })
+    .from(workoutTemplateExercises)
+    .where(eq(workoutTemplateExercises.templateId, templateId))
+    .get();
+  return row?.max ?? 0;
+}
+
+export async function addTemplateExercise(input: {
+  templateId: number;
+  exerciseId: number;
+  position: number;
+  repMin?: number | null;
+  repMax?: number | null;
+}): Promise<WorkoutTemplateExercise> {
+  const [row] = await db
+    .insert(workoutTemplateExercises)
+    .values({
+      templateId: input.templateId,
+      exerciseId: input.exerciseId,
+      position: input.position,
+      repMin: input.repMin ?? null,
+      repMax: input.repMax ?? null,
+    })
+    .returning();
+  return row;
+}
+
+export async function removeTemplateExercise(
+  templateExerciseId: number,
+): Promise<void> {
+  await db
+    .delete(workoutTemplateExercises)
+    .where(eq(workoutTemplateExercises.id, templateExerciseId))
+    .run();
+}
+
+// Positionen neu vergeben. Wegen UNIQUE(template, position) zweistufig:
+// erst auf negative Zwischenwerte, dann final (Single-User, kurze Listen).
+export async function reorderTemplateExercises(
+  orderedIds: number[],
+): Promise<void> {
+  for (let i = 0; i < orderedIds.length; i++) {
+    await db
+      .update(workoutTemplateExercises)
+      .set({ position: -(i + 1) })
+      .where(eq(workoutTemplateExercises.id, orderedIds[i]))
+      .run();
+  }
+  for (let i = 0; i < orderedIds.length; i++) {
+    await db
+      .update(workoutTemplateExercises)
+      .set({ position: i + 1 })
+      .where(eq(workoutTemplateExercises.id, orderedIds[i]))
+      .run();
+  }
 }
 
 // Liefert das Template-Exercise + Übungs-Stammdaten für ein (Template-Slug, Übungs-Slug)-Paar.
@@ -584,6 +795,51 @@ export async function getSetsForSwapName(
       ),
     )
     .where(eq(sessionExerciseOverrides.name, name))
+    .orderBy(asc(workoutSessions.date), asc(workoutSets.setNumber))
+    .all();
+}
+
+// Alle Sätze einer Übung über ALLE Trainingseinheiten und Slots hinweg —
+// die trainingseinheit-übergreifende Verlaufs-Quelle. Ein Satz zählt zur Übung
+// `name`, wenn der Slot in jener Session zu `name` getauscht war (Override),
+// sonst wenn die Stamm-Übung des Slots `name` ist. Vereint damit den früheren
+// Slot-Verlauf (getSetsByTemplateExercise) und den Tausch-Verlauf
+// (getSetsForSwapName) in einer namens-basierten Identität.
+export async function getSetsForExercise(name: string): Promise<SetWithDate[]> {
+  return db
+    .select({
+      id: workoutSets.id,
+      sessionId: workoutSets.sessionId,
+      templateExerciseId: workoutSets.templateExerciseId,
+      setNumber: workoutSets.setNumber,
+      weightKg: workoutSets.weightKg,
+      reps: workoutSets.reps,
+      weightMode: workoutSets.weightMode,
+      restSeconds: workoutSets.restSeconds,
+      notes: workoutSets.notes,
+      createdAt: workoutSets.createdAt,
+      date: workoutSessions.date,
+    })
+    .from(workoutSets)
+    .innerJoin(workoutSessions, eq(workoutSessions.id, workoutSets.sessionId))
+    .innerJoin(
+      workoutTemplateExercises,
+      eq(workoutTemplateExercises.id, workoutSets.templateExerciseId),
+    )
+    .innerJoin(exercises, eq(exercises.id, workoutTemplateExercises.exerciseId))
+    .leftJoin(
+      sessionExerciseOverrides,
+      and(
+        eq(sessionExerciseOverrides.sessionId, workoutSets.sessionId),
+        eq(
+          sessionExerciseOverrides.templateExerciseId,
+          workoutSets.templateExerciseId,
+        ),
+      ),
+    )
+    .where(
+      sql`lower(coalesce(${sessionExerciseOverrides.name}, ${exercises.name})) = lower(${name})`,
+    )
     .orderBy(asc(workoutSessions.date), asc(workoutSets.setNumber))
     .all();
 }

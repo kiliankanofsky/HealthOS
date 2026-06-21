@@ -2,32 +2,41 @@ import { ArrowRight } from "lucide-react";
 import Link from "next/link";
 
 import type { GymSessionSummary } from "@/lib/dashboard/gym";
-import {
-  WORKOUT_COLORS,
-  WORKOUT_LABELS,
-  WORKOUT_MARKER_LETTER,
-  WORKOUT_ORDER,
-} from "@/lib/hypertrophy/workouts";
+import { paletteClasses } from "@/lib/hypertrophy/workouts";
 import { cn } from "@/lib/utils";
 
 // Hypertrophy-Sektion der Startseite: letzte Gym-Session (mit Σe1RM-Delta,
 // verlinkt auf die Session-Detail-Seite) + das laut Rotation nächste Workout.
 
+export type RotationUnit = {
+  slug: string;
+  name: string;
+  color: string | null;
+  letter: string;
+};
+
 type Props = {
   summaries: GymSessionSummary[];
+  rotation: RotationUnit[];
   todayIso: string;
 };
 
-export function GymCards({ summaries, todayIso }: Props) {
+export function GymCards({ summaries, rotation, todayIso }: Props) {
   const last = summaries[0] ?? null;
 
-  // Rotation Upper A → Lower → Upper B → Upper A …
-  const nextKind = last
-    ? WORKOUT_ORDER[
-        (WORKOUT_ORDER.indexOf(last.kind) + 1) % WORKOUT_ORDER.length
-      ]
-    : WORKOUT_ORDER[0];
-  const lastOfNextKind = summaries.find((s) => s.kind === nextKind) ?? null;
+  // Nächste Einheit laut Rotations-Reihenfolge (sortOrder): die auf die letzte
+  // gefolgte; fällt die letzte aus der Rotation, beginnt sie wieder vorne.
+  const lastIdx = last
+    ? rotation.findIndex((u) => u.slug === last.slug)
+    : -1;
+  const next =
+    rotation.length > 0
+      ? rotation[lastIdx >= 0 ? (lastIdx + 1) % rotation.length : 0]
+      : null;
+  const lastOfNext = next
+    ? (summaries.find((s) => s.slug === next.slug) ?? null)
+    : null;
+  const nextColors = paletteClasses(next?.color);
 
   return (
     <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
@@ -42,10 +51,10 @@ export function GymCards({ summaries, todayIso }: Props) {
               aria-hidden
               className={cn(
                 "inline-flex size-9 items-center justify-center rounded-full font-heading text-sm font-semibold text-white",
-                WORKOUT_COLORS[last.kind].bg,
+                paletteClasses(last.color).bg,
               )}
             >
-              {WORKOUT_MARKER_LETTER[last.kind]}
+              {last.letter}
             </span>
             <span className="text-[10px] font-medium tracking-[0.2em] text-muted-foreground uppercase">
               {last.cycle}. Session
@@ -100,39 +109,47 @@ export function GymCards({ summaries, todayIso }: Props) {
       )}
 
       {/* Nächstes Workout laut Rotation. */}
-      <Link
-        href={`/hypertrophy/${nextKind}`}
-        className="group flex flex-col gap-4 rounded-3xl bg-card p-6 ring-1 ring-black/5 shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md"
-      >
-        <div className="flex items-center justify-between">
-          <span
-            aria-hidden
-            className={cn(
-              "inline-flex size-9 items-center justify-center rounded-full font-heading text-sm font-semibold text-white",
-              WORKOUT_COLORS[nextKind].bg,
-            )}
-          >
-            {WORKOUT_MARKER_LETTER[nextKind]}
+      {next ? (
+        <Link
+          href={`/hypertrophy/${next.slug}`}
+          className="group flex flex-col gap-4 rounded-3xl bg-card p-6 ring-1 ring-black/5 shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md"
+        >
+          <div className="flex items-center justify-between">
+            <span
+              aria-hidden
+              className={cn(
+                "inline-flex size-9 items-center justify-center rounded-full font-heading text-sm font-semibold text-white",
+                nextColors.bg,
+              )}
+            >
+              {next.letter}
+            </span>
+          </div>
+          <div className="space-y-1">
+            <p className="text-[10px] font-medium tracking-[0.18em] text-muted-foreground uppercase">
+              Als Nächstes dran
+            </p>
+            <h3 className="font-heading text-2xl font-semibold tracking-tight">
+              {next.name}
+            </h3>
+            <p className="text-sm text-muted-foreground">
+              {lastOfNext
+                ? `Zuletzt ${formatRelativeShort(lastOfNext.date, todayIso)} · Σe1RM ${lastOfNext.totalE1.toString().replace(".", ",")} kg`
+                : "Noch nie geloggt."}
+            </p>
+          </div>
+          <span className="mt-auto inline-flex items-center gap-1.5 self-start text-sm font-medium text-primary">
+            Workout öffnen
+            <ArrowRight className="size-3.5 transition-transform group-hover:translate-x-0.5" />
           </span>
-        </div>
-        <div className="space-y-1">
-          <p className="text-[10px] font-medium tracking-[0.18em] text-muted-foreground uppercase">
-            Als Nächstes dran
-          </p>
-          <h3 className="font-heading text-2xl font-semibold tracking-tight">
-            {WORKOUT_LABELS[nextKind]}
-          </h3>
+        </Link>
+      ) : (
+        <div className="flex flex-col items-center justify-center rounded-3xl bg-card p-6 text-center ring-1 ring-black/5 shadow-sm">
           <p className="text-sm text-muted-foreground">
-            {lastOfNextKind
-              ? `Zuletzt ${formatRelativeShort(lastOfNextKind.date, todayIso)} · Σe1RM ${lastOfNextKind.totalE1.toString().replace(".", ",")} kg`
-              : "Noch nie geloggt."}
+            Keine Einheit in der Rotation.
           </p>
         </div>
-        <span className="mt-auto inline-flex items-center gap-1.5 self-start text-sm font-medium text-primary">
-          Workout öffnen
-          <ArrowRight className="size-3.5 transition-transform group-hover:translate-x-0.5" />
-        </span>
-      </Link>
+      )}
     </div>
   );
 }

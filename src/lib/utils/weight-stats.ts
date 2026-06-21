@@ -1,16 +1,23 @@
 import type { WeightEntry, WeightPhase } from "@/lib/db/schema";
 
-// Aktive Phase für ein Datum (Phasen sind nicht-überlappend, offene Phase
-// hat endDate = null).
+// Aktive Phase für ein Datum. Phasen SOLLTEN nicht-überlappend sein (offene
+// Phase hat endDate = null), in der Praxis kommt es aber vor, dass eine ältere
+// Phase nicht geschlossen wurde, bevor eine neue angelegt wird (z. B. offene
+// Cut-Phase + neue Maintenance-Phase). In dem Fall gewinnt die ZULETZT
+// begonnene abdeckende Phase — sie spiegelt die aktuelle Absicht wider.
+// Reihenfolge-unabhängig.
 export function phaseForDate(
   phases: WeightPhase[],
   iso: string,
 ): WeightPhase | null {
-  return (
-    phases.find(
-      (p) => p.startDate <= iso && (p.endDate == null || p.endDate >= iso),
-    ) ?? null
-  );
+  let best: WeightPhase | null = null;
+  for (const p of phases) {
+    const covers =
+      p.startDate <= iso && (p.endDate == null || p.endDate >= iso);
+    if (!covers) continue;
+    if (best == null || p.startDate > best.startDate) best = p;
+  }
+  return best;
 }
 
 export type WindowAvg = {

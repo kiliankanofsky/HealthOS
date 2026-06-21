@@ -3,7 +3,7 @@ import { notFound } from "next/navigation";
 
 import { ExerciseProgressChart } from "@/components/hypertrophy/ExerciseProgressChart";
 import { AppShell } from "@/components/site/AppShell";
-import { getAllSwapNames, getSetsForSwapName } from "@/lib/db/queries";
+import { getAllSwapNames, getSetsForExercise } from "@/lib/db/queries";
 import { swapNameToSlug } from "@/lib/hypertrophy/workouts";
 import { effectiveE1RM, round1 } from "@/lib/utils/strength";
 
@@ -11,9 +11,10 @@ export const dynamic = "force-dynamic";
 
 type Params = { altSlug: string };
 
-// Progress-Tracker einer getauschten (alternativen) Übung — analog zur
-// Stamm-Übungs-Seite, aber rein namens-basiert und global über alle Slots.
-// Die Sätze einer Tausch-Übung werden über getSetsForSwapName rekonstruiert.
+// Progress-Tracker einer getauschten (alternativen) Übung — namens-basiert und
+// trainingseinheit-übergreifend. getSetsForExercise vereint Tausch- UND
+// Stamm-Verlauf: dieselbe Übung zählt unabhängig davon, ob sie als Slot oder
+// als Tausch geloggt wurde.
 export default async function SwapExercisePage({
   params,
 }: {
@@ -27,7 +28,7 @@ export default async function SwapExercisePage({
   if (!match) notFound();
   const name = match.name;
 
-  const sets = await getSetsForSwapName(name);
+  const sets = await getSetsForExercise(name);
   // Bei summiert geloggten Sätzen halbiert effectiveE1RM — also als unilateral
   // behandeln, sobald ein Satz summiert ist (per-side bleibt unberührt).
   const unilateral = sets.some((s) => s.weightMode === "summed");

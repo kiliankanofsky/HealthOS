@@ -22,12 +22,9 @@ import {
   getDailyTagForDate,
   previousDayIso,
 } from "@/lib/db/queries";
-import {
-  WORKOUT_COLORS,
-  WORKOUT_LABELS,
-  WORKOUT_MARKER_LETTER,
-} from "@/lib/hypertrophy/workouts";
+import { templateVisuals } from "@/lib/hypertrophy/workouts";
 import type { PhaseKind } from "@/lib/db/schema";
+import { phaseForDate } from "@/lib/utils/weight-stats";
 import { cn } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
@@ -80,7 +77,7 @@ export default async function SessionPage({
   // Tags (Cheat-Day / Alkohol) wandern in daily_tags — siehe Migration 0012.
   const previousEntry = await getDailyTagForDate(previousDay);
   const phase = await findPhaseFor(date);
-  const colors = WORKOUT_COLORS[template.kind];
+  const { colors, label: templateLabel, letter } = templateVisuals(template);
 
   // Sibling-Sessions für Prev/Next-Navigation. Scope steuert die Kette:
   //   scope === "all" → über alle Workout-Typen hinweg (z.B. via Kalender)
@@ -129,7 +126,7 @@ export default async function SessionPage({
             href={isAllScope ? "/hypertrophy" : `/hypertrophy/${template.slug}`}
             className="inline-flex items-center gap-1 text-xs tracking-wide uppercase text-muted-foreground hover:text-foreground"
           >
-            ← {isAllScope ? "Hypertrophy" : WORKOUT_LABELS[template.kind]}
+            ← {isAllScope ? "Hypertrophy" : templateLabel}
           </Link>
           <SiblingNavButtons
             prevHref={prevHref}
@@ -147,7 +144,7 @@ export default async function SessionPage({
                 colors.bg,
               )}
             >
-              {WORKOUT_MARKER_LETTER[template.kind]}
+              {letter}
             </span>
             <div className="flex flex-col gap-1">
               <p className="text-xs font-medium tracking-[0.2em] text-primary uppercase">
@@ -157,7 +154,7 @@ export default async function SessionPage({
                 {formatLong(date)}
               </h1>
               <p className="text-sm text-muted-foreground">
-                {WORKOUT_LABELS[template.kind]} · Cycle {cycle} · KW {isoWeek(date)}
+                {templateLabel} · Cycle {cycle} · KW {isoWeek(date)}
               </p>
             </div>
           </div>
@@ -264,10 +261,7 @@ function isoWeek(iso: string): number {
 
 async function findPhaseFor(iso: string): Promise<PhaseKind | null> {
   const phases = await getAllPhases();
-  for (const p of phases) {
-    if (p.startDate <= iso && (p.endDate === null || p.endDate >= iso)) {
-      return p.kind;
-    }
-  }
-  return null;
+  // Gleiche Overlap-robuste Logik wie überall sonst (zuletzt begonnene
+  // abdeckende Phase gewinnt) — siehe phaseForDate.
+  return phaseForDate(phases, iso)?.kind ?? null;
 }

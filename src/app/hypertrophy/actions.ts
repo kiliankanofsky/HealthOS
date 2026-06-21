@@ -3,22 +3,51 @@
 import { revalidatePath } from "next/cache";
 
 import {
+  addTemplateExercise,
+  createExercise,
   createSession as dbCreateSession,
+  createTemplate,
   deleteSession as dbDeleteSession,
   deleteSessionExerciseOverride,
   deleteSet as dbDeleteSet,
+  deleteTemplate,
+  getExerciseByName,
+  getManageableTemplates,
+  getMaxTemplatePosition,
   getSession,
   getSessionById,
+  getSessionsByTemplate,
   getSetById,
   getTemplateBySlug,
+  removeTemplateExercise,
+  reorderTemplateExercises,
   updateSessionNotes,
   updateSetWeightMode,
+  updateTemplate,
   upsertSessionExerciseOverride,
   upsertSet,
 } from "@/lib/db/queries";
 import { weightModes, type WeightMode } from "@/lib/db/schema";
+import { PALETTE_KEYS } from "@/lib/hypertrophy/workouts";
 
 const DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
+
+// Marker-Buchstabe aus dem Namen (erstes Alphanumerisches, groß).
+function letterFromName(name: string): string {
+  const m = name.match(/[a-z0-9]/i);
+  return (m?.[0] ?? "?").toUpperCase();
+}
+
+// Rep-Range validieren (1–100, min ≤ max).
+function validRepRange(min: number, max: number): boolean {
+  return (
+    Number.isInteger(min) &&
+    Number.isInteger(max) &&
+    min >= 1 &&
+    max <= 100 &&
+    min <= max
+  );
+}
 
 // ---- Sessions ----
 
@@ -179,4 +208,238 @@ export async function clearExerciseOverride(input: {
   await deleteSessionExerciseOverride(input.sessionId, input.templateExerciseId);
   revalidatePath("/hypertrophy");
   return { ok: true };
+}
+
+// ============================================================
+// Trainingseinheiten (Templates): Erstellen, Rotation, Verwaltung
+// ============================================================
+
+export type UnitExerciseInput = {
+  // Übungs-Name (aus dem Katalog gewählt ODER neu) + Ziel-Rep-Range.
+  name: string;
+  repMin: number;
+  repMax: number;
+  unilateral?: boolean;
+};
+
+export type CreateUnitResult =
+  | { ok: true; slug: string }
+  | { ok: false; error: string };
+
+// Neue Trainingseinheit anlegen: Template + Slots. Unbekannte Übungs-Namen
+// werden als neue Stamm-Übungen erstellt (identische Behandlung wie Bestehende).
+export async function createTrainingUnit(input: {
+  name: string;
+  color?: string | null;
+  exercises: UnitExerciseInput[];
+}): Promise<CreateUnitResult> {
+  const name = input.name.trim();
+  if (!name) return { ok: false, error: "Name darf nicht leer sein." };
+  if (name.length > 60) return { ok: false, error: "Name max. 60 Zeichen." };
+  const exercises = input.exercises.filter((e) => e.name.trim().length > 0);
+  if (exercises.length === 0)
+    return { ok: false, error: "Mindestens eine Übung wählen." };
+  for (const e of exercises) {
+    if (!validRepRange(e.repMin, e.repMax))
+      return { ok: false, error: `Ungültige Rep-Range bei „${e.name}".` };
+  }
+
+  const existing = await getManageableTemplates();
+  const maxSort = existing.reduce((m, t) => Math.max(m, t.sortOrder), -1);
+  // Farbe: gewählt, sonst nächste freie Palette-Farbe.
+  const used = new Set(
+    existing.map((t) => t.color).filter((c): c is string => !!c),
+  );
+  const color =
+    (input.color && PALETTE_KEYS.includes(input.color) ? input.color : null) ??
+    PALETTE_KEYS.find((k) => !used.has(k)) ??
+    PALETTE_KEYS[existing.length % PALETTE_KEYS.length];
+
+  const tpl = await createTemplate({
+    name,
+    color,
+    letter: letterFromName(name),
+    inRotation: true,
+    sortOrder: maxSort + 1,
+  });
+
+  // Slots in Reihenfolge; doppelte Übungen (gleiche Stamm-Übung) überspringen
+  // (UNIQUE(template, exercise)).
+  let pos = 1;
+  const seen = new Set<number>();
+  for (const ex of exercises) {
+    const exName = ex.name.trim();
+    let exercise = await getExerciseByName(exName);
+    if (!exercise) {
+      exercise = await createExercise({
+        name: exName,
+        defaultRepMin: ex.repMin,
+        defaultRepMax: ex.repMax,
+        unilateral: ex.unilateral ?? false,
+      });
+    }
+    if (seen.has(exercise.id)) continue;
+    seen.add(exercise.id);
+    await addTemplateExercise({
+      templateId: tpl.id,
+      exerciseId: exercise.id,
+      position: pos++,
+      repMin: ex.repMin,
+      repMax: ex.repMax,
+    });
+  }
+
+  revalidatePath("/hypertrophy");
+  return { ok: true, slug: tpl.slug };
+}
+
+export async function setUnitInRotation(input: {
+  templateId: number;
+  inRotation: boolean;
+}): Promise<{ ok: boolean; error?: string }> {
+  const row = await updateTemplate(input.templateId, {
+    inRotation: input.inRotation,
+  });
+  if (!row) return { ok: false, error: "Einheit nicht gefunden." };
+  revalidatePath("/hypertrophy");
+  return { ok: true };
+}
+
+// Reihenfolge der Rotation festlegen (sortOrder = Index).
+export async function reorderRotation(input: {
+  orderedTemplateIds: number[];
+}): Promise<{ ok: boolean }> {
+  for (let i = 0; i < input.orderedTemplateIds.length; i++) {
+    await updateTemplate(input.orderedTemplateIds[i], { sortOrder: i });
+  }
+  revalidatePath("/hypertrophy");
+  return { ok: true };
+}
+
+export async function updateTrainingUnit(input: {
+  templateId: number;
+  name?: string;
+  color?: string | null;
+}): Promise<{ ok: boolean; error?: string }> {
+  const patch: { name?: string; color?: string | null; letter?: string } = {};
+  if (input.name !== undefined) {
+    const name = input.name.trim();
+    if (!name) return { ok: false, error: "Name darf nicht leer sein." };
+    if (name.length > 60) return { ok: false, error: "Name max. 60 Zeichen." };
+    patch.name = name;
+    patch.letter = letterFromName(name);
+  }
+  if (input.color !== undefined) {
+    if (input.color !== null && !PALETTE_KEYS.includes(input.color))
+      return { ok: false, error: "Unbekannte Farbe." };
+    patch.color = input.color;
+  }
+  const row = await updateTemplate(input.templateId, patch);
+  if (!row) return { ok: false, error: "Einheit nicht gefunden." };
+  revalidatePath("/hypertrophy");
+  return { ok: true };
+}
+
+export type AddExerciseResult =
+  | {
+      ok: true;
+      slot: {
+        templateExerciseId: number;
+        name: string;
+        slug: string;
+        repMin: number;
+        repMax: number;
+      };
+    }
+  | { ok: false; error: string };
+
+export async function addExerciseToUnit(input: {
+  templateId: number;
+  name: string;
+  repMin: number;
+  repMax: number;
+  unilateral?: boolean;
+}): Promise<AddExerciseResult> {
+  const exName = input.name.trim();
+  if (!exName) return { ok: false, error: "Name darf nicht leer sein." };
+  if (!validRepRange(input.repMin, input.repMax))
+    return { ok: false, error: "Ungültige Rep-Range." };
+  let exercise = await getExerciseByName(exName);
+  if (!exercise) {
+    exercise = await createExercise({
+      name: exName,
+      defaultRepMin: input.repMin,
+      defaultRepMax: input.repMax,
+      unilateral: input.unilateral ?? false,
+    });
+  }
+  const position = (await getMaxTemplatePosition(input.templateId)) + 1;
+  let slot;
+  try {
+    slot = await addTemplateExercise({
+      templateId: input.templateId,
+      exerciseId: exercise.id,
+      position,
+      repMin: input.repMin,
+      repMax: input.repMax,
+    });
+  } catch {
+    return { ok: false, error: "Übung ist bereits in dieser Einheit." };
+  }
+  revalidatePath("/hypertrophy");
+  return {
+    ok: true,
+    slot: {
+      templateExerciseId: slot.id,
+      name: exercise.name,
+      slug: exercise.slug,
+      repMin: input.repMin,
+      repMax: input.repMax,
+    },
+  };
+}
+
+export async function removeExerciseFromUnit(input: {
+  templateExerciseId: number;
+}): Promise<{ ok: boolean; error?: string }> {
+  try {
+    await removeTemplateExercise(input.templateExerciseId);
+  } catch {
+    // FK RESTRICT: Slot hat geloggte Sätze.
+    return {
+      ok: false,
+      error: "Übung hat bereits geloggte Sätze und kann nicht entfernt werden.",
+    };
+  }
+  revalidatePath("/hypertrophy");
+  return { ok: true };
+}
+
+export async function reorderUnitExercises(input: {
+  orderedTemplateExerciseIds: number[];
+}): Promise<{ ok: boolean }> {
+  await reorderTemplateExercises(input.orderedTemplateExerciseIds);
+  revalidatePath("/hypertrophy");
+  return { ok: true };
+}
+
+// Einheit löschen: hat sie Sessions → archivieren (Historie bleibt indiziert),
+// sonst hart löschen (Slots cascaden, da keine Sätze existieren).
+export async function deleteTrainingUnit(input: {
+  templateId: number;
+}): Promise<{ ok: boolean; archived: boolean; error?: string }> {
+  const sessions = await getSessionsByTemplate(input.templateId);
+  if (sessions.length > 0) {
+    const row = await updateTemplate(input.templateId, {
+      archived: true,
+      inRotation: false,
+    });
+    if (!row)
+      return { ok: false, archived: false, error: "Einheit nicht gefunden." };
+    revalidatePath("/hypertrophy");
+    return { ok: true, archived: true };
+  }
+  await deleteTemplate(input.templateId);
+  revalidatePath("/hypertrophy");
+  return { ok: true, archived: false };
 }

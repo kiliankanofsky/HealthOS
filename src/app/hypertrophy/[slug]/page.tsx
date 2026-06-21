@@ -2,11 +2,13 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 
 import {
+  getAllExerciseNamesEverUsed,
   getSessionsByTemplate,
   getSetsBySession,
   getTemplateBySlug,
   getTemplateExercises,
 } from "@/lib/db/queries";
+import { UnitExerciseManager } from "@/components/hypertrophy/UnitExerciseManager";
 import { WorkoutAvatarPanel } from "@/components/hypertrophy/avatar/WorkoutAvatarPanel";
 import type { MuscleExerciseEntry } from "@/components/hypertrophy/avatar/MuscleExerciseList";
 import { WorkoutOverviewChart } from "@/components/hypertrophy/WorkoutOverviewChart";
@@ -16,11 +18,7 @@ import {
   type DbMuscleSlug,
   type HighlightLevel,
 } from "@/lib/hypertrophy/muscles";
-import {
-  WORKOUT_COLORS,
-  WORKOUT_LABELS,
-  WORKOUT_MARKER_LETTER,
-} from "@/lib/hypertrophy/workouts";
+import { templateVisuals } from "@/lib/hypertrophy/workouts";
 import { cn } from "@/lib/utils";
 
 import { OpenOrCreateSessionButton } from "@/components/hypertrophy/OpenOrCreateSessionButton";
@@ -41,7 +39,17 @@ export default async function WorkoutPage({
 
   const exerciseRows = await getTemplateExercises(template.id);
   const sessions = await getSessionsByTemplate(template.id);
-  const colors = WORKOUT_COLORS[template.kind];
+  const exerciseNames = await getAllExerciseNamesEverUsed();
+  const { colors, label: templateLabel, letter } = templateVisuals(template);
+
+  // Slots für den Übungs-Manager (add/remove/reorder).
+  const unitSlots = exerciseRows.map((row) => ({
+    templateExerciseId: row.templateExercise.id,
+    name: row.exercise.name,
+    slug: row.exercise.slug,
+    repMin: row.templateExercise.repMin ?? row.exercise.defaultRepMin,
+    repMax: row.templateExercise.repMax ?? row.exercise.defaultRepMax,
+  }));
 
   // Avatar: aggregierte Muskel-Highlights ("höchste Stufe gewinnt") +
   // Übungs-Index pro DB-Slug für die Hover-/Tap-Liste.
@@ -136,14 +144,14 @@ export default async function WorkoutPage({
                 colors.bg,
               )}
             >
-              {WORKOUT_MARKER_LETTER[template.kind]}
+              {letter}
             </span>
             <div className="flex flex-col gap-1">
               <p className="text-xs font-medium tracking-[0.2em] text-primary uppercase">
                 Workout
               </p>
               <h1 className="font-heading text-3xl font-semibold tracking-tight sm:text-4xl lg:text-5xl">
-                {WORKOUT_LABELS[template.kind]}
+                {templateLabel}
               </h1>
               <p className="text-sm text-muted-foreground">
                 {sessions.length} Sessions · {exerciseRows.length} Übungen
@@ -165,9 +173,16 @@ export default async function WorkoutPage({
       />
 
       <section className="space-y-3">
-        <p className="text-xs font-medium tracking-[0.2em] text-muted-foreground uppercase">
-          Übungen
-        </p>
+        <div className="flex items-center justify-between gap-3">
+          <p className="text-xs font-medium tracking-[0.2em] text-muted-foreground uppercase">
+            Übungen
+          </p>
+          <UnitExerciseManager
+            templateId={template.id}
+            slots={unitSlots}
+            exerciseNames={exerciseNames}
+          />
+        </div>
         <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
           {exerciseRows.map((row, i) => {
             const repMin = row.templateExercise.repMin ?? row.exercise.defaultRepMin;
@@ -206,7 +221,7 @@ export default async function WorkoutPage({
         </p>
         {sessions.length === 0 ? (
           <p className="rounded-xl bg-muted/50 px-4 py-6 text-center text-sm text-muted-foreground">
-            Noch nichts geloggt. Tipp oben rechts auf "Neue Session".
+            Noch nichts geloggt. Lege oben rechts eine neue Session an.
           </p>
         ) : (
           <ul className="divide-y divide-border/60 overflow-hidden rounded-xl bg-card ring-1 ring-foreground/10">

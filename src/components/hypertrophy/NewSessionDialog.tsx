@@ -7,36 +7,32 @@ import { useState, useTransition } from "react";
 import { createSession } from "@/app/hypertrophy/actions";
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
-import type { WorkoutKind } from "@/lib/db/schema";
-import {
-  WORKOUT_COLORS,
-  WORKOUT_LABELS,
-  WORKOUT_MARKER_LETTER,
-  WORKOUT_ORDER,
-} from "@/lib/hypertrophy/workouts";
+import { paletteClasses } from "@/lib/hypertrophy/workouts";
 import { cn } from "@/lib/utils";
 
-const kindToSlug: Record<WorkoutKind, string> = {
-  "upper-a": "upper-a",
-  lower: "lower",
-  "upper-b": "upper-b",
+export type SessionUnit = {
+  slug: string;
+  name: string;
+  color: string | null;
+  letter: string;
 };
 
-export function NewSessionDialog() {
+export function NewSessionDialog({ units }: { units: SessionUnit[] }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
-  const [kind, setKind] = useState<WorkoutKind>("upper-a");
+  const [slug, setSlug] = useState(units[0]?.slug ?? "");
   const [date, setDate] = useState(() => toISODate(new Date()));
 
   const handleCreate = () => {
     setError(null);
+    if (!slug) {
+      setError("Bitte eine Einheit wählen.");
+      return;
+    }
     startTransition(async () => {
-      const result = await createSession({
-        templateSlug: kindToSlug[kind],
-        date,
-      });
+      const result = await createSession({ templateSlug: slug, date });
       if (!result.ok) {
         setError(result.error);
         return;
@@ -54,71 +50,76 @@ export function NewSessionDialog() {
       </Button>
       <Dialog.Root open={open} onOpenChange={setOpen}>
         <Dialog.Portal>
-        <Dialog.Backdrop />
-        <Dialog.Popup>
-          <Dialog.CloseIconButton />
-          <Dialog.Header
-            title="Neue Session"
-            description="Wähle Workout und Datum. Eine vorhandene Session am gleichen Tag wird stattdessen geöffnet."
-          />
+          <Dialog.Backdrop />
+          <Dialog.Popup>
+            <Dialog.CloseIconButton />
+            <Dialog.Header
+              title="Neue Session"
+              description="Wähle Einheit und Datum. Eine vorhandene Session am gleichen Tag wird stattdessen geöffnet."
+            />
 
-          <div className="space-y-5">
-            <Field label="Workout">
-              <div className="grid grid-cols-3 gap-2">
-                {WORKOUT_ORDER.map((k) => {
-                  const colors = WORKOUT_COLORS[k];
-                  const isActive = kind === k;
-                  return (
-                    <button
-                      key={k}
-                      type="button"
-                      onClick={() => setKind(k)}
-                      className={cn(
-                        "flex flex-col items-center gap-2 rounded-lg p-3 text-sm transition-colors",
-                        isActive
-                          ? "bg-foreground/5 ring-2 ring-foreground/20"
-                          : "bg-muted/50 ring-1 ring-transparent hover:bg-muted",
-                      )}
-                    >
-                      <span
+            <div className="space-y-5">
+              <Field label="Einheit">
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                  {units.map((u) => {
+                    const colors = paletteClasses(u.color);
+                    const isActive = slug === u.slug;
+                    return (
+                      <button
+                        key={u.slug}
+                        type="button"
+                        onClick={() => setSlug(u.slug)}
                         className={cn(
-                          "inline-flex size-8 items-center justify-center rounded-full font-heading text-sm font-semibold text-white",
-                          colors.bg,
+                          "flex flex-col items-center gap-2 rounded-lg p-3 text-sm transition-colors",
+                          isActive
+                            ? "bg-foreground/5 ring-2 ring-foreground/20"
+                            : "bg-muted/50 ring-1 ring-transparent hover:bg-muted",
                         )}
                       >
-                        {WORKOUT_MARKER_LETTER[k]}
-                      </span>
-                      <span className="font-medium">{WORKOUT_LABELS[k]}</span>
-                    </button>
-                  );
-                })}
-              </div>
-            </Field>
+                        <span
+                          className={cn(
+                            "inline-flex size-8 items-center justify-center rounded-full font-heading text-sm font-semibold text-white",
+                            colors.bg,
+                          )}
+                        >
+                          {u.letter}
+                        </span>
+                        <span className="text-center font-medium">{u.name}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </Field>
 
-            <Field label="Datum">
-              <input
-                type="date"
-                value={date}
-                onChange={(e) => setDate(e.target.value)}
-                className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm tabular-nums outline-none focus:ring-2 focus:ring-ring/40"
-              />
-            </Field>
+              <Field label="Datum">
+                <input
+                  type="date"
+                  value={date}
+                  onChange={(e) => setDate(e.target.value)}
+                  className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm tabular-nums outline-none focus:ring-2 focus:ring-ring/40"
+                />
+              </Field>
 
-            {error && (
-              <p className="rounded-md bg-destructive/10 px-3 py-2 text-xs text-destructive">
-                {error}
-              </p>
-            )}
-          </div>
+              {error && (
+                <p className="rounded-md bg-destructive/10 px-3 py-2 text-xs text-destructive">
+                  {error}
+                </p>
+              )}
+            </div>
 
-          <div className="mt-6 flex justify-end gap-2">
-            <Button variant="ghost" size="sm" onClick={() => setOpen(false)} disabled={pending}>
-              Abbrechen
-            </Button>
-            <Button size="sm" onClick={handleCreate} disabled={pending}>
-              Öffnen
-            </Button>
-          </div>
+            <div className="mt-6 flex justify-end gap-2">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setOpen(false)}
+                disabled={pending}
+              >
+                Abbrechen
+              </Button>
+              <Button size="sm" onClick={handleCreate} disabled={pending}>
+                Öffnen
+              </Button>
+            </div>
           </Dialog.Popup>
         </Dialog.Portal>
       </Dialog.Root>

@@ -90,8 +90,10 @@ export type NewWeightPhase = typeof weightPhases.$inferInsert;
 export const exerciseSources = ["manual", "garmin"] as const;
 export type ExerciseSource = (typeof exerciseSources)[number];
 
-// Workout-Typen — fixer Katalog (Upper A / Lower / Upper B).
-// Erweiterbar, aber im UI als Enum sichtbar.
+// Workout-Typen — die drei Original-Einheiten. `kind` ist seit Migration 0018
+// kein fixer Enum mehr (beliebige Einheiten erlaubt, neue setzen kind = slug);
+// diese Konstante bleibt als Legacy-Typ für das Garmin-Strength-Mapping
+// (garmin-strength-import.ts) und die Fallback-Visuals in workouts.ts.
 export const workoutKinds = ["upper-a", "lower", "upper-b"] as const;
 export type WorkoutKind = (typeof workoutKinds)[number];
 
@@ -128,12 +130,28 @@ export const exercises = sqliteTable("exercises", {
 export type Exercise = typeof exercises.$inferSelect;
 export type NewExercise = typeof exercises.$inferInsert;
 
-// Drei Workout-Vorlagen: Upper A / Lower / Upper B.
+// Trainingseinheiten ("Workout-Vorlagen"). Seit Migration 0018 dynamisch:
+// beliebig viele Einheiten, jede mit eigenen Visuals (color/letter), einer
+// Rotation (in_rotation + sort_order) und einem Archiv-Flag (ausgeblendet,
+// Historie bleibt erhalten — workout_sessions.templateId ist ON DELETE RESTRICT).
 export const workoutTemplates = sqliteTable("workout_templates", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   slug: text("slug").notNull().unique(),
-  kind: text("kind", { enum: workoutKinds }).notNull().unique(),
+  // Früher fixer Enum + unique. Jetzt freies Textfeld (weiterhin unique):
+  // die 3 Originale behalten ihren Wert (Garmin-Mapping), neue Einheiten
+  // setzen kind = slug.
+  kind: text("kind").notNull().unique(),
   name: text("name").notNull(),
+  // UI-Visuals pro Einheit (Palette-Key, z. B. "indigo"; Marker-Buchstabe).
+  // Null bei Alt-Daten → Fallback über workoutKinds-Maps in workouts.ts.
+  color: text("color"),
+  letter: text("letter"),
+  // Rotation: aktuell aktive Einheiten + Reihenfolge.
+  inRotation: integer("in_rotation", { mode: "boolean" })
+    .notNull()
+    .default(true),
+  sortOrder: integer("sort_order").notNull().default(0),
+  archived: integer("archived", { mode: "boolean" }).notNull().default(false),
   createdAt: text("created_at")
     .notNull()
     .default(sql`(CURRENT_TIMESTAMP)`),

@@ -10,7 +10,6 @@ import {
   upsertSet,
 } from "@/lib/db/queries";
 import type { TemplateExerciseRow } from "@/lib/db/queries";
-import type { WorkoutKind } from "@/lib/db/schema";
 
 // ============================================================
 // Garmin-Strength-Import.
@@ -391,10 +390,10 @@ async function backfillEmptySlots(
 
 function pickBestTemplate(
   sessionExerciseIds: Set<number>,
-  templates: { id: number; name: string; kind: WorkoutKind }[],
+  templates: { id: number; name: string; kind: string }[],
   templateExercises: Map<number, TemplateExerciseRow[]>,
 ): {
-  template: { id: number; name: string; kind: WorkoutKind };
+  template: { id: number; name: string; kind: string };
   ratio: number;
   matchedCount: number;
 } | null {

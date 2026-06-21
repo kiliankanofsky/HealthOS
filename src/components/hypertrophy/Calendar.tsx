@@ -4,13 +4,14 @@ import { ChevronLeft, ChevronRight, Cookie, Dumbbell, Wine } from "lucide-react"
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 
-import type { WorkoutKind } from "@/lib/db/schema";
-import { WORKOUT_COLORS, WORKOUT_LABELS } from "@/lib/hypertrophy/workouts";
+import { paletteClasses } from "@/lib/hypertrophy/workouts";
 import { cn } from "@/lib/utils";
 
 export type CalendarMarker = {
   date: string; // YYYY-MM-DD
-  kind: WorkoutKind;
+  // Palette-Key + Anzeigename der Trainingseinheit (aus workout_templates).
+  color: string | null;
+  name: string;
   templateSlug: string;
 };
 
@@ -193,11 +194,11 @@ function WorkoutDayCell({
   isToday: boolean;
   faded: boolean;
 }) {
-  const colors = WORKOUT_COLORS[marker.kind];
+  const colors = paletteClasses(marker.color);
   return (
     <Link
       href={`/hypertrophy/${marker.templateSlug}/${marker.date}?scope=all`}
-      title={`${WORKOUT_LABELS[marker.kind]} · ${marker.date}`}
+      title={`${marker.name} · ${marker.date}`}
       className={cn(
         "relative inline-flex size-10 items-center justify-center rounded-full text-white shadow-sm ring-2 transition-transform hover:scale-110",
         colors.bg,

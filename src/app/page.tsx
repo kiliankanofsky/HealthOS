@@ -38,12 +38,12 @@ import {
   getDashboardOverviewForDate,
   getLatestDailyMetrics,
   getNextPlanSession,
+  getRotationTemplates,
   getSessionsForPlan,
 } from "@/lib/db/queries";
-import type { WorkoutKind } from "@/lib/db/schema";
 import { getLiveZoneContext } from "@/lib/endurance/live-zones";
 import { sessionTypeLabel } from "@/lib/endurance/plan-format";
-import { WORKOUT_COLORS, WORKOUT_LABELS } from "@/lib/hypertrophy/workouts";
+import { paletteClasses, templateVisuals } from "@/lib/hypertrophy/workouts";
 import { toLocalISODate } from "@/lib/utils/date";
 import { computeWeightStats } from "@/lib/utils/weight-stats";
 
@@ -60,6 +60,7 @@ export default async function DashboardPage() {
     gymSessions,
     templates,
     gymSummaries,
+    rotationTemplates,
     plan,
     weightEntries,
     phases,
@@ -70,12 +71,20 @@ export default async function DashboardPage() {
     getAllSessions(),
     getAllTemplates(),
     getRecentGymSummaries(10),
+    getRotationTemplates(),
     getCurrentTrainingPlan(),
     getAllWeightEntries(),
     getAllPhases(),
     getDashboardOverviewForDate(todayIso),
     getLatestDailyMetrics(),
   ]);
+
+  const rotationUnits = rotationTemplates.map((t) => ({
+    slug: t.slug,
+    name: t.name,
+    color: t.color,
+    letter: templateVisuals(t).letter,
+  }));
 
   // 8-Wochen-Historie für die Metric-Popover-Charts (wie /endurance).
   const metricsHistory = await getDailyMetricsBetween(
@@ -106,13 +115,12 @@ export default async function DashboardPage() {
   for (const s of gymSessions) {
     const tpl = templateById.get(s.templateId);
     if (!tpl) continue;
-    const kind = tpl.kind as WorkoutKind;
     markers.push({
       date: s.date,
       kind: "gym",
       href: `/hypertrophy/${tpl.slug}/${s.date}?scope=all`,
-      title: `${WORKOUT_LABELS[kind]} · ${s.date}`,
-      colorClass: WORKOUT_COLORS[kind].bg,
+      title: `${tpl.name} · ${s.date}`,
+      colorClass: paletteClasses(tpl.color).bg,
     });
   }
 
@@ -347,7 +355,11 @@ export default async function DashboardPage() {
             sub="Letzte Gym-Session und das nächste Workout in der Rotation."
             href="/hypertrophy"
           />
-          <GymCards summaries={gymSummaries} todayIso={todayIso} />
+          <GymCards
+            summaries={gymSummaries}
+            rotation={rotationUnits}
+            todayIso={todayIso}
+          />
         </section>
 
         {/* ---- Weight ---- */}
