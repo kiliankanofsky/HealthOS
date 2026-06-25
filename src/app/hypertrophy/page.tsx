@@ -21,6 +21,10 @@ import { templateVisuals } from "@/lib/hypertrophy/workouts";
 import { toLocalISODate } from "@/lib/utils/date";
 
 export const dynamic = "force-dynamic";
+// Der „Sync"-Button ruft die `syncNow`-Server-Action (6 Garmin/FDDB-Schritte +
+// KI-Tagesnotiz) — die kann nah an 60s gehen. Page-Level maxDuration erbt auf
+// die Server Action, sonst Default-Timeout → 504 → „unexpected response".
+export const maxDuration = 60;
 
 export default async function HypertrophyPage() {
   const templates = await getAllTemplates();
