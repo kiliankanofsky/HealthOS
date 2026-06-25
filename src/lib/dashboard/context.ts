@@ -13,6 +13,7 @@ import {
   getAllPhases,
   getAllWeightEntries,
   getCurrentTrainingPlan,
+  getDailyActivityEntries,
   getDailyMetricsBetween,
   getNutritionEntries,
   getRunSessionsBetween,
@@ -25,6 +26,7 @@ import { SESSION_TYPE_LABELS } from "@/lib/endurance/plan-format";
 import { computeFitness } from "@/lib/endurance/training-load";
 import {
   buildEffectiveDays,
+  buildMaintenanceEstimate,
   buildNutritionRecommendation,
   type EffectiveDay,
 } from "@/lib/utils/nutrition-recommendation";
@@ -149,7 +151,27 @@ export async function buildHealthContext(todayIso: string): Promise<string> {
     tags: tagsInWindow,
     todayIso,
   });
-  if (rec.phaseKind != null) {
+  if (rec.phaseKind === "maintenance") {
+    // In der Erhaltungsphase ist die relevante Zahl der TDEE (Erhaltungsbedarf),
+    // nicht eine +/− Anpassung — gleiche Engine wie die Maintenance-Card.
+    const activity = await getDailyActivityEntries({ source: "garmin" });
+    const maint = buildMaintenanceEstimate({
+      weightEntries,
+      nutrition,
+      tags: tagsInWindow,
+      activity,
+      todayIso,
+    });
+    weightLines.push(
+      `Erhaltungsbedarf (TDEE aus Energiebilanz): ` +
+        (maint.recommendedMaintenanceKcal != null
+          ? `~${maint.recommendedMaintenanceKcal} kcal/Tag (Median 7/14/28d)`
+          : "zu wenig Daten") +
+        (maint.garminMaintenanceKcal != null
+          ? ` · Garmin-Abgleich ~${maint.garminMaintenanceKcal} kcal/Tag`
+          : ""),
+    );
+  } else if (rec.phaseKind != null) {
     weightLines.push(
       `Kalorien-Empfehlung (deterministisch, Phase ${PHASE_LABELS[rec.phaseKind]}): ` +
         `beobachtet ${signedKg(rec.observedWeeklyDeltaKg)}/Woche vs. Ziel ${signedKg(rec.targetWeeklyDeltaKg)}/Woche · ` +

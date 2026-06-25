@@ -175,6 +175,9 @@ export const workoutTemplateExercises = sqliteTable(
     position: integer("position").notNull(),
     repMin: integer("rep_min"),
     repMax: integer("rep_max"),
+    // Vorgeschlagene Satz-Anzahl — der Session-Logger befüllt so viele leere
+    // Set-Zeilen vor (nullable; Default bei der Anzeige = 3).
+    defaultSets: integer("default_sets"),
   },
   (table) => [
     uniqueIndex("template_position_unique").on(table.templateId, table.position),

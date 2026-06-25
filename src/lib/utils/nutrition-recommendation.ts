@@ -13,6 +13,7 @@
 // ============================================================
 
 import type {
+  DailyActivity,
   DailyTag,
   NutritionEntry,
   WeightEntry,
@@ -264,4 +265,175 @@ function isoDaysAgo(iso: string, days: number): string {
   const m = String(d.getMonth() + 1).padStart(2, "0");
   const day = String(d.getDate()).padStart(2, "0");
   return `${y}-${m}-${day}`;
+}
+
+// ============================================================
+// Maintenance-Card — Erhaltungsbedarf (TDEE) aus Energiebilanz.
+//
+// In einer Erhaltungsphase ist nicht "wie viel ab-/zunehmen" die Frage, sondern
+// "wie viel kann ich essen, ohne mein Gewicht zu verändern" (= TDEE). Das lässt
+// sich aus den eigenen Daten ableiten: Wenn du über N Tage im Schnitt I kcal
+// isst und dein Gewicht sich dabei um Δkg ändert, dann war dein tägliches
+// Energie-Ungleichgewicht (Δkg/Tag × 7700) und damit:
+//
+//     TDEE ≈ Ø-Intake − (Gewichts-Rate kg/Tag × 7700)
+//
+// Wir rechnen das über drei Fenster (7/14/28 Tage), damit kurzfristiges Rauschen
+// (Wasser) gegen die längere, stabilere Schätzung gestellt werden kann. Als
+// zweite, unabhängige Schätzung kommt Garmins gemessener Tagesverbrauch
+// (daily_activity.totalKcal) dazu. Konsolidiert = Median der validen Bilanz-
+// Schätzungen.
+// ============================================================
+
+const MAINTENANCE_WINDOWS = [7, 14, 28] as const;
+// Mindest-Datenlage pro Fenster, damit eine Bilanz-Schätzung verlässlich ist.
+const MIN_INTAKE_DAYS = 3;
+const MIN_WEIGHT_ENTRIES = 3;
+
+export type MaintenanceWindow = {
+  days: number;
+  avgIntakeKcal: number | null;
+  intakeDayCount: number;
+  /** Gewichtsänderung über das Fenster (Regressions-geglättet), kg. */
+  weightDeltaKg: number | null;
+  weightEntryCount: number;
+  /** Erhaltungsbedarf aus der Energiebilanz (Ø-Intake − Rate×7700), kcal/Tag. */
+  balanceTdeeKcal: number | null;
+  /** Garmins gemessener Ø-Tagesverbrauch im Fenster, kcal/Tag. */
+  garminTdeeKcal: number | null;
+  garminDayCount: number;
+};
+
+export type MaintenanceEstimate = {
+  windows: MaintenanceWindow[];
+  /** Konsolidierter Erhaltungsbedarf — Median valider Bilanz-TDEEs (auf 10 gerundet). */
+  recommendedMaintenanceKcal: number | null;
+  /** Sekundär: Median der Garmin-Tagesverbräuche (auf 10 gerundet). */
+  garminMaintenanceKcal: number | null;
+  /** Cheat-Tags im 28-Tage-Fenster — verzerren Rate und Intake. */
+  cheatDaysInWindow: number;
+  cheatMealsInWindow: number;
+};
+
+// Least-squares-Steigung (kg/Tag) über (Tag-Offset, Gewicht). Null wenn < 2 Punkte.
+function weightRatePerDay(points: { x: number; y: number }[]): number | null {
+  const n = points.length;
+  if (n < 2) return null;
+  let sx = 0;
+  let sy = 0;
+  let sxx = 0;
+  let sxy = 0;
+  for (const p of points) {
+    sx += p.x;
+    sy += p.y;
+    sxx += p.x * p.x;
+    sxy += p.x * p.y;
+  }
+  const denom = n * sxx - sx * sx;
+  if (denom === 0) return null;
+  return (n * sxy - sx * sy) / denom;
+}
+
+function median(values: number[]): number | null {
+  if (values.length === 0) return null;
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 0
+    ? (sorted[mid - 1] + sorted[mid]) / 2
+    : sorted[mid];
+}
+
+function dayOffset(fromIso: string, iso: string): number {
+  const a = new Date(`${fromIso}T00:00:00`).getTime();
+  const b = new Date(`${iso}T00:00:00`).getTime();
+  return Math.round((b - a) / 86_400_000);
+}
+
+export function buildMaintenanceEstimate(input: {
+  weightEntries: WeightEntry[]; // chronologisch aufsteigend
+  nutrition: NutritionEntry[];
+  tags: DailyTag[];
+  activity: DailyActivity[];
+  todayIso: string;
+}): MaintenanceEstimate {
+  const { weightEntries, nutrition, tags, activity, todayIso } = input;
+  const effectiveAll = buildEffectiveDays(nutrition, tags);
+
+  const windows: MaintenanceWindow[] = MAINTENANCE_WINDOWS.map((days) => {
+    const fromIso = isoDaysAgo(todayIso, days - 1);
+
+    // Intake (Cheat-bereinigt) im Fenster.
+    const intakeDays = effectiveAll.filter(
+      (d) => d.date >= fromIso && d.date <= todayIso && d.caloriesKcal != null,
+    );
+    const avgIntakeKcal =
+      intakeDays.length >= MIN_INTAKE_DAYS
+        ? Math.round(
+            intakeDays.reduce((acc, d) => acc + (d.caloriesKcal ?? 0), 0) /
+              intakeDays.length,
+          )
+        : null;
+
+    // Gewichts-Rate im Fenster (Regression über alle Wiegungen).
+    const wEntries = weightEntries.filter(
+      (e) => e.date >= fromIso && e.date <= todayIso,
+    );
+    const rate =
+      wEntries.length >= MIN_WEIGHT_ENTRIES
+        ? weightRatePerDay(
+            wEntries.map((e) => ({ x: dayOffset(fromIso, e.date), y: e.weightKg })),
+          )
+        : null;
+    const weightDeltaKg = rate != null ? Math.round(rate * (days - 1) * 100) / 100 : null;
+
+    const balanceTdeeKcal =
+      avgIntakeKcal != null && rate != null
+        ? Math.round((avgIntakeKcal - rate * KCAL_PER_KG) / 10) * 10
+        : null;
+
+    // Garmin-Tagesverbrauch im Fenster.
+    const actDays = activity.filter(
+      (a) => a.date >= fromIso && a.date <= todayIso && a.totalKcal > 0,
+    );
+    const garminTdeeKcal =
+      actDays.length > 0
+        ? Math.round(
+            actDays.reduce((acc, a) => acc + a.totalKcal, 0) / actDays.length / 10,
+          ) * 10
+        : null;
+
+    return {
+      days,
+      avgIntakeKcal,
+      intakeDayCount: intakeDays.length,
+      weightDeltaKg,
+      weightEntryCount: wEntries.length,
+      balanceTdeeKcal,
+      garminTdeeKcal,
+      garminDayCount: actDays.length,
+    };
+  });
+
+  const balanceValues = windows
+    .map((w) => w.balanceTdeeKcal)
+    .filter((v): v is number => v != null);
+  const garminValues = windows
+    .map((w) => w.garminTdeeKcal)
+    .filter((v): v is number => v != null);
+  const recM = median(balanceValues);
+  const garM = median(garminValues);
+
+  // Cheat-Tags im längsten (28d) Fenster.
+  const fromIso28 = isoDaysAgo(todayIso, MAINTENANCE_WINDOWS[MAINTENANCE_WINDOWS.length - 1] - 1);
+  const effective28 = effectiveAll.filter(
+    (d) => d.date >= fromIso28 && d.date <= todayIso,
+  );
+
+  return {
+    windows,
+    recommendedMaintenanceKcal: recM != null ? Math.round(recM / 10) * 10 : null,
+    garminMaintenanceKcal: garM != null ? Math.round(garM / 10) * 10 : null,
+    cheatDaysInWindow: effective28.filter((d) => d.cheatDay).length,
+    cheatMealsInWindow: effective28.filter((d) => d.cheatMeal && !d.cheatDay).length,
+  };
 }

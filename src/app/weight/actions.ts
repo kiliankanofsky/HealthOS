@@ -6,7 +6,9 @@ import {
   deletePhase,
   deleteWeightEntry,
   deleteWeightEntryByDate,
+  getAllPhases,
   getWeightEntryByDate,
+  updatePhase,
   updateWeightMetadata,
   upsertDailyTag,
   upsertPhase,
@@ -45,7 +47,7 @@ export async function addWeightEntry(
     return { ok: false, error: "Gewicht muss eine Zahl zwischen 0 und 500 kg sein." };
   }
 
-  upsertWeightEntry({
+  await upsertWeightEntry({
     date,
     weightKg: Math.round(weight * 100) / 100,
     source: "manual",
@@ -60,7 +62,7 @@ export async function addWeightEntry(
 export async function removeWeightEntry(formData: FormData): Promise<void> {
   const id = Number(formData.get("id"));
   if (!Number.isFinite(id)) return;
-  deleteWeightEntry(id);
+  await deleteWeightEntry(id);
   revalidatePath("/weight");
   revalidatePath("/weight/entries");
 }
@@ -76,12 +78,12 @@ export async function setWeightForDate(
   }
 
   if (weightKg === null) {
-    deleteWeightEntryByDate(date);
+    await deleteWeightEntryByDate(date);
   } else {
     if (!Number.isFinite(weightKg) || weightKg <= 0 || weightKg > 500) {
       return { ok: false, error: "Gewicht außerhalb des gültigen Bereichs." };
     }
-    upsertWeightEntry({
+    await upsertWeightEntry({
       date,
       weightKg: Math.round(weightKg * 100) / 100,
       source: "manual",
@@ -207,13 +209,43 @@ export async function savePhase(
     return { ok: false, error: "Enddatum liegt vor dem Startdatum." };
   }
 
-  upsertPhase({
-    kind: input.kind,
-    startDate: input.startDate,
-    endDate: input.endDate ?? null,
-    label: input.label?.trim() && input.label.trim().length > 0 ? input.label.trim() : null,
-    source: "manual",
-  });
+  const label =
+    input.label?.trim() && input.label.trim().length > 0 ? input.label.trim() : null;
+  const endDate = input.endDate ?? null;
+
+  if (input.id != null) {
+    // Bestehende Phase bearbeiten → echtes Update über die id, damit auch das
+    // Startdatum geändert werden kann, ohne (wie beim Upsert-über-startDate)
+    // eine Dublette anzulegen.
+    const allPhases = await getAllPhases();
+    const existing = allPhases.find((p) => p.id === input.id);
+    if (!existing) {
+      return { ok: false, error: "Phase nicht gefunden." };
+    }
+    // Wenn das neue Startdatum mit einer ANDEREN Phase kollidiert (UNIQUE auf
+    // start_date), brechen wir mit klarer Meldung ab.
+    if (
+      input.startDate !== existing.startDate &&
+      allPhases.some((p) => p.id !== input.id && p.startDate === input.startDate)
+    ) {
+      return { ok: false, error: "Für dieses Startdatum existiert bereits eine Phase." };
+    }
+    await updatePhase(input.id, {
+      kind: input.kind,
+      startDate: input.startDate,
+      endDate,
+      label,
+      source: "manual",
+    });
+  } else {
+    await upsertPhase({
+      kind: input.kind,
+      startDate: input.startDate,
+      endDate,
+      label,
+      source: "manual",
+    });
+  }
 
   revalidatePath("/weight");
   return { ok: true };
@@ -221,7 +253,7 @@ export async function savePhase(
 
 export async function removePhase(id: number): Promise<{ ok: boolean }> {
   if (!Number.isFinite(id)) return { ok: false };
-  deletePhase(id);
+  await deletePhase(id);
   revalidatePath("/weight");
   return { ok: true };
 }

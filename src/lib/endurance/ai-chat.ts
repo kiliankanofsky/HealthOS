@@ -14,7 +14,11 @@ import Anthropic from "@anthropic-ai/sdk";
 import {
   createPlanSession,
   deletePlanSession,
+  getAllDailyTags,
+  getAllPhases,
+  getAllWeightEntries,
   getDailyMetricsBetween,
+  getNutritionEntries,
   getPlanSessionById,
   getPlanSessionsForDateRange,
   getRunSessionsBetween,
@@ -27,6 +31,7 @@ import {
 } from "@/lib/db/queries";
 import type {
   NewTrainingPlanBlock,
+  PhaseKind,
   RunLap,
   TrainingPlan,
   TrainingPlanBlockSegment,
@@ -43,6 +48,11 @@ import { formatPace, formatSecondsAsHms, type PaceZones } from "@/lib/endurance/
 import { formatDistance, SESSION_TYPE_LABELS } from "@/lib/endurance/plan-format";
 import { sessionTotals, type SplitsBlock } from "@/lib/endurance/plan-splits";
 import { computeFitness } from "@/lib/endurance/training-load";
+import {
+  buildNutritionRecommendation,
+  type NutritionRecommendation,
+} from "@/lib/utils/nutrition-recommendation";
+import { computeWeightStats, diff, phaseForDate } from "@/lib/utils/weight-stats";
 import { germanDateWithWeekday } from "@/lib/utils/date";
 import { CHAT_MODEL_INFO, type ChatModel } from "@/lib/endurance/ai-models";
 import {
@@ -220,6 +230,13 @@ function todayAndUpcomingText(
   return lines.join("\n");
 }
 
+// Sekunden → "7h 58m" (für Schlafdauer im KI-Kontext).
+function formatHoursMinutes(sec: number): string {
+  const h = Math.floor(sec / 3600);
+  const m = Math.round((sec % 3600) / 60);
+  return `${h}h ${String(m).padStart(2, "0")}m`;
+}
+
 // Exportiert: auch der ganzheitliche Dashboard-Chat (src/lib/dashboard)
 // nutzt diese Kontext-Blöcke.
 export function metricsText(
@@ -230,7 +247,10 @@ export function metricsText(
   const lines = recent.map((m) => {
     const parts: string[] = [m.date];
     if (m.hrvLastNight != null) parts.push(`HRV ${m.hrvLastNight}${m.hrvStatus ? ` (${m.hrvStatus})` : ""}`);
-    if (m.sleepScore != null) parts.push(`Schlaf ${m.sleepScore}`);
+    // Sleep-Score (0–100, KEINE Minuten!) + tatsächliche Schlafdauer getrennt,
+    // damit die KI Score und Dauer nicht verwechselt.
+    if (m.sleepScore != null) parts.push(`Schlaf-Score ${m.sleepScore}/100`);
+    if (m.sleepDurationSec != null) parts.push(`Schlafdauer ${formatHoursMinutes(m.sleepDurationSec)}`);
     if (m.restingHeartRate != null) parts.push(`RHR ${m.restingHeartRate}`);
     if (m.trainingStatus) parts.push(`Status ${m.trainingStatus}`);
     return "  " + parts.join(", ");
@@ -314,6 +334,40 @@ export function fitnessText(fitness: ReturnType<typeof computeFitness>): string 
   return lines.join("\n");
 }
 
+// Kompakter Gewicht/Phasen-Block, damit der Trainings-Assistent dieselbe Phase
+// + Kalorien-Empfehlung kennt wie Dashboard & Weight-Card (z.B. um Ernährung
+// in Race-Vorbereitung/Tapering einzuordnen).
+const PHASE_LABELS_AI: Record<PhaseKind, string> = {
+  cut: "Cut (Defizit)",
+  bulk: "Bulk (Aufbau)",
+  maintenance: "Maintenance (Erhalt)",
+};
+function weightPhaseText(args: {
+  weightEntries: Awaited<ReturnType<typeof getAllWeightEntries>>;
+  rec: NutritionRecommendation;
+  todayIso: string;
+  phaseKind: PhaseKind | null;
+  phaseStartDate: string | null;
+}): string {
+  const { weightEntries, rec, phaseKind, phaseStartDate } = args;
+  if (weightEntries.length === 0) return "(keine Gewichtsdaten)";
+  const stats = computeWeightStats(weightEntries);
+  const weekDelta = diff(stats.weekAvg.avg, stats.prevWeekAvg.avg);
+  const kg = (v: number | null) => (v == null ? "—" : `${v.toFixed(1)} kg`);
+  const sKg = (v: number | null) =>
+    v == null ? "—" : `${v > 0 ? "+" : ""}${(Math.round(v * 10) / 10).toFixed(1)} kg`;
+  const lines = [
+    `Phase: ${phaseKind ? `${PHASE_LABELS_AI[phaseKind]}${phaseStartDate ? ` seit ${phaseStartDate}` : ""}` : "(keine Phase hinterlegt)"}`,
+    `Gewicht: ${kg(stats.current)} (7-Tage-Ø ${kg(stats.weekAvg.avg)}, Δ Woche ${sKg(weekDelta)})`,
+  ];
+  if (rec.phaseKind != null && rec.recommendedIntakeKcal != null && rec.adjustmentKcal != null) {
+    lines.push(
+      `Kalorien-Empfehlung: ~${rec.recommendedIntakeKcal} kcal/Tag (${rec.adjustmentKcal > 0 ? "+" : ""}${rec.adjustmentKcal} ggü. Ø-Intake), Ziel ${sKg(rec.targetWeeklyDeltaKg)}/Woche vs. beobachtet ${sKg(rec.observedWeeklyDeltaKg)}/Woche.`,
+    );
+  }
+  return lines.join("\n");
+}
+
 function buildSystem(args: {
   plan: TrainingPlan;
   sessions: TrainingPlanSession[];
@@ -321,8 +375,9 @@ function buildSystem(args: {
   metrics: Awaited<ReturnType<typeof getDailyMetricsBetween>>;
   runs: Awaited<ReturnType<typeof getRunSessionsBetween>>;
   fitness: ReturnType<typeof computeFitness>;
+  weightText: string;
 }): string {
-  const { plan, sessions, todayIso, metrics, runs, fitness } = args;
+  const { plan, sessions, todayIso, metrics, runs, fitness, weightText } = args;
   return [
     `Heute ist ${germanDateWithWeekday(todayIso)} (ISO ${todayIso}). Das ist das aktuelle Datum — alle zeitbezogenen Aussagen ("heute", "morgen", "diese Woche", "kommend") beziehen sich ausschließlich darauf.`,
     ``,
@@ -356,6 +411,9 @@ function buildSystem(args: {
     ``,
     `FITNESS / FATIGUE / FORM (aus Garmin Training Load):`,
     fitnessText(fitness),
+    ``,
+    `GEWICHT / PHASE (gleiche Daten wie Dashboard & Weight-Seite):`,
+    weightText,
     ``,
     `TRAININGSHISTORIE (letzte absolvierte Läufe — inkl. Lauf-Struktur aus Garmin-Laps):`,
     `Nutze die Struktur ("gleichmäßig" vs. "strukturiert/Intervalle"), um die tatsächliche Belastung einzuschätzen — ein 5k-Recovery zählt anders als 5k mit Intervallen.`,
@@ -550,18 +608,52 @@ export async function runPlanChat(
   if (!plan) return { reply: "Kein Plan gefunden.", changed: false };
 
   const sessions = await getSessionsForPlan(planId);
-  const [metrics, runsRaw] = await Promise.all([
-    getDailyMetricsBetween(isoDaysAgo(todayIso, 14), todayIso),
-    // 180 Tage, damit die 42-Tage-CTL gut "aufgewärmt" ist.
-    getRunSessionsBetween(isoDaysAgo(todayIso, 180), todayIso),
-  ]);
+  const [metrics, runsRaw, weightEntries, phases, nutrition, dailyTags] =
+    await Promise.all([
+      getDailyMetricsBetween(isoDaysAgo(todayIso, 14), todayIso),
+      // 180 Tage, damit die 42-Tage-CTL gut "aufgewärmt" ist.
+      getRunSessionsBetween(isoDaysAgo(todayIso, 180), todayIso),
+      getAllWeightEntries(),
+      getAllPhases(),
+      getNutritionEntries({ from: isoDaysAgo(todayIso, 13), to: todayIso }),
+      getAllDailyTags(),
+    ]);
   const runs = [...runsRaw].sort((a, b) => a.date.localeCompare(b.date));
   const fitness = computeFitness(
     runs.map((r) => ({ date: r.date, trainingLoad: r.trainingLoad })),
     todayIso,
   );
 
-  const system = buildSystem({ plan, sessions, todayIso, metrics, runs, fitness });
+  // Gewicht/Phase + deterministische Kalorien-Empfehlung — gleiche Engine wie
+  // Dashboard/Weight-Card, damit der Assistent dieselbe Phase nennt.
+  const phase = phaseForDate(phases, todayIso);
+  const tagsInWindow = dailyTags.filter(
+    (t) => t.date >= isoDaysAgo(todayIso, 13) && t.date <= todayIso,
+  );
+  const rec = buildNutritionRecommendation({
+    weightEntries,
+    phases,
+    nutrition,
+    tags: tagsInWindow,
+    todayIso,
+  });
+  const weightText = weightPhaseText({
+    weightEntries,
+    rec,
+    todayIso,
+    phaseKind: phase?.kind ?? null,
+    phaseStartDate: phase?.startDate ?? null,
+  });
+
+  const system = buildSystem({
+    plan,
+    sessions,
+    todayIso,
+    metrics,
+    runs,
+    fitness,
+    weightText,
+  });
 
   const info = CHAT_MODEL_INFO[model];
   if (info.provider === "openrouter") {

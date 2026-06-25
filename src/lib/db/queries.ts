@@ -218,6 +218,20 @@ export async function upsertPhase(phase: NewWeightPhase): Promise<WeightPhase> {
   return row;
 }
 
+// Echtes Update über die id — erlaubt, das Startdatum einer bestehenden Phase
+// zu ändern, ohne (wie beim Upsert-über-startDate) eine Dublette zu erzeugen.
+export async function updatePhase(
+  id: number,
+  patch: Partial<Pick<WeightPhase, "kind" | "startDate" | "endDate" | "label" | "source">>,
+): Promise<WeightPhase | undefined> {
+  const [row] = await db
+    .update(weightPhases)
+    .set(patch)
+    .where(eq(weightPhases.id, id))
+    .returning();
+  return row;
+}
+
 export async function deletePhase(id: number): Promise<void> {
   await db.delete(weightPhases).where(eq(weightPhases.id, id)).run();
 }
@@ -451,6 +465,7 @@ export async function addTemplateExercise(input: {
   position: number;
   repMin?: number | null;
   repMax?: number | null;
+  defaultSets?: number | null;
 }): Promise<WorkoutTemplateExercise> {
   const [row] = await db
     .insert(workoutTemplateExercises)
@@ -460,9 +475,22 @@ export async function addTemplateExercise(input: {
       position: input.position,
       repMin: input.repMin ?? null,
       repMax: input.repMax ?? null,
+      defaultSets: input.defaultSets ?? null,
     })
     .returning();
   return row;
+}
+
+// Satz-Vorgabe eines bestehenden Slots ändern (Edit-Manager).
+export async function updateTemplateExerciseSets(
+  templateExerciseId: number,
+  defaultSets: number | null,
+): Promise<void> {
+  await db
+    .update(workoutTemplateExercises)
+    .set({ defaultSets })
+    .where(eq(workoutTemplateExercises.id, templateExerciseId))
+    .run();
 }
 
 export async function removeTemplateExercise(

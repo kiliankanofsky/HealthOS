@@ -1,12 +1,12 @@
 "use client";
 
-import { RefreshCw } from "lucide-react";
+import { AlertTriangle, CheckCircle2, RefreshCw } from "lucide-react";
 import { useState, useTransition } from "react";
 
 import { syncNow } from "@/app/weight/actions";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import type { SyncSummary } from "@/lib/integrations/sync-all";
+import type { SyncResult, SyncSummary } from "@/lib/integrations/sync-all";
 
 // Manueller Sync-Trigger. Ruft dieselbe Logik wie der tägliche Cron auf,
 // hilfreich wenn der morgendliche Cron noch partielle Daten gesehen hat
@@ -31,61 +31,82 @@ export function SyncNowButton({ label = "Sync" }: { label?: string } = {}) {
   };
 
   return (
-    <div className="flex flex-wrap items-center gap-3">
-      <Button
-        type="button"
-        variant="outline"
-        size="sm"
-        onClick={handleClick}
-        disabled={isPending}
-      >
-        <RefreshCw
-          className={cn("size-4", isPending && "animate-spin")}
-          aria-hidden
-        />
-        {isPending ? "Synce…" : label}
-      </Button>
-      {result && <SyncResultBadge summary={result} />}
-      {error && <span className="text-xs text-rose-600">Fehler: {error}</span>}
+    <div className="space-y-2">
+      <div className="flex flex-wrap items-center gap-3">
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={handleClick}
+          disabled={isPending}
+        >
+          <RefreshCw
+            className={cn("size-4", isPending && "animate-spin")}
+            aria-hidden
+          />
+          {isPending ? "Synce…" : label}
+        </Button>
+        {result && <SyncStatusPill summary={result} />}
+        {error && <span className="text-xs text-rose-600">Fehler: {error}</span>}
+      </div>
+
+      {/* Immer sichtbares Feld: was hat der Sync verändert. */}
+      {result && <ChangesField changes={result.changes} />}
     </div>
   );
 }
 
-function SyncResultBadge({ summary }: { summary: SyncSummary }) {
+// Komprimiertes Status-Pill statt fünf Einzel-Chips. Details on-hover im title.
+function SyncStatusPill({ summary }: { summary: SyncSummary }) {
   const { results } = summary;
-  const entries: { label: string; result: typeof results.sheets }[] = [
+  const entries: { label: string; result: SyncResult }[] = [
     { label: "Sheets", result: results.sheets },
     { label: "Strength", result: results.garminStrength },
     { label: "Kalorien", result: results.garminCalories },
-    { label: "FDDB", result: results.nutrition },
+    { label: "Läufe", result: results.garminRuns },
+    { label: "Metrics", result: results.garminMetrics },
     { label: "Plan-Match", result: results.planMatch },
+    { label: "FDDB", result: results.nutrition },
   ];
+  const failed = entries.filter((e) => !e.result.ok);
+  const detail = entries
+    .map((e) => `${e.result.ok ? "✓" : "✗"} ${e.label}${e.result.ok ? "" : `: ${(e.result as { error: string }).error}`}`)
+    .join("\n");
+
+  if (summary.ok) {
+    return (
+      <span
+        title={detail}
+        className="inline-flex items-center gap-1.5 rounded-full bg-emerald-100 px-3 py-1 text-xs font-medium text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-400"
+      >
+        <CheckCircle2 className="size-3.5" aria-hidden />
+        Sync successful
+      </span>
+    );
+  }
   return (
-    <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
-      {entries.map(({ label, result }) => (
-        <span
-          key={label}
-          className={cn(
-            "inline-flex items-center gap-1 rounded-full px-2 py-0.5",
-            result.ok
-              ? "bg-emerald-100 text-emerald-700"
-              : "bg-rose-100 text-rose-700",
-          )}
-          title={result.ok ? formatOkDetail(result) : result.error}
-        >
-          <span aria-hidden>{result.ok ? "✓" : "✗"}</span>
-          {label}
-        </span>
-      ))}
-    </div>
+    <span
+      title={detail}
+      className="inline-flex items-center gap-1.5 rounded-full bg-amber-100 px-3 py-1 text-xs font-medium text-amber-800 dark:bg-amber-500/15 dark:text-amber-300"
+    >
+      <AlertTriangle className="size-3.5" aria-hidden />
+      Sync mit Fehlern ({failed.length})
+    </span>
   );
 }
 
-function formatOkDetail(result: { ok: true; [k: string]: unknown }): string {
-  const parts: string[] = [];
-  for (const [k, v] of Object.entries(result)) {
-    if (k === "ok") continue;
-    parts.push(`${k}: ${String(v)}`);
-  }
-  return parts.join(", ");
+function ChangesField({ changes }: { changes: string[] }) {
+  if (changes.length === 0) return null;
+  return (
+    <ul className="space-y-0.5 rounded-xl bg-muted/50 px-3 py-2 text-xs text-muted-foreground">
+      {changes.map((c, i) => (
+        <li key={i} className="flex items-start gap-1.5">
+          <span aria-hidden className="mt-px text-foreground/40">
+            ·
+          </span>
+          <span>{c}</span>
+        </li>
+      ))}
+    </ul>
+  );
 }

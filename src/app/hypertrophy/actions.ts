@@ -21,6 +21,7 @@ import {
   getTemplateBySlug,
   removeTemplateExercise,
   reorderTemplateExercises,
+  updateTemplateExerciseSets,
   updateSessionNotes,
   updateSetWeightMode,
   updateTemplate,
@@ -220,7 +221,17 @@ export type UnitExerciseInput = {
   repMin: number;
   repMax: number;
   unilateral?: boolean;
+  // Vorgeschlagene Satz-Anzahl (Logger befüllt so viele Zeilen vor).
+  defaultSets?: number | null;
 };
+
+// Satz-Anzahl normalisieren: ganzzahlig, 1–20, sonst null (= Default 3).
+function normalizeSets(v: number | null | undefined): number | null {
+  if (v == null || !Number.isFinite(v)) return null;
+  const n = Math.round(v);
+  if (n < 1 || n > 20) return null;
+  return n;
+}
 
 export type CreateUnitResult =
   | { ok: true; slug: string }
@@ -286,6 +297,7 @@ export async function createTrainingUnit(input: {
       position: pos++,
       repMin: ex.repMin,
       repMax: ex.repMax,
+      defaultSets: normalizeSets(ex.defaultSets),
     });
   }
 
@@ -349,6 +361,7 @@ export type AddExerciseResult =
         slug: string;
         repMin: number;
         repMax: number;
+        defaultSets: number | null;
       };
     }
   | { ok: false; error: string };
@@ -359,11 +372,13 @@ export async function addExerciseToUnit(input: {
   repMin: number;
   repMax: number;
   unilateral?: boolean;
+  defaultSets?: number | null;
 }): Promise<AddExerciseResult> {
   const exName = input.name.trim();
   if (!exName) return { ok: false, error: "Name darf nicht leer sein." };
   if (!validRepRange(input.repMin, input.repMax))
     return { ok: false, error: "Ungültige Rep-Range." };
+  const defaultSets = normalizeSets(input.defaultSets);
   let exercise = await getExerciseByName(exName);
   if (!exercise) {
     exercise = await createExercise({
@@ -382,6 +397,7 @@ export async function addExerciseToUnit(input: {
       position,
       repMin: input.repMin,
       repMax: input.repMax,
+      defaultSets,
     });
   } catch {
     return { ok: false, error: "Übung ist bereits in dieser Einheit." };
@@ -395,8 +411,23 @@ export async function addExerciseToUnit(input: {
       slug: exercise.slug,
       repMin: input.repMin,
       repMax: input.repMax,
+      defaultSets,
     },
   };
+}
+
+// Satz-Vorgabe eines bestehenden Slots ändern (Edit bestehender Einheit).
+// null = zurück auf Default (3).
+export async function setExerciseDefaultSets(input: {
+  templateExerciseId: number;
+  defaultSets: number | null;
+}): Promise<{ ok: boolean }> {
+  await updateTemplateExerciseSets(
+    input.templateExerciseId,
+    normalizeSets(input.defaultSets),
+  );
+  revalidatePath("/hypertrophy");
+  return { ok: true };
 }
 
 export async function removeExerciseFromUnit(input: {

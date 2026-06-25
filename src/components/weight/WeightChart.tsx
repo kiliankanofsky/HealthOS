@@ -37,11 +37,12 @@ const SYSTEM_BLUE = "#007AFF";
 const SMOOTH_COLOR = "rgba(140, 140, 140, 0.55)"; // dezenter grauer Trend
 const TAG_COLOR = "#E11D48"; // rose-600
 
-// Apple-Phasen-Farbgebung: violett für Aufbau, türkis für Defizit, neutral für Maintenance.
+// Apple-Phasen-Farbgebung: violett für Aufbau, türkis für Defizit, amber für
+// Erhaltung (klar von Defizit abgesetzt, nicht neutralgrau).
 const PHASE_FILL: Record<WeightPhase["kind"], string> = {
   bulk: "rgba(139, 92, 246, 0.10)", // violet-500
   cut: "rgba(20, 184, 166, 0.10)", // teal-500
-  maintenance: "rgba(120, 120, 120, 0.08)",
+  maintenance: "rgba(245, 158, 11, 0.12)", // amber-500
 };
 
 export function WeightChart({

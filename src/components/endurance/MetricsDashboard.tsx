@@ -30,13 +30,20 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
+import { SegmentedControl } from "@/components/ui/segmented-control";
 import type { GarminDailyMetrics } from "@/lib/db/schema";
 import { formatPace, formatSecondsAsHms } from "@/lib/endurance/plan";
 import { cn } from "@/lib/utils";
 
+// Minimal-Form der Tags für die Sleep-Grafik (date + Alkohol/Cheat genügen) —
+// so passt sowohl ein DailyTag[] als auch das schlanke CalendarTag[].
+export type SleepTagInput = { date: string; alcohol: boolean; cheatDay: boolean };
+
 type Props = {
   latest: GarminDailyMetrics | undefined;
   history: GarminDailyMetrics[];
+  // Cheat-Day/Alkohol-Tags — in der Sleep-Grafik am Folgetag (Wirkungsnacht) markiert.
+  tags?: SleepTagInput[];
 };
 
 const RHR_COLOR = "#ef4444"; // rot — für Herzfrequenz
@@ -49,14 +56,23 @@ const SLEEP_COLORS = {
   awake: "#94a3b8",
 } as const;
 
-export function MetricsDashboard({ latest, history }: Props) {
+// Umschaltbare Zeitspannen der Nächte-Grafik (Anzahl Nächte je Auswahl).
+type SleepRange = "7" | "14" | "30";
+const SLEEP_RANGE_NIGHTS: Record<SleepRange, number> = { "7": 7, "14": 14, "30": 30 };
+const SLEEP_RANGE_OPTIONS: { value: SleepRange; label: string }[] = [
+  { value: "7", label: "1 W" },
+  { value: "14", label: "2 W" },
+  { value: "30", label: "1 M" },
+];
+
+export function MetricsDashboard({ latest, history, tags = [] }: Props) {
   return (
     <div className="space-y-8">
       <DashboardSection title="Longevity-Metrics">
         <div className="grid grid-cols-3 gap-3">
           <RhrTile latest={latest} history={history} />
           <HrvTile latest={latest} history={history} />
-          <SleepTile latest={latest} history={history} />
+          <SleepTile latest={latest} history={history} tags={tags} />
         </div>
       </DashboardSection>
 
@@ -471,12 +487,20 @@ function HrvTile({
 function SleepTile({
   latest,
   history,
+  tags,
 }: {
   latest: GarminDailyMetrics | undefined;
   history: GarminDailyMetrics[];
+  tags: SleepTagInput[];
 }) {
-  // Letzte ~12 Wochen für den Trend + um darin per Click/Buttons zu navigieren.
+  // Letzte ~12 Wochen als Navigations-Fenster (Click/Buttons im Detail).
   const trendWindow = useMemo(() => sliceLastDays(history, 84), [history]);
+  // Tag-Lookup nach Datum (Alkohol/Cheat-Day) für die Nächte-Grafik.
+  const tagByDate = useMemo(() => {
+    const m = new Map<string, SleepTagInput>();
+    for (const t of tags) m.set(t.date, t);
+    return m;
+  }, [tags]);
 
   const defaultDate = useMemo(() => {
     for (let i = trendWindow.length - 1; i >= 0; i--) {
@@ -486,6 +510,8 @@ function SleepTile({
   }, [trendWindow]);
 
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
+  // Umschaltbare Zeitspanne für die Nächte-Grafik (Anzahl Nächte).
+  const [rangeNights, setRangeNights] = useState<SleepRange>("7");
   const activeDate = selectedDate ?? defaultDate;
   const activeIdx = trendWindow.findIndex((d) => d.date === activeDate);
   // Daten des aktiven Tages: bevorzugt aus der Historie, fallback auf latest.
@@ -518,10 +544,31 @@ function SleepTile({
 
   const totalSec = stageLegend.reduce((acc, s) => acc + s.sec, 0);
 
-  const scoreTrend = useMemo(
-    () => trendWindow.map((m) => ({ date: m.date, score: m.sleepScore })),
-    [trendWindow],
-  );
+  // Letzte 7 Nächte MIT Schlafzeiten (Einschlaf-/Aufwachzeit) für die
+  // Apple-Health-artige Nächte-Grafik.
+  const nights = useMemo<SleepNight[]>(() => {
+    const withTimes = trendWindow.filter(
+      (m) => m.sleepStartLocal != null && m.sleepEndLocal != null,
+    );
+    return withTimes.slice(-SLEEP_RANGE_NIGHTS[rangeNights]).map((m) => {
+      // Wirkungs-Nacht: Alkohol/Cheat am EINSCHLAF-Tag (Abend) wirkt auf DIESE
+      // Nacht. So liegt z.B. "Montag Alkohol" auf der Nacht Mo→Di (= Folgetag).
+      const onsetDay = (m.sleepStartLocal ?? "").slice(0, 10);
+      const tag = onsetDay ? tagByDate.get(onsetDay) : undefined;
+      return {
+        date: m.date,
+        startMin: timeOfDayMinutes(m.sleepStartLocal),
+        endMin: timeOfDayMinutes(m.sleepEndLocal),
+        deep: m.deepSleepSec ?? 0,
+        light: m.lightSleepSec ?? 0,
+        rem: m.remSleepSec ?? 0,
+        awake: m.awakeSleepSec ?? 0,
+        score: m.sleepScore,
+        alcohol: tag?.alcohol === true,
+        cheatDay: tag?.cheatDay === true,
+      };
+    });
+  }, [trendWindow, tagByDate, rangeNights]);
 
   // Tile-Preview verwendet den jüngsten Wert (latest), nicht den ausgewählten.
   const previewScore = latest?.sleepScore ?? null;
@@ -613,70 +660,25 @@ function SleepTile({
           <p className="text-sm text-muted-foreground">Keine Stadien-Daten.</p>
         )}
 
-        {/* === RECHTS: Sleep-Score-Trend, schlanker === */}
+        {/* === RECHTS: Apple-Health-artige Nächte-Grafik (Schlafzeiten) === */}
         <div className="flex flex-col">
-          <p className="mb-2 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
-            Sleep Score — letzte 12 Wochen
-          </p>
+          <div className="mb-2 flex items-center justify-between gap-2">
+            <p className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+              Schlafzeiten
+            </p>
+            <SegmentedControl
+              size="sm"
+              value={rangeNights}
+              onChange={setRangeNights}
+              options={SLEEP_RANGE_OPTIONS}
+            />
+          </div>
           <div className="h-72">
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart
-                data={scoreTrend}
-                margin={{ top: 8, right: 12, bottom: 0, left: 0 }}
-                onClick={(e) => {
-                  const label = (e as { activeLabel?: string | number } | null)
-                    ?.activeLabel;
-                  if (typeof label === "string") setSelectedDate(label);
-                }}
-              >
-                <CartesianGrid
-                  stroke="currentColor"
-                  strokeOpacity={0.1}
-                  vertical={false}
-                />
-                <XAxis
-                  dataKey="date"
-                  tickLine={false}
-                  axisLine={false}
-                  tick={{ fontSize: 10, fill: "currentColor", opacity: 0.6 }}
-                  tickFormatter={shortDate}
-                  minTickGap={20}
-                />
-                <YAxis
-                  tickLine={false}
-                  axisLine={false}
-                  width={28}
-                  tick={{ fontSize: 10, fill: "currentColor", opacity: 0.6 }}
-                  domain={[0, 100]}
-                  ticks={[0, 25, 50, 75, 100]}
-                />
-                <Tooltip
-                  contentStyle={tooltipStyle}
-                  labelFormatter={(d) =>
-                    typeof d === "string" ? formatDeLong(d) : ""
-                  }
-                  formatter={(v) => [
-                    typeof v === "number" ? `${v}/100` : "—",
-                    "Sleep Score",
-                  ]}
-                />
-                <Line
-                  type="linear"
-                  dataKey="score"
-                  stroke={SLEEP_COLORS.rem}
-                  strokeWidth={2}
-                  dot={false}
-                  activeDot={{
-                    r: 4,
-                    fill: SLEEP_COLORS.rem,
-                    stroke: "#fff",
-                    strokeWidth: 2,
-                  }}
-                  isAnimationActive={false}
-                  connectNulls
-                />
-              </LineChart>
-            </ResponsiveContainer>
+            <SleepTimelineChart
+              nights={nights}
+              activeDate={activeDate}
+              onSelect={(d) => setSelectedDate(d)}
+            />
           </div>
         </div>
       </div>
@@ -721,7 +723,22 @@ function SleepTile({
         }}
       />
 
-      <PopoverFootnote>Quelle: Garmin Connect Sleep</PopoverFootnote>
+      <PopoverFootnote>
+        <span className="inline-flex flex-wrap items-center gap-x-3 gap-y-1">
+          <span>Quelle: Garmin Connect Sleep</span>
+          <span className="inline-flex items-center gap-1">
+            <span className="inline-block size-2 rounded-full bg-amber-500" />
+            Alkohol
+          </span>
+          <span className="inline-flex items-center gap-1">
+            <span className="inline-block size-2 rounded-full bg-rose-600" />
+            Cheat-Day
+          </span>
+          <span className="text-muted-foreground/70">
+            (am Vorabend → Wirkungs-Nacht)
+          </span>
+        </span>
+      </PopoverFootnote>
     </MetricTile>
   );
 }
@@ -729,6 +746,241 @@ function SleepTile({
 function sleepStageLabel(key: string): string {
   return (
     { deep: "Tief", light: "Leicht", rem: "REM", awake: "Wach" }[key] ?? key
+  );
+}
+
+// ============================================================
+// Apple-Health-artige Nächte-Grafik: pro Nacht ein vertikaler Balken von
+// Einschlaf- bis Aufwachzeit (Y-Achse = Uhrzeit), nach Stadien gefärbt. Tags
+// (Alkohol/Cheat-Day) erscheinen an der jeweiligen Wirkungs-Nacht.
+// ============================================================
+type SleepNight = {
+  date: string;
+  startMin: number | null; // Minuten seit Mitternacht (Einschlafen)
+  endMin: number | null; // Minuten seit Mitternacht (Aufwachen)
+  deep: number;
+  light: number;
+  rem: number;
+  awake: number;
+  score: number | null;
+  alcohol: boolean;
+  cheatDay: boolean;
+};
+
+// "23:14"-ISO → Minuten seit Mitternacht (Garmin liefert Lokalzeit ohne Offset).
+function timeOfDayMinutes(iso: string | null): number | null {
+  if (!iso) return null;
+  const m = /T(\d{2}):(\d{2})/.exec(iso);
+  if (!m) return null;
+  return Number(m[1]) * 60 + Number(m[2]);
+}
+
+// Anker 18:00 — Abend→Morgen wird so monoton (Einschlafen oben, Aufwachen unten).
+const SLEEP_AXIS_ANCHOR_MIN = 18 * 60;
+function sleepAxisValue(min: number): number {
+  return (min - SLEEP_AXIS_ANCHOR_MIN + 1440) % 1440;
+}
+function minutesToClock(min: number): string {
+  const h = Math.floor((min % 1440) / 60);
+  const m = Math.round(min % 60);
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+}
+function weekdayShort(iso: string): string {
+  return new Date(`${iso}T12:00:00`).toLocaleDateString("de-DE", {
+    weekday: "short",
+  });
+}
+function shortDayMonth(iso: string): string {
+  // "2026-05-21" → "21.05."
+  return iso.length >= 10 ? `${iso.slice(8, 10)}.${iso.slice(5, 7)}.` : iso;
+}
+
+function SleepTimelineChart({
+  nights,
+  activeDate,
+  onSelect,
+}: {
+  nights: SleepNight[];
+  activeDate: string | null;
+  onSelect: (date: string) => void;
+}) {
+  const valid = nights.filter((n) => n.startMin != null && n.endMin != null);
+  if (valid.length === 0) {
+    return (
+      <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+        Keine Schlafzeiten in den letzten Nächten.
+      </div>
+    );
+  }
+
+  const W = 340;
+  const H = 288;
+  const padTop = 8;
+  const padBottom = 34; // Platz für Wochentag + Tag-Marker
+  const gutter = 40; // Uhrzeit-Labels links
+  const plotH = H - padTop - padBottom;
+  const plotW = W - gutter - 8;
+
+  // Achsen-Domain aus den realen Einschlaf-/Aufwachzeiten (+ Polster).
+  const starts = valid.map((n) => sleepAxisValue(n.startMin as number));
+  const ends = valid.map((n) => sleepAxisValue(n.endMin as number));
+  const rawMin = Math.min(...starts);
+  const rawMax = Math.max(...ends);
+  const yMin = rawMin - 30;
+  const yMax = rawMax + 30;
+  const span = Math.max(60, yMax - yMin);
+  const yScale = (axisVal: number) => padTop + ((axisVal - yMin) / span) * plotH;
+
+  // Uhrzeit-Gitterlinien: alle 2h innerhalb der Domain.
+  const ticks: { y: number; label: string }[] = [];
+  const firstTick = Math.ceil(yMin / 120) * 120;
+  for (let v = firstTick; v <= yMax; v += 120) {
+    ticks.push({ y: yScale(v), label: minutesToClock((v + SLEEP_AXIS_ANCHOR_MIN) % 1440) });
+  }
+
+  const slot = plotW / valid.length;
+  const barW = Math.min(26, Math.max(3, slot * 0.5));
+  const stageOrder: (keyof typeof SLEEP_COLORS)[] = ["awake", "rem", "light", "deep"];
+  // X-Labels ausdünnen, damit sie bei vielen Nächten nicht überlappen. Bei
+  // wenigen Nächten Wochentag, sonst Datum (TT.MM) am letzten + jedem n-ten Tag.
+  const labelStep = Math.max(1, Math.ceil(valid.length / 8));
+  const useWeekday = valid.length <= 8;
+
+  return (
+    <svg
+      viewBox={`0 0 ${W} ${H}`}
+      width="100%"
+      height="100%"
+      preserveAspectRatio="xMidYMid meet"
+      role="img"
+      aria-label="Schlafzeiten der letzten Nächte"
+    >
+      {/* Uhrzeit-Gitter */}
+      {ticks.map((t, i) => (
+        <g key={i}>
+          <line
+            x1={gutter}
+            x2={W - 4}
+            y1={t.y}
+            y2={t.y}
+            stroke="currentColor"
+            strokeOpacity={0.1}
+          />
+          <text
+            x={gutter - 6}
+            y={t.y + 3}
+            textAnchor="end"
+            fontSize={10}
+            fill="currentColor"
+            opacity={0.55}
+          >
+            {t.label}
+          </text>
+        </g>
+      ))}
+
+      {valid.map((n, i) => {
+        const cx = gutter + slot * i + slot / 2;
+        const x = cx - barW / 2;
+        const yTop = yScale(sleepAxisValue(n.startMin as number));
+        const yBot = yScale(sleepAxisValue(n.endMin as number));
+        const barH = Math.max(2, yBot - yTop);
+        const total = n.deep + n.light + n.rem + n.awake;
+        const isActive = n.date === activeDate;
+        const durSec = total;
+
+        // Stadien-Segmente proportional über die Balkenhöhe (keine echte
+        // Hypnogramm-Reihenfolge vorhanden → proportionale Aufteilung).
+        let segY = yTop;
+        const segs =
+          total > 0
+            ? stageOrder.map((key) => {
+                const h = (n[key] / total) * barH;
+                const seg = { key, y: segY, h, color: SLEEP_COLORS[key] };
+                segY += h;
+                return seg;
+              })
+            : [{ key: "light" as const, y: yTop, h: barH, color: SLEEP_COLORS.light }];
+
+        return (
+          <g
+            key={n.date}
+            onClick={() => onSelect(n.date)}
+            style={{ cursor: "pointer" }}
+            opacity={activeDate == null || isActive ? 1 : 0.55}
+          >
+            <title>{`${weekdayShort(n.date)} · ${minutesToClock(n.startMin as number)}–${minutesToClock(n.endMin as number)} · ${formatHm(durSec)}${n.score != null ? ` · Score ${n.score}/100` : ""}${n.alcohol ? " · Alkohol" : ""}${n.cheatDay ? " · Cheat-Day" : ""}`}</title>
+            {/* Clip-Pfad für runde Balken-Ecken */}
+            <clipPath id={`sleepclip-${i}`}>
+              <rect x={x} y={yTop} width={barW} height={barH} rx={4} ry={4} />
+            </clipPath>
+            <g clipPath={`url(#sleepclip-${i})`}>
+              {segs.map((s, si) => (
+                <rect
+                  key={si}
+                  x={x}
+                  y={s.y}
+                  width={barW}
+                  height={Math.max(0, s.h)}
+                  fill={s.color}
+                />
+              ))}
+            </g>
+            {isActive && (
+              <rect
+                x={x - 1.5}
+                y={yTop - 1.5}
+                width={barW + 3}
+                height={barH + 3}
+                rx={5}
+                fill="none"
+                stroke="currentColor"
+                strokeOpacity={0.85}
+                strokeWidth={1.5}
+              />
+            )}
+            {/* X-Label (Wochentag bei wenigen, sonst Datum) — ausgedünnt */}
+            {(i % labelStep === 0 || i === valid.length - 1) && (
+              <text
+                x={cx}
+                y={H - padBottom + 14}
+                textAnchor="middle"
+                fontSize={10}
+                fill="currentColor"
+                opacity={0.6}
+              >
+                {useWeekday ? weekdayShort(n.date) : shortDayMonth(n.date)}
+              </text>
+            )}
+            {/* Tag-Marker (Alkohol/Cheat) am Folgetag = Wirkungs-Nacht */}
+            {(n.alcohol || n.cheatDay) && (
+              <g transform={`translate(${cx}, ${H - padBottom + 26})`}>
+                {n.alcohol && (
+                  <circle
+                    cx={n.cheatDay ? -5 : 0}
+                    cy={0}
+                    r={Math.min(4, Math.max(2, barW / 2))}
+                    fill="#f59e0b"
+                  >
+                    <title>Alkohol (Vorabend)</title>
+                  </circle>
+                )}
+                {n.cheatDay && (
+                  <circle
+                    cx={n.alcohol ? 5 : 0}
+                    cy={0}
+                    r={Math.min(4, Math.max(2, barW / 2))}
+                    fill="#e11d48"
+                  >
+                    <title>Cheat-Day (Vorabend)</title>
+                  </circle>
+                )}
+              </g>
+            )}
+          </g>
+        );
+      })}
+    </svg>
   );
 }
 

@@ -24,7 +24,7 @@ const KIND_LABELS: Record<PhaseKind, string> = {
 const KIND_COLORS: Record<PhaseKind, string> = {
   bulk: "bg-violet-500/15 text-violet-700 ring-violet-500/30",
   cut: "bg-teal-500/15 text-teal-700 ring-teal-500/30",
-  maintenance: "bg-muted text-muted-foreground ring-muted-foreground/20",
+  maintenance: "bg-amber-500/15 text-amber-700 ring-amber-500/30",
 };
 
 export function PhaseEditDialog({ open, phase, onClose }: Props) {

@@ -8,6 +8,7 @@ import {
   addExerciseToUnit,
   removeExerciseFromUnit,
   reorderUnitExercises,
+  setExerciseDefaultSets,
 } from "@/app/hypertrophy/actions";
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
@@ -18,6 +19,7 @@ export type UnitSlot = {
   slug: string;
   repMin: number;
   repMax: number;
+  defaultSets: number | null;
 };
 
 // Übungen einer bestehenden Einheit verwalten: hinzufügen (aus Katalog oder
@@ -42,6 +44,26 @@ export function UnitExerciseManager({
   const [newName, setNewName] = useState("");
   const [newMin, setNewMin] = useState(8);
   const [newMax, setNewMax] = useState(12);
+  const [newSets, setNewSets] = useState(3);
+
+  // Satz-Vorgabe eines bestehenden Slots ändern (optimistisch + Server-Action).
+  const changeSets = (slot: UnitSlot, value: number) => {
+    const sets = Math.max(1, Math.min(20, Math.round(value)));
+    setList((prev) =>
+      prev.map((x) =>
+        x.templateExerciseId === slot.templateExerciseId
+          ? { ...x, defaultSets: sets }
+          : x,
+      ),
+    );
+    startTransition(async () => {
+      await setExerciseDefaultSets({
+        templateExerciseId: slot.templateExerciseId,
+        defaultSets: sets,
+      });
+      router.refresh();
+    });
+  };
 
   const handleOpenChange = (next: boolean) => {
     if (next) setList(slots);
@@ -96,6 +118,7 @@ export function UnitExerciseManager({
         name,
         repMin: newMin,
         repMax: newMax,
+        defaultSets: newSets,
       });
       if (!res.ok) {
         setError(res.error);
@@ -156,6 +179,18 @@ export function UnitExerciseManager({
                       {slot.repMin}–{slot.repMax} Reps
                     </p>
                   </div>
+                  <label className="flex items-center gap-1 text-xs text-muted-foreground">
+                    Sätze
+                    <input
+                      type="number"
+                      min={1}
+                      max={20}
+                      value={slot.defaultSets ?? 3}
+                      disabled={pending}
+                      onChange={(e) => changeSets(slot, Number(e.target.value))}
+                      className="w-12 rounded-md border border-border bg-background px-1.5 py-1 text-center tabular-nums outline-none focus:ring-2 focus:ring-ring/40"
+                    />
+                  </label>
                   <button
                     type="button"
                     aria-label="Übung entfernen"
@@ -191,8 +226,20 @@ export function UnitExerciseManager({
                   <input
                     type="number"
                     min={1}
+                    max={20}
+                    value={newSets}
+                    aria-label="Sätze"
+                    title="Sätze"
+                    onChange={(e) => setNewSets(Number(e.target.value))}
+                    className="w-12 rounded-md border border-border bg-background px-1.5 py-1 text-center tabular-nums outline-none focus:ring-2 focus:ring-ring/40"
+                  />
+                  ×
+                  <input
+                    type="number"
+                    min={1}
                     max={100}
                     value={newMin}
+                    aria-label="Reps min"
                     onChange={(e) => setNewMin(Number(e.target.value))}
                     className="w-14 rounded-md border border-border bg-background px-2 py-1 text-center tabular-nums outline-none focus:ring-2 focus:ring-ring/40"
                   />
@@ -202,6 +249,7 @@ export function UnitExerciseManager({
                     min={1}
                     max={100}
                     value={newMax}
+                    aria-label="Reps max"
                     onChange={(e) => setNewMax(Number(e.target.value))}
                     className="w-14 rounded-md border border-border bg-background px-2 py-1 text-center tabular-nums outline-none focus:ring-2 focus:ring-ring/40"
                   />

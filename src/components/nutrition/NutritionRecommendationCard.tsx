@@ -1,13 +1,18 @@
 import {
+  Activity,
   Flame,
   MoveDownRight,
   MoveRight,
   MoveUpRight,
+  Scale,
   TriangleAlert,
 } from "lucide-react";
 
 import type { WeightPhase } from "@/lib/db/schema";
-import type { NutritionRecommendation } from "@/lib/utils/nutrition-recommendation";
+import type {
+  MaintenanceEstimate,
+  NutritionRecommendation,
+} from "@/lib/utils/nutrition-recommendation";
 import { cn } from "@/lib/utils";
 
 // Deterministische Kalorien-Empfehlung passend zur Weight-Phase.
@@ -27,9 +32,11 @@ const PHASE_GOAL_HINT: Record<WeightPhase["kind"], string> = {
 
 type Props = {
   rec: NutritionRecommendation;
+  /** TDEE-Bilanz-Schätzung — nur in der Maintenance-Phase verwendet. */
+  maintenance?: MaintenanceEstimate | null;
 };
 
-export function NutritionRecommendationCard({ rec }: Props) {
+export function NutritionRecommendationCard({ rec, maintenance }: Props) {
   if (rec.phaseKind == null) {
     return (
       <p className="rounded-2xl bg-muted/40 px-6 py-10 text-center text-sm text-muted-foreground">
@@ -37,6 +44,11 @@ export function NutritionRecommendationCard({ rec }: Props) {
         oder Maintenance-Phase an, um eine Kalorien-Empfehlung zu bekommen.
       </p>
     );
+  }
+
+  // Erhaltungsphase: eigene Card-Optik (TDEE aus Energiebilanz + Garmin-Abgleich).
+  if (rec.phaseKind === "maintenance" && maintenance) {
+    return <MaintenanceCard est={maintenance} phaseStartDate={rec.phaseStartDate} />;
   }
 
   const hasNumbers =
@@ -102,6 +114,158 @@ export function NutritionRecommendationCard({ rec }: Props) {
         7700 kcal) in ein tägliches Kalorien-Delta — gerundet auf 50 kcal,
         gedeckelt auf ±500 kcal. Basis ist die laufende Phase aus dem
         Weight-Chart.
+      </p>
+    </div>
+  );
+}
+
+// ============================================================
+// Maintenance-Variante — Erhaltungsbedarf (TDEE) aus Energiebilanz + Garmin.
+// Eigene Optik: kein "+/− kcal anpassen", sondern eine Erhaltungs-Zahl, gestützt
+// durch drei Zeitfenster (7/14/28 Tage) und Garmins gemessenen Verbrauch.
+// ============================================================
+function MaintenanceCard({
+  est,
+  phaseStartDate,
+}: {
+  est: MaintenanceEstimate;
+  phaseStartDate: string | null;
+}) {
+  const hasNumber = est.recommendedMaintenanceKcal != null;
+  return (
+    <div className="space-y-5">
+      <MaintenanceCheatNotice est={est} />
+
+      {hasNumber ? (
+        <div className="flex flex-col gap-3 rounded-2xl bg-amber-500/10 p-5 ring-1 ring-amber-500/20 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-center gap-3">
+            <span className="inline-flex size-10 shrink-0 items-center justify-center rounded-full bg-amber-500/15 text-amber-600 dark:text-amber-400">
+              <Flame className="size-5" />
+            </span>
+            <div>
+              <p className="text-[10px] font-medium tracking-[0.18em] text-muted-foreground uppercase">
+                Erhaltungsbedarf{phaseStartDate ? ` · Phase seit ${formatDate(phaseStartDate)}` : ""}
+              </p>
+              <p className="font-heading text-2xl font-semibold tabular-nums tracking-tight">
+                ~{est.recommendedMaintenanceKcal!.toLocaleString("de-DE")} kcal
+                <span className="ml-1 text-sm font-normal text-muted-foreground">
+                  /Tag
+                </span>
+              </p>
+            </div>
+          </div>
+          {est.garminMaintenanceKcal != null && (
+            <span className="inline-flex items-center gap-1.5 self-start rounded-full bg-muted px-3 py-1.5 text-sm font-medium text-muted-foreground sm:self-auto">
+              <Activity className="size-4" />
+              Garmin ~{est.garminMaintenanceKcal.toLocaleString("de-DE")} kcal
+            </span>
+          )}
+        </div>
+      ) : (
+        <p className="rounded-2xl bg-muted/40 px-5 py-6 text-sm text-muted-foreground">
+          Noch zu wenig Daten für eine Erhaltungs-Schätzung — es braucht in
+          mindestens einem Fenster je ≥ 3 Wiegungen und ≥ 3 getrackte Tage.
+        </p>
+      )}
+
+      {/* Drei Zeitfenster nebeneinander. */}
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+        {est.windows.map((w) => (
+          <div key={w.days} className="rounded-2xl bg-muted/30 p-4">
+            <p className="text-[10px] font-medium tracking-[0.18em] text-muted-foreground uppercase">
+              {w.days} Tage
+            </p>
+            <dl className="mt-2 space-y-1.5 text-sm">
+              <Line
+                icon={<Flame className="size-3.5" />}
+                label="Ø Intake"
+                value={w.avgIntakeKcal != null ? `${w.avgIntakeKcal} kcal` : "—"}
+                sub={`${w.intakeDayCount} Tage`}
+              />
+              <Line
+                icon={<Scale className="size-3.5" />}
+                label="Gewicht Δ"
+                value={signedKg(w.weightDeltaKg)}
+                sub={`${w.weightEntryCount} Wieg.`}
+              />
+              <Line
+                label="Bilanz-TDEE"
+                value={w.balanceTdeeKcal != null ? `${w.balanceTdeeKcal} kcal` : "—"}
+                strong
+              />
+              <Line
+                icon={<Activity className="size-3.5" />}
+                label="Garmin"
+                value={w.garminTdeeKcal != null ? `${w.garminTdeeKcal} kcal` : "—"}
+                sub={`${w.garminDayCount} Tage`}
+              />
+            </dl>
+          </div>
+        ))}
+      </div>
+
+      <p className="text-xs leading-relaxed text-muted-foreground">
+        Erhaltungsbedarf (TDEE) aus der Energiebilanz: Ø-Intake minus
+        Gewichts-Rate × 7700 kcal/kg, über 7/14/28 Tage. Die konsolidierte Zahl
+        ist der Median der validen Fenster. Garmins gemessener Tagesverbrauch
+        dient als unabhängiger Abgleich — weichen beide stark ab, liegt es meist
+        an unvollständigem Tracking. Längere Fenster sind robuster (weniger
+        Wasser-Rauschen).
+      </p>
+    </div>
+  );
+}
+
+function Line({
+  icon,
+  label,
+  value,
+  sub,
+  strong,
+}: {
+  icon?: React.ReactNode;
+  label: string;
+  value: string;
+  sub?: string;
+  strong?: boolean;
+}) {
+  return (
+    <div className="flex items-baseline justify-between gap-2">
+      <dt className="flex items-center gap-1.5 text-muted-foreground">
+        {icon && <span className="text-muted-foreground/70">{icon}</span>}
+        {label}
+      </dt>
+      <dd
+        className={cn(
+          "tabular-nums",
+          strong ? "font-semibold text-foreground" : "text-foreground/80",
+        )}
+      >
+        {value}
+        {sub && (
+          <span className="ml-1 text-[11px] font-normal text-muted-foreground">
+            {sub}
+          </span>
+        )}
+      </dd>
+    </div>
+  );
+}
+
+function MaintenanceCheatNotice({ est }: { est: MaintenanceEstimate }) {
+  if (est.cheatDaysInWindow === 0 && est.cheatMealsInWindow === 0) return null;
+  const parts: string[] = [];
+  if (est.cheatDaysInWindow > 0)
+    parts.push(`${est.cheatDaysInWindow} Cheat-Day${est.cheatDaysInWindow > 1 ? "s" : ""}`);
+  if (est.cheatMealsInWindow > 0)
+    parts.push(`${est.cheatMealsInWindow} Cheat-Meal${est.cheatMealsInWindow > 1 ? "s" : ""}`);
+  return (
+    <div className="flex gap-2.5 rounded-2xl bg-amber-50 px-4 py-3 text-sm ring-1 ring-amber-200 dark:bg-amber-500/10 dark:ring-amber-500/20">
+      <TriangleAlert className="mt-0.5 size-4 shrink-0 text-amber-600 dark:text-amber-400" />
+      <p className="text-amber-800/90 dark:text-amber-200/80">
+        {parts.join(" · ")} in den letzten 28 Tagen — Cheat-Tage verzerren sowohl
+        die Gewichts-Rate (Wasser) als auch den Ø-Intake. Erhaltungs-Schätzung
+        entsprechend vorsichtig lesen.
       </p>
     </div>
   );

@@ -96,7 +96,11 @@ export default async function EndurancePage() {
             <RunCalendar markers={markers} tags={tags} />
           </section>
           <section className="rounded-3xl bg-card p-4 ring-1 ring-black/5 shadow-sm sm:p-6 lg:p-8">
-            <MetricsDashboard latest={latestMetrics} history={metricsHistory} />
+            <MetricsDashboard
+              latest={latestMetrics}
+              history={metricsHistory}
+              tags={tags}
+            />
           </section>
         </div>
 

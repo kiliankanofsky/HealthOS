@@ -17,7 +17,10 @@ import {
   getNutritionEntries,
 } from "@/lib/db/queries";
 import { toLocalISODate } from "@/lib/utils/date";
-import { buildNutritionRecommendation } from "@/lib/utils/nutrition-recommendation";
+import {
+  buildMaintenanceEstimate,
+  buildNutritionRecommendation,
+} from "@/lib/utils/nutrition-recommendation";
 import { computeWeightStats } from "@/lib/utils/weight-stats";
 
 export const dynamic = "force-dynamic";
@@ -29,12 +32,22 @@ export default async function WeightPage() {
   const stats = computeWeightStats(all);
   const nutrition = await getNutritionEntries({ source: "fddb" });
   const activity = await getDailyActivityEntries({ source: "garmin" });
+  const todayIso = toLocalISODate();
   const recommendation = buildNutritionRecommendation({
     weightEntries: all,
     phases,
     nutrition,
     tags,
-    todayIso: toLocalISODate(),
+    todayIso,
+  });
+  // TDEE-Bilanz-Schätzung — nur in der Maintenance-Phase gerendert, aber
+  // günstig genug, immer zu berechnen (rein lokale Aggregation).
+  const maintenance = buildMaintenanceEstimate({
+    weightEntries: all,
+    nutrition,
+    tags,
+    activity,
+    todayIso,
   });
 
   return (
@@ -117,7 +130,7 @@ export default async function WeightPage() {
         title="Kalorien-Empfehlung"
         description="Kalorische Anpassung für deine aktuelle Phase — abgeleitet aus der Gewichts-Rate der laufenden Phase und deinem Ø-Intake."
       >
-        <NutritionRecommendationCard rec={recommendation} />
+        <NutritionRecommendationCard rec={recommendation} maintenance={maintenance} />
       </Section>
 
       <Section>

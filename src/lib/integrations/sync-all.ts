@@ -2,6 +2,7 @@ import {
   getActiveTrainingPlan,
   getBlocksForPlanSession,
   getDailyActivityForDate,
+  getLatestDailyMetrics,
   getNutritionForDate,
   getRunSessionsForDate,
   getSessionsForPlan,
@@ -30,6 +31,8 @@ export type SyncResult =
 export type SyncSummary = {
   ok: boolean;
   ranAt: string;
+  // Kurze, menschenlesbare Liste „was hat sich verändert" für die UI.
+  changes: string[];
   results: {
     sheets: SyncResult;
     garminStrength: SyncResult;
@@ -145,10 +148,29 @@ async function syncRuns(): Promise<Record<string, unknown>> {
 
 async function syncMetrics(): Promise<Record<string, unknown>> {
   const client = await getGarminClient();
+  // Laktatschwelle vor dem Sync merken, um eine Änderung erkennen zu können.
+  const ltBefore = await getLatestDailyMetrics();
+  const ltPaceBefore = ltBefore?.lactateThresholdPaceSecPerKm ?? null;
+  const ltHrBefore = ltBefore?.lactateThresholdHr ?? null;
   // Heute + die letzten zwei Tage (manchmal kommen Sleep-/HRV-Werte verzögert).
   const dates = [isoDaysAgo(2), isoDaysAgo(1), todayUtcIso()];
   const result = await syncGarminDailyMetrics({ client, dates });
-  return { daysProcessed: result.daysProcessed };
+  const ltAfter = await getLatestDailyMetrics();
+  const ltPaceAfter = ltAfter?.lactateThresholdPaceSecPerKm ?? null;
+  const ltHrAfter = ltAfter?.lactateThresholdHr ?? null;
+  // Pace auf ganze Sekunden gerundet vergleichen (Rauschen ausblenden).
+  const round = (v: number | null) => (v == null ? null : Math.round(v));
+  const ltChanged =
+    (ltPaceBefore != null || ltPaceAfter != null) &&
+    (round(ltPaceBefore) !== round(ltPaceAfter) || ltHrBefore !== ltHrAfter);
+  return {
+    daysProcessed: result.daysProcessed,
+    ltChanged,
+    ltHrBefore,
+    ltHrAfter,
+    ltPaceBefore,
+    ltPaceAfter,
+  };
 }
 
 async function syncNextSessionNote(): Promise<Record<string, unknown>> {
@@ -235,5 +257,78 @@ export async function runAllSyncs(): Promise<SyncSummary> {
     nextSessionNote: await safe(syncNextSessionNote),
   };
   const ok = Object.values(results).every((r) => r.ok);
-  return { ok, ranAt, results };
+  return { ok, ranAt, changes: buildChanges(results), results };
+}
+
+// Liest die (typlosen) Zahlen-Felder eines erfolgreichen SyncResult.
+function num(r: SyncResult, key: string): number {
+  if (!r.ok) return 0;
+  const v = (r as Record<string, unknown>)[key];
+  return typeof v === "number" ? v : 0;
+}
+const plural = (n: number, one: string, many: string) =>
+  `${n} ${n === 1 ? one : many}`;
+
+// Baut aus den Sync-Ergebnissen eine kurze, prägnante Änderungs-Liste — das
+// Feld unter dem Sync-Button. Wenn nichts Nennenswertes passiert: ein Hinweis.
+function buildChanges(results: SyncSummary["results"]): string[] {
+  const out: string[] = [];
+
+  const sheetsNew = num(results.sheets, "inserted");
+  if (sheetsNew > 0) out.push(`${plural(sheetsNew, "neues Gewicht", "neue Gewichte")} gefetcht`);
+
+  const strengthNew = num(results.garminStrength, "imported");
+  if (strengthNew > 0)
+    out.push(`${plural(strengthNew, "Krafteinheit", "Krafteinheiten")} importiert`);
+
+  const runsNew = num(results.garminRuns, "imported");
+  const runsUpd = num(results.garminRuns, "updated");
+  if (runsNew > 0) out.push(`${plural(runsNew, "Lauf", "Läufe")} importiert`);
+  if (runsUpd > 0) out.push(`${plural(runsUpd, "Lauf", "Läufe")} aktualisiert`);
+
+  const metricDays = num(results.garminMetrics, "daysProcessed");
+  if (metricDays > 0)
+    out.push(`Erholungsdaten für ${plural(metricDays, "Tag", "Tage")} aktualisiert`);
+
+  // Laktatschwelle: explizite Änderung melden (mit Pace, falls vorhanden).
+  if (results.garminMetrics.ok && (results.garminMetrics as Record<string, unknown>).ltChanged) {
+    const before = (results.garminMetrics as Record<string, unknown>).ltPaceBefore;
+    const after = (results.garminMetrics as Record<string, unknown>).ltPaceAfter;
+    const fmt = (v: unknown) =>
+      typeof v === "number"
+        ? `${Math.floor(v / 60)}:${String(Math.round(v % 60)).padStart(2, "0")}/km`
+        : "—";
+    out.push(
+      typeof after === "number"
+        ? `Laktatschwelle angepasst (${fmt(before)} → ${fmt(after)})`
+        : "Laktatschwelle hat sich angepasst",
+    );
+  }
+
+  const matched = num(results.planMatch, "matched");
+  if (matched > 0)
+    out.push(`${plural(matched, "Lauf", "Läufe")} einer Plan-Session zugeordnet`);
+
+  const nutNew = num(results.nutrition, "inserted");
+  const nutUpd = num(results.nutrition, "updated");
+  if (nutNew > 0 || nutUpd > 0) {
+    const parts: string[] = [];
+    if (nutNew > 0) parts.push(`${nutNew} neu`);
+    if (nutUpd > 0) parts.push(`${nutUpd} aktualisiert`);
+    out.push(`Ernährung: ${parts.join(", ")}`);
+  }
+
+  // Zonen werden live aus Läufen + LT abgeleitet → bei neuen Läufen/LT-Änderung
+  // hat sich auch die Zeit-in-Zonen dieser Woche verschoben.
+  const ltChanged =
+    results.garminMetrics.ok &&
+    Boolean((results.garminMetrics as Record<string, unknown>).ltChanged);
+  if (runsNew > 0 || runsUpd > 0 || ltChanged)
+    out.push("Trainingszonen & Zeit in Zonen neu berechnet");
+
+  if (num(results.nextSessionNote, "generated") > 0)
+    out.push("KI-Tagesnotiz neu erstellt");
+
+  if (out.length === 0) out.push("Keine neuen Daten — alles ist aktuell.");
+  return out;
 }

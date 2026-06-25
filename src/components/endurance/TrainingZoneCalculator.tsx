@@ -149,6 +149,21 @@ export function TrainingZoneCalculator({
           </table>
         </div>
       )}
+
+      {/* Sichtbarer Aktualitäts-Hinweis: Zonen werden bei jedem Sync aus den
+          jüngsten Läufen + Garmin-Werten neu abgeleitet. */}
+      {rows != null && estimation != null && (
+        <p className="px-1 text-[11px] leading-relaxed text-muted-foreground">
+          <span className="font-medium text-foreground/80">
+            Stand {formatShortDate(estimation.toIso)}
+          </span>{" "}
+          · automatisch bei jedem Sync neu abgeleitet aus{" "}
+          {estimation.steadyRunCount} Steady-Läufen + {estimation.intervalRunCount}{" "}
+          Intervall-Einheiten (Zeitraum {formatShortDate(estimation.fromIso)}–
+          {formatShortDate(estimation.toIso)})
+          {lthr != null ? `, LTHR ${lthr} bpm` : ""}.
+        </p>
+      )}
     </div>
   );
 }
@@ -302,53 +317,33 @@ function MethodologyPopover({
       <PopoverContent className="w-80" side="top" align="end">
         <div className="space-y-2 text-xs leading-relaxed">
           <p className="font-medium text-foreground">
-            Hybrides 5-Zonen-Modell (LT1/LT2-Gerüst)
+            Hybrides 5-Zonen-Modell (LT1/LT2)
           </p>
           <p className="text-muted-foreground">
-            Z1 Recovery &amp; Z2 Endurance liegen unter LT1 und werden nach{" "}
-            <strong>HF</strong> gesteuert; Z3 Marathon, Z4 Threshold und Z5 VO₂max
-            nach <strong>Pace</strong> (HF hinkt bei Tempo nach). LT2 = Garmin-LTHR.
+            Z1/Z2 unter LT1 nach <strong>HF</strong>, Z3–Z5 nach{" "}
+            <strong>Pace</strong> (HF hinkt bei Tempo nach). LT2 = Garmin-LTHR.
+            {hrMax != null && (
+              <>
+                {" "}≈ HFmax <span className="tabular-nums">{hrMax}</span> bpm
+                (LTHR ÷ 0,88) als Brücke zum %-HFmax-Modell.
+              </>
+            )}
           </p>
-          {hrMax != null && (
-            <p className="text-muted-foreground">
-              Zur Einordnung ins geläufige %-HFmax-Modell (z.B. „Z2 = 60–70 %
-              HFmax“): geschätzte HFmax ≈ <span className="tabular-nums">{hrMax}</span>{" "}
-              bpm (LTHR ÷ 0,88). Die LTHR-Zonen liegen höher im %-HFmax als das
-              einfache 5-Zonen-Modell — gleiche Belastung, andere Nummerierung.
-            </p>
-          )}
-          <p className="font-medium text-foreground">Pace-Herleitung (aus Daten)</p>
           <p className="text-muted-foreground">
-            Z1/Z2 <strong>beobachtet</strong> aus echten Easy-Splits (nach Ø-HF
-            gebinnt, 25.–75.-Perzentil). Z3 aus der{" "}
-            <strong>Garmin-Marathon-Prognose</strong> (+ MP-Effort-Läufe), per
-            Ziel-MP überschreibbar. Z4 aus der konsolidierten Schwellen-Pace. Z5
-            aus Intervall-<em>Work</em>-Splits. Intervall-Durchschnitte werden nie
-            verwendet.
+            <span className="font-medium text-foreground">Pace aus Daten:</span>{" "}
+            Z1/Z2 beobachtet (Easy-Splits, 25.–75.-Perzentil), Z3 aus
+            Garmin-Marathon-Prognose (per Ziel-MP überschreibbar), Z4 aus
+            konsolidierter Schwellen-Pace, Z5 aus Intervall-Work-Splits.
           </p>
           {estimation != null && (
             <>
-              <p className="pt-1 font-medium text-foreground">Datenbasis</p>
-              <ul className="space-y-0.5 text-muted-foreground">
-                <li>
-                  {estimation.steadyRunCount} Steady-Läufe (
-                  {estimation.steadyLapCount} Splits) für die Pace↔HF-Regression
-                </li>
-                <li>
-                  {estimation.intervalRunCount} strukturierte Einheiten (
-                  {estimation.workLapCount} Work-Splits) für den Z5-Anker
-                </li>
-                <li>
-                  Zeitraum {formatShortDate(estimation.fromIso)}–
-                  {formatShortDate(estimation.toIso)}
-                </li>
-                {estimation.regression && (
-                  <li>
-                    Fit-Qualität R² ={" "}
-                    {estimation.regression.r2.toFixed(2).replace(".", ",")}
-                  </li>
-                )}
-              </ul>
+              {estimation.regression && (
+                <p className="text-muted-foreground">
+                  Pace↔HF-Fit R² ={" "}
+                  {estimation.regression.r2.toFixed(2).replace(".", ",")} (Stand &amp;
+                  Datenumfang siehe Zeile unter der Tabelle).
+                </p>
+              )}
               {estimation.thresholdPace != null && (
                 <>
                   <p className="pt-1 font-medium text-foreground">

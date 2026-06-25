@@ -40,7 +40,7 @@ const PHASE_LABELS: Record<PhaseKind, string> = {
 const PHASE_PILL: Record<PhaseKind, string> = {
   bulk: "bg-violet-500/12 text-violet-700 ring-violet-500/25",
   cut: "bg-teal-500/12 text-teal-700 ring-teal-500/25",
-  maintenance: "bg-muted text-muted-foreground ring-muted-foreground/20",
+  maintenance: "bg-amber-500/12 text-amber-700 ring-amber-500/25",
 };
 
 type Params = { slug: string; date: string };
@@ -221,6 +221,7 @@ export default async function SessionPage({
             unilateral: row.exercise.unilateral,
             repMin: row.templateExercise.repMin ?? row.exercise.defaultRepMin,
             repMax: row.templateExercise.repMax ?? row.exercise.defaultRepMax,
+            defaultSets: row.templateExercise.defaultSets ?? 3,
             sets: setsByExercise.get(row.templateExercise.id) ?? [],
             previousSets,
           };

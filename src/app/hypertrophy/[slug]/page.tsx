@@ -49,6 +49,7 @@ export default async function WorkoutPage({
     slug: row.exercise.slug,
     repMin: row.templateExercise.repMin ?? row.exercise.defaultRepMin,
     repMax: row.templateExercise.repMax ?? row.exercise.defaultRepMax,
+    defaultSets: row.templateExercise.defaultSets,
   }));
 
   // Avatar: aggregierte Muskel-Highlights ("höchste Stufe gewinnt") +

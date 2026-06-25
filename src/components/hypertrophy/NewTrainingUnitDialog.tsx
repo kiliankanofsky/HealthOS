@@ -22,7 +22,7 @@ type Row = UnitExerciseInput & { key: number };
 
 let rowSeq = 1;
 function blankRow(): Row {
-  return { key: rowSeq++, name: "", repMin: 8, repMax: 12, unilateral: false };
+  return { key: rowSeq++, name: "", repMin: 8, repMax: 12, unilateral: false, defaultSets: 3 };
 }
 
 // "Neue Trainingseinheit": legt eine wiederverwendbare Einheit an (Name + Farbe
@@ -74,6 +74,7 @@ export function NewTrainingUnitDialog({ exerciseNames }: Props) {
         repMin: r.repMin,
         repMax: r.repMax,
         unilateral: r.unilateral,
+        defaultSets: r.defaultSets,
       }))
       .filter((r) => r.name.length > 0);
     if (!name.trim()) {
@@ -228,6 +229,21 @@ export function NewTrainingUnitDialog({ exerciseNames }: Props) {
                         </button>
                       </div>
                       <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1.5 pl-6 text-xs text-muted-foreground">
+                        <label className="flex items-center gap-1.5">
+                          Sätze
+                          <input
+                            type="number"
+                            min={1}
+                            max={20}
+                            value={row.defaultSets ?? 3}
+                            onChange={(e) =>
+                              updateRow(row.key, {
+                                defaultSets: Number(e.target.value),
+                              })
+                            }
+                            className="w-14 rounded-md border border-border bg-background px-2 py-1 text-center tabular-nums outline-none focus:ring-2 focus:ring-ring/40"
+                          />
+                        </label>
                         <label className="flex items-center gap-1.5">
                           Reps
                           <input

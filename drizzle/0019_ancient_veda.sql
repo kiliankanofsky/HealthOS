@@ -1,0 +1,1 @@
+ALTER TABLE `workout_template_exercises` ADD `default_sets` integer;

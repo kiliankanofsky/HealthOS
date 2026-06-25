@@ -27,6 +27,7 @@ import { SyncNowButton } from "@/components/site/SyncNowButton";
 import { phaseForDate } from "@/lib/dashboard/context";
 import { getRecentGymSummaries } from "@/lib/dashboard/gym";
 import {
+  getAllDailyTags,
   getAllPhases,
   getAllRunSessions,
   getAllSessions,
@@ -66,6 +67,7 @@ export default async function DashboardPage() {
     phases,
     overviewRow,
     latestMetrics,
+    dailyTags,
   ] = await Promise.all([
     getAllRunSessions(),
     getAllSessions(),
@@ -77,7 +79,13 @@ export default async function DashboardPage() {
     getAllPhases(),
     getDashboardOverviewForDate(todayIso),
     getLatestDailyMetrics(),
+    getAllDailyTags(),
   ]);
+
+  // Schlanke Tag-Form für die Sleep-Grafik (Alkohol/Cheat-Day am Folgetag).
+  const sleepTags = dailyTags
+    .filter((t) => t.cheatDay || t.alcohol)
+    .map((t) => ({ date: t.date, cheatDay: t.cheatDay, alcohol: t.alcohol }));
 
   const rotationUnits = rotationTemplates.map((t) => ({
     slug: t.slug,
@@ -342,7 +350,11 @@ export default async function DashboardPage() {
               />
             </div>
             <div className="rounded-3xl bg-card p-6 ring-1 ring-black/5 shadow-sm lg:p-7">
-              <MetricsDashboard latest={latestMetrics} history={metricsHistory} />
+              <MetricsDashboard
+                latest={latestMetrics}
+                history={metricsHistory}
+                tags={sleepTags}
+              />
             </div>
           </div>
         </section>

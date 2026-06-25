@@ -33,6 +33,8 @@ export type ExerciseLogRow = {
   unilateral: boolean;
   repMin: number;
   repMax: number;
+  // Vorgeschlagene Satz-Anzahl — so viele leere Set-Zeilen werden vorbefüllt.
+  defaultSets: number;
   sets: WorkoutSet[];
   // Sätze aus dem letzten vergleichbaren Training (gleiche Übung), keyed via setNumber.
   previousSets: { date: string; sets: PreviousSetRef[] } | null;
@@ -79,13 +81,17 @@ type DraftSet = {
   weightMode: WeightMode;
 };
 
-function setsToDraft(sets: WorkoutSet[]): DraftSet[] {
+function setsToDraft(sets: WorkoutSet[], defaultSets = 2): DraftSet[] {
   if (sets.length === 0) {
-    // Default: 2 leere Zeilen.
-    return [
-      { id: null, setNumber: 1, weight: "", reps: "", weightMode: "per-side" },
-      { id: null, setNumber: 2, weight: "", reps: "", weightMode: "per-side" },
-    ];
+    // Noch keine Sätze geloggt → so viele leere Zeilen wie die Slot-Vorgabe.
+    const n = Math.max(1, Math.min(20, Math.round(defaultSets)));
+    return Array.from({ length: n }, (_, i) => ({
+      id: null,
+      setNumber: i + 1,
+      weight: "",
+      reps: "",
+      weightMode: "per-side" as WeightMode,
+    }));
   }
   return sets.map((s) => ({
     id: s.id,
@@ -107,7 +113,9 @@ function ExerciseCard({
   templateSlug: string;
   swapOptions: string[];
 }) {
-  const [drafts, setDrafts] = useState<DraftSet[]>(() => setsToDraft(row.sets));
+  const [drafts, setDrafts] = useState<DraftSet[]>(() =>
+    setsToDraft(row.sets, row.defaultSets),
+  );
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
   // Override-State: Edit-Mode (Input offen) und lokaler Name-Buffer.
