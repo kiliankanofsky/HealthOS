@@ -240,6 +240,15 @@ export async function clearAllPhases(): Promise<void> {
   await db.delete(weightPhases).run();
 }
 
+// Löscht nur Phasen einer bestimmten Quelle (z. B. "sheets"). Der Sheets-Sync
+// nutzt das, um seine abgeleiteten Phasen zu ersetzen, OHNE manuell gepflegte
+// Phasen (source="manual", etwa eine Maintenance-Phase) mitzulöschen.
+export async function clearPhasesBySource(
+  source: WeightPhase["source"],
+): Promise<void> {
+  await db.delete(weightPhases).where(eq(weightPhases.source, source)).run();
+}
+
 // ============================================================
 // Hypertrophy
 // ============================================================

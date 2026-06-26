@@ -1,6 +1,6 @@
 import type { NewWeightEntry, NewWeightPhase, PhaseKind } from "@/lib/db/schema";
 import {
-  clearAllPhases,
+  clearPhasesBySource,
   upsertPhase,
   upsertWeightEntry,
 } from "@/lib/db/queries";
@@ -308,15 +308,16 @@ export const sheetsAdapter: SyncableAdapter = {
       }
     }
 
-    // Phasen aus dem Sheet herleiten und alle 'sheets'-Phasen ersetzen.
-    // Manuell hinzugefügte Phasen (source='manual') wären beim clear weg —
-    // deshalb löschen wir hier alle und schreiben die abgeleiteten neu.
-    // Falls du irgendwann manuelle Korrekturen behalten willst, müssen wir
-    // 'source' filtern; für den ersten Wurf reicht der grobe Reset.
+    // Phasen aus dem Sheet herleiten und NUR die 'sheets'-Phasen ersetzen.
+    // Manuell gepflegte Phasen (source='manual', z. B. eine Maintenance-Phase,
+    // die das Sheet gar nicht ausdrücken kann) bleiben erhalten — sonst würde
+    // jeder Sync sie wieder löschen. phaseForDate() wählt bei Überlappung die
+    // zuletzt begonnene Phase, sodass eine manuelle Phase die Sheet-Phase
+    // korrekt überschattet.
     const phases = derivePhases(parsed);
     if (phases.length > 0) {
-      clearAllPhases();
-      for (const p of phases) upsertPhase(p);
+      await clearPhasesBySource("sheets");
+      for (const p of phases) await upsertPhase(p);
     }
 
     return { inserted, updated: 0 };
