@@ -13,18 +13,18 @@ export async function hasAnyUser(): Promise<boolean> {
   return existing !== undefined;
 }
 
-// Vercel-Preview-Deployments laufen unter wechselnden *.vercel.app-Domains,
-// BETTER_AUTH_URL zeigt aber fest auf die Produktions-URL. Ohne Korrektur
-// schlägt der Login dort fehl: Better Auth prüft den Origin des Sign-in-POSTs
-// gegen baseURL/trustedOrigins und lehnt die Preview-Domain als fremd ab.
-// Auf Preview nehmen wir deshalb die Deployment-URL als Basis und vertrauen
-// zusätzlich der Branch-Alias-URL (health-os-git-<branch>-….vercel.app).
+// Vercel vergibt jeder Deployment-Build eine eindeutige URL
+// (z.B. health-c85h70d5c-…vercel.app). Diese weicht von BETTER_AUTH_URL
+// (der festen Produktions-URL) ab — deshalb muss sie immer in trustedOrigins
+// stehen, sonst lehnt Better Auth den Sign-in-POST mit 403 ab.
+// Preview-Deployments brauchen zusätzlich eine andere baseURL, weil
+// BETTER_AUTH_URL dort nicht gesetzt ist.
 const isPreview = process.env.VERCEL_ENV === "preview";
 const previewBaseUrl =
   isPreview && process.env.VERCEL_URL
     ? `https://${process.env.VERCEL_URL}`
     : null;
-const previewTrustedOrigins = isPreview
+const vercelTrustedOrigins = process.env.VERCEL
   ? [process.env.VERCEL_URL, process.env.VERCEL_BRANCH_URL]
       .filter((host): host is string => Boolean(host))
       .map((host) => `https://${host}`)
@@ -34,8 +34,9 @@ const previewTrustedOrigins = isPreview
 // BETTER_AUTH_URL aus dem Env. Tabellen: user/session/account/verification
 // (in db/schema.ts, generiert via `npx @better-auth/cli generate`).
 export const auth = betterAuth({
-  ...(previewBaseUrl
-    ? { baseURL: previewBaseUrl, trustedOrigins: previewTrustedOrigins }
+  ...(previewBaseUrl ? { baseURL: previewBaseUrl } : {}),
+  ...(vercelTrustedOrigins.length > 0
+    ? { trustedOrigins: vercelTrustedOrigins }
     : {}),
   database: drizzleAdapter(db, { provider: "sqlite" }),
   emailAndPassword: { enabled: true },
