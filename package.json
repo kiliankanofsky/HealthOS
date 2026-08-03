@@ -11,6 +11,7 @@
     "db:migrate": "tsx src/lib/db/migrate.ts",
     "db:seed": "tsx scripts/seed.ts",
     "db:seed:hypertrophy": "tsx scripts/seed-hypertrophy.ts",
+    "db:seed:demo": "tsx scripts/seed-demo.ts",
     "db:studio": "drizzle-kit studio",
     "db:sync:sheets": "tsx scripts/sync-sheets.ts",
     "garmin:login-check": "tsx scripts/garmin-login-check.ts",

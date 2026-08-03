@@ -5,7 +5,7 @@ import { AppShell } from "@/components/site/AppShell";
 import { NutritionChartSection } from "@/components/nutrition/NutritionChartSection";
 import { NutritionCorrelationView } from "@/components/nutrition/NutritionCorrelationView";
 import { NutritionRecommendationCard } from "@/components/nutrition/NutritionRecommendationCard";
-import { SyncNowButton } from "@/components/site/SyncNowButton";
+import { SyncNowSlot } from "@/components/site/SyncNowSlot";
 import { WeightChartSection } from "@/components/weight/WeightChartSection";
 import { WeightEntryForm } from "@/components/weight/WeightEntryForm";
 import { WeightStatCards } from "@/components/weight/WeightStats";
@@ -68,7 +68,7 @@ export default async function WeightPage() {
           Tägliche Messungen, Phasen, Tags.
         </p>
         <div className="flex flex-wrap items-center gap-2 pt-2">
-          <SyncNowButton />
+          <SyncNowSlot />
           <Link
             href="/weight/tags"
             className="inline-flex items-center gap-1.5 rounded-full bg-muted px-4 py-2 text-sm font-medium text-foreground transition hover:bg-muted/70 hover:-translate-y-0.5"

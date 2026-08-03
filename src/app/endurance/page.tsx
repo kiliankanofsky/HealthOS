@@ -9,7 +9,7 @@ import {
 import { TrainingsSection } from "@/components/endurance/TrainingsSection";
 import { TrainingZoneCalculator } from "@/components/endurance/TrainingZoneCalculator";
 import { AppShell } from "@/components/site/AppShell";
-import { SyncNowButton } from "@/components/site/SyncNowButton";
+import { SyncNowSlot } from "@/components/site/SyncNowSlot";
 import {
   getAllDailyTags,
   getAllRunSessions,
@@ -89,7 +89,7 @@ export default async function EndurancePage() {
             — alles auf einer Seite.
           </p>
           <div className="flex flex-wrap items-center gap-2 pt-2">
-            <SyncNowButton />
+            <SyncNowSlot />
           </div>
         </header>
 

@@ -2,15 +2,20 @@ import type { Metadata } from "next";
 import { headers } from "next/headers";
 
 import { AuthCard } from "@/components/account/AuthCard";
+import { DemoEntryCard } from "@/components/account/DemoEntryCard";
 import { LogoutButton } from "@/components/account/LogoutButton";
 import { AppShell } from "@/components/site/AppShell";
 import { auth, hasAnyUser } from "@/lib/auth";
+import { isDemoConfigured } from "@/lib/demo/config";
 
 export const metadata: Metadata = {
   title: "Konto",
 };
 
 export const dynamic = "force-dynamic";
+// Der Demo-Einstieg baut beim ersten Besuch des Tages die Mock-Daten neu auf
+// (siehe lib/demo/seed.ts) — das braucht mehr als die Default-Laufzeit.
+export const maxDuration = 60;
 
 // Konto-Seite: ausgeloggt → Anmelden/Registrieren (Registrierung nur,
 // solange noch kein Konto existiert), eingeloggt → Konto-Übersicht.
@@ -20,6 +25,7 @@ export default async function AccountPage() {
 
   if (!session) {
     const allowSignUp = !(await hasAnyUser());
+    const demoAvailable = isDemoConfigured();
     return (
       <AppShell>
         <main className="mx-auto flex w-full max-w-3xl flex-col items-center gap-8 px-4 py-8 sm:px-8 sm:py-10 lg:px-10 lg:py-14">
@@ -37,6 +43,18 @@ export default async function AccountPage() {
             </p>
           </header>
           <AuthCard allowSignUp={allowSignUp} />
+          {demoAvailable && (
+            <>
+              <div className="flex w-full max-w-md items-center gap-3">
+                <span className="h-px flex-1 bg-border" aria-hidden />
+                <span className="text-xs text-muted-foreground uppercase tracking-[0.18em]">
+                  oder
+                </span>
+                <span className="h-px flex-1 bg-border" aria-hidden />
+              </div>
+              <DemoEntryCard />
+            </>
+          )}
         </main>
       </AppShell>
     );

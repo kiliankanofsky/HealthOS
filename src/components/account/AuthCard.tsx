@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
+import { clearDemoSession } from "@/app/account/actions";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -38,6 +39,10 @@ export function AuthCard({ allowSignUp }: { allowSignUp: boolean }) {
       setPending(false);
       return;
     }
+
+    // Ein evtl. noch gesetztes Demo-Cookie muss weg — der Proxy prüft es vor
+    // der Session, sonst landet der Besitzer nach dem Login in den Mock-Daten.
+    await clearDemoSession();
 
     // Eingeloggt (Registrierung meldet automatisch an) → zur Übersicht.
     router.push("/");

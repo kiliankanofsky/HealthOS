@@ -8,7 +8,7 @@ import { NewTrainingUnitDialog } from "@/components/hypertrophy/NewTrainingUnitD
 import { RotationSection } from "@/components/hypertrophy/RotationSection";
 import { OverviewAvatarPanel } from "@/components/hypertrophy/avatar/OverviewAvatarPanel";
 import { AppShell } from "@/components/site/AppShell";
-import { SyncNowButton } from "@/components/site/SyncNowButton";
+import { SyncNowSlot } from "@/components/site/SyncNowSlot";
 import {
   getAllDailyTags,
   getAllExerciseNamesEverUsed,
@@ -84,7 +84,7 @@ export default async function HypertrophyPage() {
             e1RM-Verlauf pro Satz, übungs-übergreifend getrackt. Garmin-Sync per `npm run db:sync:garmin`.
           </p>
           <div className="pt-2">
-            <SyncNowButton />
+            <SyncNowSlot />
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">

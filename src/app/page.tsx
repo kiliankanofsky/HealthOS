@@ -23,7 +23,7 @@ import {
 import { WeightCards } from "@/components/dashboard/WeightCards";
 import { MetricsDashboard } from "@/components/endurance/MetricsDashboard";
 import { AppShell } from "@/components/site/AppShell";
-import { SyncNowButton } from "@/components/site/SyncNowButton";
+import { SyncNowSlot } from "@/components/site/SyncNowSlot";
 import { phaseForDate } from "@/lib/dashboard/context";
 import { getRecentGymSummaries } from "@/lib/dashboard/gym";
 import {
@@ -281,7 +281,7 @@ export default async function DashboardPage() {
             KI-Einordnung und deine aktuellen Werte.
           </p>
           <div className="pt-2">
-            <SyncNowButton />
+            <SyncNowSlot />
           </div>
         </header>
 

@@ -1,5 +1,5 @@
 import { and, asc, desc, eq, gte, isNull, lte, sql } from "drizzle-orm";
-import { db } from "./index";
+import { getDb } from "./index";
 import { swapNameToSlug } from "@/lib/hypertrophy/workouts";
 import {
   type ActivitySource,
@@ -64,11 +64,13 @@ import {
 // Liefert alle Einträge in chronologischer Reihenfolge (älteste zuerst).
 // Für Diagramme und Trendberechnungen.
 export async function getAllWeightEntries(): Promise<WeightEntry[]> {
+  const db = await getDb();
   return db.select().from(weightEntries).orderBy(asc(weightEntries.date)).all();
 }
 
 // Liefert die n neuesten Einträge (Tabelle, Aktuelles Gewicht).
 export async function getRecentWeightEntries(limit = 10): Promise<WeightEntry[]> {
+  const db = await getDb();
   return db
     .select()
     .from(weightEntries)
@@ -90,6 +92,7 @@ export function previousDayIso(iso: string): string {
 export async function getWeightEntryByDate(
   date: string,
 ): Promise<WeightEntry | undefined> {
+  const db = await getDb();
   return db
     .select()
     .from(weightEntries)
@@ -105,6 +108,7 @@ export async function getWeightEntryByDate(
 export async function upsertWeightEntry(
   entry: NewWeightEntry,
 ): Promise<WeightEntry> {
+  const db = await getDb();
   const set: Record<string, unknown> = {
     weightKg: entry.weightKg,
     source: entry.source ?? "manual",
@@ -127,6 +131,7 @@ export async function updateWeightMetadata(
   date: string,
   patch: Partial<Pick<WeightEntry, "notes" | "source">>,
 ): Promise<WeightEntry | undefined> {
+  const db = await getDb();
   const [row] = await db
     .update(weightEntries)
     .set(patch)
@@ -136,14 +141,17 @@ export async function updateWeightMetadata(
 }
 
 export async function deleteWeightEntry(id: number): Promise<void> {
+  const db = await getDb();
   await db.delete(weightEntries).where(eq(weightEntries.id, id)).run();
 }
 
 export async function deleteWeightEntryByDate(date: string): Promise<void> {
+  const db = await getDb();
   await db.delete(weightEntries).where(eq(weightEntries.date, date)).run();
 }
 
 export async function clearAllWeightEntries(): Promise<void> {
+  const db = await getDb();
   await db.delete(weightEntries).run();
 }
 
@@ -153,6 +161,7 @@ export async function clearAllWeightEntries(): Promise<void> {
 // /weight/tags-Übersicht.
 
 export async function getAllDailyTags(): Promise<DailyTag[]> {
+  const db = await getDb();
   return db.select().from(dailyTags).orderBy(asc(dailyTags.date)).all();
 }
 
@@ -165,12 +174,14 @@ export async function getDailyTagsMap(): Promise<Map<string, DailyTag>> {
 export async function getDailyTagForDate(
   date: string,
 ): Promise<DailyTag | undefined> {
+  const db = await getDb();
   return db.select().from(dailyTags).where(eq(dailyTags.date, date)).get();
 }
 
 // Upsert: bestehende Tag-Zeile aktualisieren oder neue anlegen. Undefined-
 // Felder werden NICHT überschrieben.
 export async function upsertDailyTag(input: NewDailyTag): Promise<DailyTag> {
+  const db = await getDb();
   const set: Record<string, unknown> = {
     updatedAt: sql`(CURRENT_TIMESTAMP)`,
   };
@@ -188,12 +199,14 @@ export async function upsertDailyTag(input: NewDailyTag): Promise<DailyTag> {
 }
 
 export async function deleteDailyTag(date: string): Promise<void> {
+  const db = await getDb();
   await db.delete(dailyTags).where(eq(dailyTags.date, date)).run();
 }
 
 // ---- Phasen ----
 
 export async function getAllPhases(): Promise<WeightPhase[]> {
+  const db = await getDb();
   return db
     .select()
     .from(weightPhases)
@@ -202,6 +215,7 @@ export async function getAllPhases(): Promise<WeightPhase[]> {
 }
 
 export async function upsertPhase(phase: NewWeightPhase): Promise<WeightPhase> {
+  const db = await getDb();
   const [row] = await db
     .insert(weightPhases)
     .values(phase)
@@ -224,6 +238,7 @@ export async function updatePhase(
   id: number,
   patch: Partial<Pick<WeightPhase, "kind" | "startDate" | "endDate" | "label" | "source">>,
 ): Promise<WeightPhase | undefined> {
+  const db = await getDb();
   const [row] = await db
     .update(weightPhases)
     .set(patch)
@@ -233,10 +248,12 @@ export async function updatePhase(
 }
 
 export async function deletePhase(id: number): Promise<void> {
+  const db = await getDb();
   await db.delete(weightPhases).where(eq(weightPhases.id, id)).run();
 }
 
 export async function clearAllPhases(): Promise<void> {
+  const db = await getDb();
   await db.delete(weightPhases).run();
 }
 
@@ -246,6 +263,7 @@ export async function clearAllPhases(): Promise<void> {
 export async function clearPhasesBySource(
   source: WeightPhase["source"],
 ): Promise<void> {
+  const db = await getDb();
   await db.delete(weightPhases).where(eq(weightPhases.source, source)).run();
 }
 
@@ -259,6 +277,7 @@ export type TemplateExerciseRow = {
 };
 
 export async function getAllTemplates(): Promise<WorkoutTemplate[]> {
+  const db = await getDb();
   return db
     .select()
     .from(workoutTemplates)
@@ -269,6 +288,7 @@ export async function getAllTemplates(): Promise<WorkoutTemplate[]> {
 export async function getTemplateBySlug(
   slug: string,
 ): Promise<WorkoutTemplate | undefined> {
+  const db = await getDb();
   return db
     .select()
     .from(workoutTemplates)
@@ -279,6 +299,7 @@ export async function getTemplateBySlug(
 export async function getTemplateByKind(
   kind: WorkoutKind,
 ): Promise<WorkoutTemplate | undefined> {
+  const db = await getDb();
   return db
     .select()
     .from(workoutTemplates)
@@ -290,6 +311,7 @@ export async function getTemplateByKind(
 export async function getTemplateExercises(
   templateId: number,
 ): Promise<TemplateExerciseRow[]> {
+  const db = await getDb();
   return db
     .select({
       templateExercise: workoutTemplateExercises,
@@ -305,6 +327,7 @@ export async function getTemplateExercises(
 export async function getExerciseBySlug(
   slug: string,
 ): Promise<Exercise | undefined> {
+  const db = await getDb();
   return db.select().from(exercises).where(eq(exercises.slug, slug)).get();
 }
 
@@ -312,6 +335,7 @@ export async function getExerciseBySlug(
 
 // Alle Stamm-Übungen, alphabetisch — Quelle für den Übungs-Picker.
 export async function getAllExercises(): Promise<Exercise[]> {
+  const db = await getDb();
   return db.select().from(exercises).orderBy(asc(exercises.name)).all();
 }
 
@@ -319,6 +343,7 @@ export async function getAllExercises(): Promise<Exercise[]> {
 export async function getExerciseByName(
   name: string,
 ): Promise<Exercise | undefined> {
+  const db = await getDb();
   return db
     .select()
     .from(exercises)
@@ -345,6 +370,7 @@ export async function createExercise(input: {
   primaryMuscles?: string[];
   secondaryMuscles?: string[];
 }): Promise<Exercise> {
+  const db = await getDb();
   const slug = await uniqueExerciseSlug(input.name);
   const [row] = await db
     .insert(exercises)
@@ -364,6 +390,7 @@ export async function createExercise(input: {
 // Alle je benutzten Übungs-Namen (Stamm-Übungen ∪ Tausch-Namen), distinct &
 // alphabetisch — speist die Auswahl im "Neue Trainingseinheit"-Dialog.
 export async function getAllExerciseNamesEverUsed(): Promise<string[]> {
+  const db = await getDb();
   const ex = await db.select({ name: exercises.name }).from(exercises).all();
   const swaps = await getAllSwapNames();
   const byLower = new Map<string, string>();
@@ -377,6 +404,7 @@ export async function getAllExerciseNamesEverUsed(): Promise<string[]> {
 
 // Aktuell aktive Einheiten (in Rotation, nicht archiviert), in Anzeige-Reihenfolge.
 export async function getRotationTemplates(): Promise<WorkoutTemplate[]> {
+  const db = await getDb();
   return db
     .select()
     .from(workoutTemplates)
@@ -392,6 +420,7 @@ export async function getRotationTemplates(): Promise<WorkoutTemplate[]> {
 
 // Alle verwaltbaren Einheiten (nicht archiviert) für den Rotations-Manager.
 export async function getManageableTemplates(): Promise<WorkoutTemplate[]> {
+  const db = await getDb();
   return db
     .select()
     .from(workoutTemplates)
@@ -416,6 +445,7 @@ export async function createTemplate(input: {
   inRotation?: boolean;
   sortOrder?: number;
 }): Promise<WorkoutTemplate> {
+  const db = await getDb();
   const slug = await uniqueTemplateSlug(input.name);
   const [row] = await db
     .insert(workoutTemplates)
@@ -443,6 +473,7 @@ export async function updateTemplate(
     archived: boolean;
   }>,
 ): Promise<WorkoutTemplate | undefined> {
+  const db = await getDb();
   const [row] = await db
     .update(workoutTemplates)
     .set(patch)
@@ -454,12 +485,14 @@ export async function updateTemplate(
 // Hard-Delete — nur erlaubt, wenn keine Sessions existieren (FK RESTRICT).
 // Sonst archiviert die Action stattdessen (Historie bleibt erhalten).
 export async function deleteTemplate(id: number): Promise<void> {
+  const db = await getDb();
   await db.delete(workoutTemplates).where(eq(workoutTemplates.id, id)).run();
 }
 
 // ---- Template-Slots (Übungen einer Einheit) ----
 
 export async function getMaxTemplatePosition(templateId: number): Promise<number> {
+  const db = await getDb();
   const row = await db
     .select({ max: sql<number | null>`max(${workoutTemplateExercises.position})` })
     .from(workoutTemplateExercises)
@@ -476,6 +509,7 @@ export async function addTemplateExercise(input: {
   repMax?: number | null;
   defaultSets?: number | null;
 }): Promise<WorkoutTemplateExercise> {
+  const db = await getDb();
   const [row] = await db
     .insert(workoutTemplateExercises)
     .values({
@@ -495,6 +529,7 @@ export async function updateTemplateExerciseSets(
   templateExerciseId: number,
   defaultSets: number | null,
 ): Promise<void> {
+  const db = await getDb();
   await db
     .update(workoutTemplateExercises)
     .set({ defaultSets })
@@ -505,6 +540,7 @@ export async function updateTemplateExerciseSets(
 export async function removeTemplateExercise(
   templateExerciseId: number,
 ): Promise<void> {
+  const db = await getDb();
   await db
     .delete(workoutTemplateExercises)
     .where(eq(workoutTemplateExercises.id, templateExerciseId))
@@ -516,6 +552,7 @@ export async function removeTemplateExercise(
 export async function reorderTemplateExercises(
   orderedIds: number[],
 ): Promise<void> {
+  const db = await getDb();
   for (let i = 0; i < orderedIds.length; i++) {
     await db
       .update(workoutTemplateExercises)
@@ -537,6 +574,7 @@ export async function getTemplateExerciseBySlug(
   templateId: number,
   exerciseSlug: string,
 ): Promise<TemplateExerciseRow | undefined> {
+  const db = await getDb();
   return db
     .select({
       templateExercise: workoutTemplateExercises,
@@ -557,6 +595,7 @@ export async function getTemplateExerciseBySlug(
 export async function getSessionsByTemplate(
   templateId: number,
 ): Promise<WorkoutSession[]> {
+  const db = await getDb();
   return db
     .select()
     .from(workoutSessions)
@@ -567,6 +606,7 @@ export async function getSessionsByTemplate(
 
 // Alle Sessions über alle Templates (für Kalender-Overview).
 export async function getAllSessions(): Promise<WorkoutSession[]> {
+  const db = await getDb();
   return db
     .select()
     .from(workoutSessions)
@@ -578,6 +618,7 @@ export async function getSession(
   templateId: number,
   date: string,
 ): Promise<WorkoutSession | undefined> {
+  const db = await getDb();
   return db
     .select()
     .from(workoutSessions)
@@ -593,17 +634,20 @@ export async function getSession(
 export async function getSessionById(
   id: number,
 ): Promise<WorkoutSession | undefined> {
+  const db = await getDb();
   return db.select().from(workoutSessions).where(eq(workoutSessions.id, id)).get();
 }
 
 export async function createSession(
   input: NewWorkoutSession,
 ): Promise<WorkoutSession> {
+  const db = await getDb();
   const [row] = await db.insert(workoutSessions).values(input).returning();
   return row;
 }
 
 export async function deleteSession(id: number): Promise<void> {
+  const db = await getDb();
   await db.delete(workoutSessions).where(eq(workoutSessions.id, id)).run();
 }
 
@@ -611,6 +655,7 @@ export async function updateSessionNotes(
   id: number,
   notes: string | null,
 ): Promise<WorkoutSession | undefined> {
+  const db = await getDb();
   const [row] = await db
     .update(workoutSessions)
     .set({ notes })
@@ -621,6 +666,7 @@ export async function updateSessionNotes(
 
 // Sets einer Session, gruppiert per template_exercise + set_number.
 export async function getSetsBySession(sessionId: number): Promise<WorkoutSet[]> {
+  const db = await getDb();
   return db
     .select()
     .from(workoutSets)
@@ -636,6 +682,7 @@ export type SetWithDate = WorkoutSet & { date: string };
 export async function getSetsByTemplateExercise(
   templateExerciseId: number,
 ): Promise<SetWithDate[]> {
+  const db = await getDb();
   return db
     .select({
       id: workoutSets.id,
@@ -662,6 +709,7 @@ export async function getSetsByTemplateExercise(
 
 // Upsert eines Satzes anhand (sessionId, templateExerciseId, setNumber).
 export async function upsertSet(input: NewWorkoutSet): Promise<WorkoutSet> {
+  const db = await getDb();
   const [row] = await db
     .insert(workoutSets)
     .values(input)
@@ -684,6 +732,7 @@ export async function upsertSet(input: NewWorkoutSet): Promise<WorkoutSet> {
 }
 
 export async function getSetById(id: number): Promise<WorkoutSet | undefined> {
+  const db = await getDb();
   return db.select().from(workoutSets).where(eq(workoutSets.id, id)).get();
 }
 
@@ -691,6 +740,7 @@ export async function updateSetWeightMode(
   id: number,
   mode: "per-side" | "summed",
 ): Promise<WorkoutSet | undefined> {
+  const db = await getDb();
   const [row] = await db
     .update(workoutSets)
     .set({ weightMode: mode })
@@ -700,6 +750,7 @@ export async function updateSetWeightMode(
 }
 
 export async function deleteSet(id: number): Promise<void> {
+  const db = await getDb();
   await db.delete(workoutSets).where(eq(workoutSets.id, id)).run();
 }
 
@@ -713,6 +764,7 @@ export type ExerciseSwap = { date: string; name: string };
 export async function getSwapDatesForTemplateExercise(
   templateExerciseId: number,
 ): Promise<ExerciseSwap[]> {
+  const db = await getDb();
   return db
     .select({
       date: workoutSessions.date,
@@ -731,6 +783,7 @@ export async function getSwapDatesForTemplateExercise(
 export async function getOverridesForSession(
   sessionId: number,
 ): Promise<SessionExerciseOverride[]> {
+  const db = await getDb();
   return db
     .select()
     .from(sessionExerciseOverrides)
@@ -741,6 +794,7 @@ export async function getOverridesForSession(
 export async function upsertSessionExerciseOverride(
   input: NewSessionExerciseOverride,
 ): Promise<SessionExerciseOverride> {
+  const db = await getDb();
   const [row] = await db
     .insert(sessionExerciseOverrides)
     .values(input)
@@ -759,6 +813,7 @@ export async function deleteSessionExerciseOverride(
   sessionId: number,
   templateExerciseId: number,
 ): Promise<void> {
+  const db = await getDb();
   await db
     .delete(sessionExerciseOverrides)
     .where(
@@ -782,6 +837,7 @@ export type SwapNameSummary = {
 // Slots). Mit letztem Nutzungsdatum + Häufigkeit, neueste zuerst. Speist die
 // Auswahl-Chips im SessionLogger sowie das Reverse-Lookup der Tracker-Seite.
 export async function getAllSwapNames(): Promise<SwapNameSummary[]> {
+  const db = await getDb();
   return db
     .select({
       name: sessionExerciseOverrides.name,
@@ -805,6 +861,7 @@ export async function getAllSwapNames(): Promise<SwapNameSummary[]> {
 export async function getSetsForSwapName(
   name: string,
 ): Promise<SetWithDate[]> {
+  const db = await getDb();
   return db
     .select({
       id: workoutSets.id,
@@ -843,6 +900,7 @@ export async function getSetsForSwapName(
 // Slot-Verlauf (getSetsByTemplateExercise) und den Tausch-Verlauf
 // (getSetsForSwapName) in einer namens-basierten Identität.
 export async function getSetsForExercise(name: string): Promise<SetWithDate[]> {
+  const db = await getDb();
   return db
     .select({
       id: workoutSets.id,
@@ -906,6 +964,7 @@ export async function getPreviousSessionSetsForSlot(
   excludeSessionId: number,
   beforeDate: string,
 ): Promise<PreviousSessionSets | null> {
+  const db = await getDb();
   // Kandidaten-Sessions: jüngste zuerst.
   const candidateSessions = await db
     .selectDistinct({
@@ -967,6 +1026,7 @@ export async function getPreviousSessionSetsForSlot(
 export async function getSessionByGarminId(
   garminActivityId: number,
 ): Promise<WorkoutSession | undefined> {
+  const db = await getDb();
   return db
     .select()
     .from(workoutSessions)
@@ -977,6 +1037,7 @@ export async function getSessionByGarminId(
 // Liefert für jeden Übungs-Slug + Alias eine Lookup-Map: alias → exercise_id.
 // Wird einmal pro Sync gebaut, Lookup ist O(1) pro Garmin-Code.
 export async function buildExerciseAliasMap(): Promise<Map<string, number>> {
+  const db = await getDb();
   const all = await db.select().from(exercises).all();
   const map = new Map<string, number>();
   for (const ex of all) {
@@ -999,6 +1060,7 @@ export async function getNutritionEntries(opts?: {
   to?: string;
   source?: NutritionSource;
 }): Promise<NutritionEntry[]> {
+  const db = await getDb();
   const conds = [] as ReturnType<typeof eq>[];
   if (opts?.from) conds.push(gte(nutritionEntries.date, opts.from));
   if (opts?.to) conds.push(lte(nutritionEntries.date, opts.to));
@@ -1012,6 +1074,7 @@ export async function getNutritionForDate(
   date: string,
   source: NutritionSource = "fddb",
 ): Promise<NutritionEntry | undefined> {
+  const db = await getDb();
   return db
     .select()
     .from(nutritionEntries)
@@ -1029,6 +1092,7 @@ export async function getNutritionForDate(
 export async function upsertNutritionEntry(
   entry: NewNutritionEntry,
 ): Promise<NutritionEntry> {
+  const db = await getDb();
   const [row] = await db
     .insert(nutritionEntries)
     .values(entry)
@@ -1058,6 +1122,7 @@ export async function getDailyActivityEntries(opts?: {
   to?: string;
   source?: ActivitySource;
 }): Promise<DailyActivity[]> {
+  const db = await getDb();
   const conds = [] as ReturnType<typeof eq>[];
   if (opts?.from) conds.push(gte(dailyActivity.date, opts.from));
   if (opts?.to) conds.push(lte(dailyActivity.date, opts.to));
@@ -1071,6 +1136,7 @@ export async function getDailyActivityForDate(
   date: string,
   source: ActivitySource = "garmin",
 ): Promise<DailyActivity | undefined> {
+  const db = await getDb();
   return db
     .select()
     .from(dailyActivity)
@@ -1083,6 +1149,7 @@ export async function getDailyActivityForDate(
 export async function upsertDailyActivity(
   entry: NewDailyActivity,
 ): Promise<DailyActivity> {
+  const db = await getDb();
   const [row] = await db
     .insert(dailyActivity)
     .values(entry)
@@ -1106,6 +1173,7 @@ export async function upsertDailyActivity(
 // ============================================================
 
 export async function getGarminTokens(): Promise<GarminTokens | undefined> {
+  const db = await getDb();
   return db.select().from(garminTokens).where(eq(garminTokens.id, 1)).get();
 }
 
@@ -1113,6 +1181,7 @@ export async function saveGarminTokens(
   oauth1Json: string,
   oauth2Json: string,
 ): Promise<void> {
+  const db = await getDb();
   await db
     .insert(garminTokens)
     .values({ id: 1, oauth1Json, oauth2Json })
@@ -1132,6 +1201,7 @@ export async function saveGarminTokens(
 // ============================================================
 
 export async function getAllRunSessions(): Promise<RunSession[]> {
+  const db = await getDb();
   return db
     .select()
     .from(runSessions)
@@ -1143,6 +1213,7 @@ export async function getRunSessionsBetween(
   from: string,
   to: string,
 ): Promise<RunSession[]> {
+  const db = await getDb();
   return db
     .select()
     .from(runSessions)
@@ -1154,6 +1225,7 @@ export async function getRunSessionsBetween(
 export async function getRunSessionByDate(
   date: string,
 ): Promise<RunSession | undefined> {
+  const db = await getDb();
   return db
     .select()
     .from(runSessions)
@@ -1165,6 +1237,7 @@ export async function getRunSessionByDate(
 export async function getRunSessionsForDate(
   date: string,
 ): Promise<RunSession[]> {
+  const db = await getDb();
   return db
     .select()
     .from(runSessions)
@@ -1176,6 +1249,7 @@ export async function getRunSessionsForDate(
 export async function getRunSessionByGarminId(
   garminActivityId: number,
 ): Promise<RunSession | undefined> {
+  const db = await getDb();
   return db
     .select()
     .from(runSessions)
@@ -1184,6 +1258,7 @@ export async function getRunSessionByGarminId(
 }
 
 export async function getLatestRunSession(): Promise<RunSession | undefined> {
+  const db = await getDb();
   return db
     .select()
     .from(runSessions)
@@ -1197,6 +1272,7 @@ export async function getLatestRunSession(): Promise<RunSession | undefined> {
 export async function upsertRunSession(
   input: NewRunSession,
 ): Promise<RunSession> {
+  const db = await getDb();
   const [row] = await db
     .insert(runSessions)
     .values(input)
@@ -1234,6 +1310,7 @@ export async function getWeeklyKmTotals(
   fromIso: string,
   toIso: string,
 ): Promise<WeeklyKm[]> {
+  const db = await getDb();
   // SQLite: strftime('%w', date) → 0=Sonntag … 6=Samstag. Wir wollen Montag
   // als Wochenstart, also: date('YYYY-MM-DD', '-((weekday+6)%7) days').
   const rows = await db
@@ -1265,6 +1342,7 @@ export async function getWeeklyKmTotals(
 export async function getDailyMetricsForDate(
   date: string,
 ): Promise<GarminDailyMetrics | undefined> {
+  const db = await getDb();
   return db
     .select()
     .from(garminDailyMetrics)
@@ -1276,6 +1354,7 @@ export async function getDailyMetricsBetween(
   from: string,
   to: string,
 ): Promise<GarminDailyMetrics[]> {
+  const db = await getDb();
   return db
     .select()
     .from(garminDailyMetrics)
@@ -1292,6 +1371,7 @@ export async function getDailyMetricsBetween(
 export async function getLatestDailyMetrics(): Promise<
   GarminDailyMetrics | undefined
 > {
+  const db = await getDb();
   return db
     .select()
     .from(garminDailyMetrics)
@@ -1303,6 +1383,7 @@ export async function getLatestDailyMetrics(): Promise<
 export async function upsertDailyMetrics(
   entry: NewGarminDailyMetrics,
 ): Promise<GarminDailyMetrics> {
+  const db = await getDb();
   const [row] = await db
     .insert(garminDailyMetrics)
     .values(entry)
@@ -1349,6 +1430,7 @@ export async function cycleNumberFor(
   templateId: number,
   date: string,
 ): Promise<number> {
+  const db = await getDb();
   const row = await db
     .select({ count: sql<number>`count(*)` })
     .from(workoutSessions)
@@ -1367,6 +1449,7 @@ export async function cycleNumberFor(
 // ============================================================
 
 export async function getAllTrainingPlans(): Promise<TrainingPlan[]> {
+  const db = await getDb();
   return db
     .select()
     .from(trainingPlans)
@@ -1377,12 +1460,14 @@ export async function getAllTrainingPlans(): Promise<TrainingPlan[]> {
 export async function getTrainingPlanById(
   id: number,
 ): Promise<TrainingPlan | undefined> {
+  const db = await getDb();
   return db.select().from(trainingPlans).where(eq(trainingPlans.id, id)).get();
 }
 
 // Aktuell aktiver Plan (jüngster mit status="active"). Wir gehen für den
 // User von einem aktiven Plan zur Zeit aus.
 export async function getActiveTrainingPlan(): Promise<TrainingPlan | undefined> {
+  const db = await getDb();
   return db
     .select()
     .from(trainingPlans)
@@ -1395,6 +1480,7 @@ export async function getActiveTrainingPlan(): Promise<TrainingPlan | undefined>
 // ODER active. Wird auf der Goal-Race-Plan-Card genutzt, damit der User seinen
 // frisch angelegten (noch Session-losen) Plan sieht, bevor S3 ihn aktiviert.
 export async function getCurrentTrainingPlan(): Promise<TrainingPlan | undefined> {
+  const db = await getDb();
   return db
     .select()
     .from(trainingPlans)
@@ -1408,6 +1494,7 @@ export async function getCurrentTrainingPlan(): Promise<TrainingPlan | undefined
 export async function createTrainingPlan(
   input: NewTrainingPlan,
 ): Promise<TrainingPlan> {
+  const db = await getDb();
   const [row] = await db.insert(trainingPlans).values(input).returning();
   return row;
 }
@@ -1416,6 +1503,7 @@ export async function updateTrainingPlan(
   id: number,
   patch: Partial<NewTrainingPlan>,
 ): Promise<TrainingPlan | undefined> {
+  const db = await getDb();
   const [row] = await db
     .update(trainingPlans)
     .set({ ...patch, updatedAt: sql`(CURRENT_TIMESTAMP)` })
@@ -1432,6 +1520,7 @@ export async function setTrainingPlanStatus(
 }
 
 export async function deleteTrainingPlan(id: number): Promise<void> {
+  const db = await getDb();
   await db.delete(trainingPlans).where(eq(trainingPlans.id, id));
 }
 
@@ -1442,6 +1531,7 @@ export async function deleteTrainingPlan(id: number): Promise<void> {
 export async function getWeeksForPlan(
   planId: number,
 ): Promise<TrainingPlanWeek[]> {
+  const db = await getDb();
   return db
     .select()
     .from(trainingPlanWeeks)
@@ -1454,6 +1544,7 @@ export async function getWeekByNumber(
   planId: number,
   weekNumber: number,
 ): Promise<TrainingPlanWeek | undefined> {
+  const db = await getDb();
   return db
     .select()
     .from(trainingPlanWeeks)
@@ -1470,6 +1561,7 @@ export async function getWeekForDate(
   planId: number,
   date: string,
 ): Promise<TrainingPlanWeek | undefined> {
+  const db = await getDb();
   return db
     .select()
     .from(trainingPlanWeeks)
@@ -1486,6 +1578,7 @@ export async function getWeekForDate(
 export async function createPlanWeek(
   input: NewTrainingPlanWeek,
 ): Promise<TrainingPlanWeek> {
+  const db = await getDb();
   const [row] = await db.insert(trainingPlanWeeks).values(input).returning();
   return row;
 }
@@ -1495,6 +1588,7 @@ export async function createPlanWeek(
 export async function insertPlanWeeks(
   weeks: NewTrainingPlanWeek[],
 ): Promise<TrainingPlanWeek[]> {
+  const db = await getDb();
   if (weeks.length === 0) return [];
   return db.insert(trainingPlanWeeks).values(weeks).returning().all();
 }
@@ -1503,6 +1597,7 @@ export async function updatePlanWeek(
   id: number,
   patch: Partial<NewTrainingPlanWeek>,
 ): Promise<TrainingPlanWeek | undefined> {
+  const db = await getDb();
   const [row] = await db
     .update(trainingPlanWeeks)
     .set(patch)
@@ -1522,6 +1617,7 @@ export async function updatePlanWeek(
 export async function getSessionsForPlan(
   planId: number,
 ): Promise<TrainingPlanSession[]> {
+  const db = await getDb();
   return db
     .select()
     .from(trainingPlanSessions)
@@ -1539,6 +1635,7 @@ export async function getSessionsForPlan(
 export async function getPlanSessionsForWeek(
   weekId: number,
 ): Promise<TrainingPlanSession[]> {
+  const db = await getDb();
   return db
     .select()
     .from(trainingPlanSessions)
@@ -1558,6 +1655,7 @@ export async function getPlanSessionsForDateRange(
   fromIso: string,
   toIso: string,
 ): Promise<TrainingPlanSession[]> {
+  const db = await getDb();
   return db
     .select()
     .from(trainingPlanSessions)
@@ -1576,6 +1674,7 @@ export async function getPlanSessionsForDateRange(
 export async function getPlanSessionById(
   id: number,
 ): Promise<TrainingPlanSession | undefined> {
+  const db = await getDb();
   return db
     .select()
     .from(trainingPlanSessions)
@@ -1589,6 +1688,7 @@ export async function getNextPlanSession(
   planId: number,
   todayIso: string,
 ): Promise<TrainingPlanSession | undefined> {
+  const db = await getDb();
   return db
     .select()
     .from(trainingPlanSessions)
@@ -1611,6 +1711,7 @@ export async function getUpcomingPlanSessions(
   todayIso: string,
   limit = 3,
 ): Promise<TrainingPlanSession[]> {
+  const db = await getDb();
   return db
     .select()
     .from(trainingPlanSessions)
@@ -1631,6 +1732,7 @@ export async function getUpcomingPlanSessions(
 export async function getAlternativesForPlanSession(
   primarySessionId: number,
 ): Promise<TrainingPlanSession[]> {
+  const db = await getDb();
   return db
     .select()
     .from(trainingPlanSessions)
@@ -1642,6 +1744,7 @@ export async function getAlternativesForPlanSession(
 export async function createPlanSession(
   input: NewTrainingPlanSession,
 ): Promise<TrainingPlanSession> {
+  const db = await getDb();
   const [row] = await db.insert(trainingPlanSessions).values(input).returning();
   return row;
 }
@@ -1651,6 +1754,7 @@ export async function createPlanSession(
 export async function insertPlanSessions(
   sessions: NewTrainingPlanSession[],
 ): Promise<TrainingPlanSession[]> {
+  const db = await getDb();
   if (sessions.length === 0) return [];
   return db.insert(trainingPlanSessions).values(sessions).returning().all();
 }
@@ -1659,6 +1763,7 @@ export async function updatePlanSession(
   id: number,
   patch: Partial<NewTrainingPlanSession>,
 ): Promise<TrainingPlanSession | undefined> {
+  const db = await getDb();
   const [row] = await db
     .update(trainingPlanSessions)
     .set({ ...patch, updatedAt: sql`(CURRENT_TIMESTAMP)` })
@@ -1693,6 +1798,7 @@ export async function linkPlanSessionToRun(
 }
 
 export async function deletePlanSession(id: number): Promise<void> {
+  const db = await getDb();
   await db.delete(trainingPlanSessions).where(eq(trainingPlanSessions.id, id));
 }
 
@@ -1702,6 +1808,7 @@ export async function deletePlanSession(id: number): Promise<void> {
 export async function deleteAllPlanSessionsForPlan(
   planId: number,
 ): Promise<void> {
+  const db = await getDb();
   await db
     .delete(trainingPlanSessions)
     .where(eq(trainingPlanSessions.planId, planId));
@@ -1714,6 +1821,7 @@ export async function deleteAllPlanSessionsForPlan(
 export async function getBlocksForPlanSession(
   sessionId: number,
 ): Promise<TrainingPlanBlock[]> {
+  const db = await getDb();
   return db
     .select()
     .from(trainingPlanBlocks)
@@ -1725,6 +1833,7 @@ export async function getBlocksForPlanSession(
 export async function createPlanBlock(
   input: NewTrainingPlanBlock,
 ): Promise<TrainingPlanBlock> {
+  const db = await getDb();
   const [row] = await db.insert(trainingPlanBlocks).values(input).returning();
   return row;
 }
@@ -1733,6 +1842,7 @@ export async function createPlanBlock(
 export async function insertPlanBlocks(
   blocks: NewTrainingPlanBlock[],
 ): Promise<TrainingPlanBlock[]> {
+  const db = await getDb();
   if (blocks.length === 0) return [];
   return db.insert(trainingPlanBlocks).values(blocks).returning().all();
 }
@@ -1744,6 +1854,7 @@ export async function replacePlanBlocksForSession(
   sessionId: number,
   blocks: Omit<NewTrainingPlanBlock, "sessionId">[],
 ): Promise<TrainingPlanBlock[]> {
+  const db = await getDb();
   await db
     .delete(trainingPlanBlocks)
     .where(eq(trainingPlanBlocks.sessionId, sessionId));
@@ -1755,6 +1866,7 @@ export async function replacePlanBlocksForSession(
 }
 
 export async function deletePlanBlock(id: number): Promise<void> {
+  const db = await getDb();
   await db.delete(trainingPlanBlocks).where(eq(trainingPlanBlocks.id, id));
 }
 
@@ -1765,6 +1877,7 @@ export async function deletePlanBlock(id: number): Promise<void> {
 export async function getDashboardOverviewForDate(
   date: string,
 ): Promise<DashboardOverview | undefined> {
+  const db = await getDb();
   return db
     .select()
     .from(dashboardOverviews)
@@ -1777,6 +1890,7 @@ export async function getDashboardOverviewForDate(
 export async function upsertDashboardOverview(
   input: NewDashboardOverview,
 ): Promise<DashboardOverview> {
+  const db = await getDb();
   const [row] = await db
     .insert(dashboardOverviews)
     .values(input)

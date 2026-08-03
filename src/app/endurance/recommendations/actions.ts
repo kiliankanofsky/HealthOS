@@ -22,6 +22,7 @@ import {
   updatePlanSessionDate,
   updateTrainingPlan,
 } from "@/lib/db/queries";
+import { DEMO_BLOCKED_AI_MESSAGE, isDemo } from "@/lib/demo/guard";
 import {
   type TrainingPlanBlock,
   type TrainingPlanBlockSegment,
@@ -280,6 +281,10 @@ export async function generatePlanSessions(
   planId: number,
   options: { model?: AiModel; chunkIndex: number },
 ): Promise<GenerateChunkState> {
+  // Läuft mehrere Minuten und verbrennt KI-Tokens — im Demo-Modus gesperrt.
+  // Der Demo-Plan wird stattdessen fertig geseedet (lib/demo/seed.ts).
+  if (await isDemo()) return { ok: false, error: DEMO_BLOCKED_AI_MESSAGE };
+
   // ---- Plan + Wochen laden, validieren ----
   const plan = await getTrainingPlanById(planId);
   if (!plan) return { ok: false, error: "Plan nicht gefunden." };
@@ -391,6 +396,10 @@ export async function generatePlanSessions(
 export type WipePlanState = { ok: boolean; error?: string };
 
 export async function wipePlanSessions(planId: number): Promise<WipePlanState> {
+  // Gegenstück zur Generierung: ohne sie wäre der Demo-Plan danach leer
+  // und ließe sich nicht wiederherstellen.
+  if (await isDemo()) return { ok: false, error: DEMO_BLOCKED_AI_MESSAGE };
+
   const plan = await getTrainingPlanById(planId);
   if (!plan) return { ok: false, error: "Plan nicht gefunden." };
   if (plan.status === "completed") {

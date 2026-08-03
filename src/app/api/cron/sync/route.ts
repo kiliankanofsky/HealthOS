@@ -1,6 +1,8 @@
 import type { NextRequest } from "next/server";
 
 import { ensureDailyOverview } from "@/lib/dashboard/overview";
+import { isDemoConfigured } from "@/lib/demo/config";
+import { ensureDemoDataFresh } from "@/lib/demo/seed";
 import { runAllSyncs } from "@/lib/integrations/sync-all";
 import { todayBerlinISO } from "@/lib/utils/date";
 
@@ -45,8 +47,23 @@ export async function GET(request: NextRequest) {
     overview = { ok: false, error: (e as Error).message };
   }
 
+  // Demo-Daten hängen an „heute" — hier ziehen wir sie nach, damit der erste
+  // Besucher des Tages sie nicht selbst erzeugen muss. Ebenfalls best effort:
+  // scheitert es, holt startDemoSession() es beim Betreten der Demo nach.
+  let demo: { ok: boolean; error?: string; skipped?: true };
+  if (isDemoConfigured()) {
+    try {
+      await ensureDemoDataFresh();
+      demo = { ok: true };
+    } catch (e) {
+      demo = { ok: false, error: (e as Error).message };
+    }
+  } else {
+    demo = { ok: true, skipped: true };
+  }
+
   return Response.json(
-    { ...summary, overview },
+    { ...summary, overview, demo },
     { status: summary.ok ? 200 : 207 },
   );
 }

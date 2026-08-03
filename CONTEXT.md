@@ -15,6 +15,8 @@ Zusatz: **Nutrition** (FDDB-Sync, Tageskalorien + Makros), **Daily Activity** (G
 
 **Auth (seit 2026-06-11):** Die gesamte App ist hinter einem Login (Better Auth, E-Mail+Passwort). `src/proxy.ts` (Next-16-Proxy, Node-Runtime) validiert die Session pro Request und leitet sonst auf `/account` um; ausgenommen sind `/account`, `/api/*` (Cron schützt sich selbst per `CRON_SECRET`) und statische Dateien. **Nur EIN Konto erlaubt** — die Health-Daten sind nicht pro Nutzer getrennt, deshalb blockt ein `databaseHooks.user.create.before`-Hook in `src/lib/auth.ts` jede weitere Registrierung (auch auf API-Ebene). Dark-/Light-Mode via `next-themes` (SettingsMenu im Header).
 
+**Demo-Modus (seit 2026-08-02):** Damit das Projekt öffentlich sein kann, ohne echte Gesundheitsdaten zu zeigen, gibt es unter dem Login den Button „Demo mit Beispieldaten starten". Er setzt ein httpOnly-Cookie (`healthos_demo=1`), der Proxy lässt Requests damit ohne Session durch — und `getDb()` in `src/lib/db/index.ts` liefert für solche Requests eine **komplett getrennte Datenbank** (`TURSO_DEMO_DATABASE_URL`, lokal `data/demo.db`). Details siehe §8.
+
 ## 2. Tech-Stack
 
 | Schicht | Wahl |
@@ -54,6 +56,8 @@ In Vercel → Settings → Environment Variables gesetzt für Production+Preview
 |---|---|
 | `TURSO_DATABASE_URL` | libSQL-URL deiner Cloud-DB |
 | `TURSO_AUTH_TOKEN` | Turso-API-Token |
+| `TURSO_DEMO_DATABASE_URL` | Zweite, getrennte Turso-DB für den öffentlichen Demo-Modus. **Fehlt sie, ist der Demo-Modus komplett aus** (Button unsichtbar, Cookie wirkungslos) |
+| `TURSO_DEMO_AUTH_TOKEN` | Token der Demo-DB |
 | `CRON_SECRET` | Bearer-Token, das `/api/cron/sync` erwartet |
 | `SHEETS_CSV_URL` | Google-Sheets-CSV-Export-URL für Weight |
 | `SHEETS_START_YEAR` | Startjahr der ersten KW im Sheet |
@@ -67,15 +71,16 @@ Lokal liegen die gleichen Werte in `.env.local` (gitignored). `.env.example` ist
 
 ### DB-Switching
 
-`src/lib/db/index.ts` entscheidet:
-- `process.env.VERCEL === "1"` ODER `process.env.USE_TURSO === "1"` → Turso (remote)
-- Sonst → `file:./data/health.db` (lokal)
+`src/lib/db/index.ts` entscheidet **zwei** Dinge:
+
+1. *Welcher Host?* — `process.env.VERCEL === "1"` ODER `process.env.USE_TURSO === "1"` → Turso (remote), sonst `file:./data/health.db` (lokal).
+2. *Echte oder Demo-Daten?* — `getDb()` liest pro Request das Demo-Cookie und liefert entweder `db` (echt) oder `getDemoDb()` (Demo-DB). **Alle Funktionen in `queries.ts` gehen über `getDb()`**; nur Better Auth und die Migrationen benutzen `db` direkt.
 
 Heißt: lokales `npm run dev` läuft gegen die lokale SQLite-Datei. Wenn man lokal gegen Turso testen will: `USE_TURSO=1 npm run dev`.
 
 ### Cron-Job
 
-`vercel.json` definiert: `0 4 * * *` UTC (= 05:00/06:00 lokal je nach Sommer/Winter) → `GET /api/cron/sync`. Vercel sendet `Authorization: Bearer ${CRON_SECRET}`. Endpoint führt 6 Syncs hintereinander aus (sheets, garmin-strength, garmin-calories, garmin-runs, garmin-metrics, nutrition) und gibt ein Summary-JSON zurück.
+`vercel.json` definiert: `0 4 * * *` UTC (= 05:00/06:00 lokal je nach Sommer/Winter) → `GET /api/cron/sync`. Vercel sendet `Authorization: Bearer ${CRON_SECRET}`. Endpoint führt 6 Syncs hintereinander aus (sheets, garmin-strength, garmin-calories, garmin-runs, garmin-metrics, nutrition) und gibt ein Summary-JSON zurück. Danach best effort: KI-Tagesübersicht (`ensureDailyOverview`) und Demo-Daten-Auffrischung (`ensureDemoDataFresh`). **Beide Hobby-Cron-Slots sind belegt** — deshalb hängt der Demo-Reseed hier mit drin statt in einem eigenen Cron.
 
 ## 4. Datei-Index
 
@@ -113,9 +118,9 @@ Außerhalb von `app/`: `src/proxy.ts` (Login-Schutz aller Seiten, siehe §1 Auth
 
 Nach Modul gruppiert. **RSC** = Server Component, **CC** = Client Component (`"use client"`).
 
-- `site/` — `AppShell` (Wrapper), `SiteHeader` (mit `SettingsMenu`: Burger-Popover, Konto-Link + Hell/Dunkel-Toggle), `SiteFooter`, `ThemeProvider` (next-themes)
+- `site/` — `AppShell` (async RSC-Wrapper; rendert im Demo-Modus zusätzlich den `DemoBanner`), `SiteHeader` (mit `SettingsMenu`: Burger-Popover, Konto-Link + Hell/Dunkel-Toggle), `SiteFooter`, `ThemeProvider` (next-themes), `DemoBanner` (CC, Hinweisleiste + „Demo verlassen"), `SyncNowButton` (CC) und `SyncNowSlot` (RSC-Hülle, blendet den Sync-Button im Demo-Modus aus — von allen 4 Seiten benutzt)
 - `dashboard/` — Start-Dashboard: `MetaCalendar` (CC, Monats-Grid; Läufe orange → `/endurance/[date]`, Gym in Template-Farbe → `/hypertrophy/[slug]/[date]?scope=all`, geplante Plan-Sessions hellgrau → `/endurance/recommendations`), `TotalsCard` (RSC, "This Week"-Card mit 3 Kennzahlen + 7-Tage-Balken + Tagesliste — Running- und Gym-Variante), `DailyOverviewCard` (CC, drei KI-Texte; Self-Heal generiert beim Mount nach, RefreshCw-Button erzwingt Neu-Generierung), `DashboardChat` (CC, ganzheitlicher read-only Chat, Markdown), `NextSessionCard` (RSC, read-only Variante der PlanBoard-Card mit Link statt Edit), `GymCards` (RSC, letzte Session + nächstes Workout laut Rotation), `WeightCards` (RSC, 3 Stat-Cards mit phasengerechter Delta-Färbung)
-- `account/` — `AuthCard` (CC, Login/Registrierung mit deutschen Fehlertexten), `LogoutButton` (CC)
+- `account/` — `AuthCard` (CC, Login/Registrierung mit deutschen Fehlertexten), `LogoutButton` (CC), `DemoEntryCard` (CC, Einstieg in den Demo-Modus — siehe §8)
 - `home/` — `HeroGrid`, `PromoBar`, `PulseSection` (RSC, lädt Live-Stats), `SectionHero`, `Topbar`
 - `weight/` — `WeightChart`/`Chart Section` (Recharts, CC), `WeightStats`, `WeightTable`, `WeightWeekMatrix`, `WeightDayList`, `WeightDayDetailDialog` (CC, nimmt jetzt `tag`-Prop), `WeightDetailView`, `WeightEntryForm` (CC), `PhaseEditDialog` (CC), `TagEditor` (CC, Tag-Übersicht + Edit-Dialog)
 - `hypertrophy/` — `Calendar`, `SessionLogger` (CC), `NewSessionDialog` (CC), `DeleteSessionButton` (CC), `OpenOrCreateSessionButton` (CC), `ExerciseProgressChart` (CC), `WorkoutCards` (RSC), `WorkoutOverviewChart`, `SiblingNavButtons`/`SiblingSwipe`
@@ -177,6 +182,10 @@ Nach Modul gruppiert. **RSC** = Server Component, **CC** = Client Component (`"u
 |---|---|
 | `site.ts` | Konstanten (App-Name, Navigation) |
 | `utils.ts` | `cn()` (tailwind-merge) |
+| `demo/config.ts` | Demo-Modus: `DEMO_COOKIE`, `isDemoConfigured()`, `isDemoRequest()` — einzige Quelle der Wahrheit für den Schalter (§8) |
+| `demo/guard.ts` | Demo-Modus: `isDemo()` + Blockier-Texte für die gesperrten Server Actions |
+| `demo/dataset.ts` | Demo-Modus: `buildDemoDataset(todayIso)` — reiner, deterministischer Generator aller Mock-Zeilen |
+| `demo/seed.ts` | Demo-Modus: `seedDemoDatabase()`, `demoDataAnchor()`, `ensureDemoDataFresh()` |
 | `utils/csv.ts` | CSV-Parser für Sheets-Import |
 | `utils/date.ts` | ISO-Date-Helper |
 | `utils/iso-week.ts` | KW-Berechnung für Sheets-Spalten |
@@ -206,6 +215,7 @@ Nach Modul gruppiert. **RSC** = Server Component, **CC** = Client Component (`"u
 | `npm run db:studio` | (drizzle-kit) | Web-UI zum DB-Browsen |
 | `npm run db:seed` | `scripts/seed.ts` | Initial-Daten Weight/Phasen |
 | `npm run db:seed:hypertrophy` | `scripts/seed-hypertrophy.ts` | Übungen + Templates seeden |
+| `npm run db:seed:demo` | `scripts/seed-demo.ts` | **Demo-DB neu aufbauen** (Migration + Mock-Daten). Lokal → `data/demo.db`; mit `USE_TURSO=1` → `TURSO_DEMO_DATABASE_URL` |
 | `npm run db:sync:sheets` | `scripts/sync-sheets.ts` | Manueller Weight-Sync aus Google Sheets |
 | `npm run db:sync:garmin` | `scripts/sync-garmin-strength.ts` | Manueller Garmin-Strength-Sync |
 | `npm run db:sync:garmin-calories` | `scripts/sync-garmin-calories.ts` | Manueller Garmin-Calories-Sync |
@@ -407,3 +417,58 @@ USE_TURSO=1 npm run dev
   - `biometric-service/biometric/latestLactateThreshold` — keine Pfad-Parameter, liefert Array mit Einträgen für `speed` und `hearRate` (Garmin-Tippfehler: tatsächlich ohne „t"). LT-Pace = `1000 / (speed × 10)` — die Skalierung mit ×10 ist empirisch korrigiert, weil Garmin's `speed`-Wert um eine Größenordnung zu klein kommt.
 - **Drizzle SQLite DROP COLUMN**: `npm run db:generate` produziert bei Spalten-Entfernung `ALTER TABLE … DROP COLUMN` ohne Datenmigration. Wenn die alten Daten erhalten bleiben sollen (wie bei Migration 0012 für Tags), die generierte `.sql`-Datei **manuell** um eine `INSERT INTO neu SELECT … FROM alt …`-Anweisung VOR dem DROP erweitern.
 - **Tag-Refactor (Migration 0012)**: Tag-Felder (cheatDay/alcohol/cheatMeal/kcalTarget) leben jetzt in `daily_tags`, NICHT mehr in `weight_entries`. Alle Komponenten, die Tags pro Datum brauchen, holen sich einen separaten `tags`-Prop (siehe WeightChartSection, NutritionChartSection, NutritionCorrelationView). Tag-Bearbeitung via Day-Detail-Dialog im Weight-Chart ODER Tag-Editor auf `/weight/tags`.
+
+## 8. Öffentlicher Demo-Modus
+
+Zweck: Das Repo/Deployment kann öffentlich sein, ohne echte Gesundheitsdaten preiszugeben. Besucher klicken auf `/account` unter dem Login auf „Demo mit Beispieldaten starten" und sehen die **komplette App** mit generierten Daten.
+
+### Wie der Schalter funktioniert
+
+| Schritt | Datei | Was passiert |
+|---|---|---|
+| 1. Button | `src/components/account/DemoEntryCard.tsx` | Client-Component mit Pending-State, ruft die Server Action |
+| 2. Server Action | `src/app/account/actions.ts` | `startDemoSession()`: prüft Konfiguration → `ensureDemoDataFresh()` → setzt httpOnly-Cookie `healthos_demo=1` (12 h) → `redirect("/")`. `endDemoSession()` löscht es wieder |
+| 3. Auth-Gate | `src/proxy.ts` | Bei gültigem Demo-Cookie **kein** Session-Check. Greift nur, wenn `isDemoConfigured()` |
+| 4. Daten-Weiche | `src/lib/db/index.ts` | `getDb()` liest das Cookie und liefert `getDemoDb()` statt `db`. **Alle 119 Funktionen in `queries.ts` gehen darüber** |
+| 5. Kennzeichnung | `src/components/site/DemoBanner.tsx` | Leiste über dem Header („Demo-Modus … Demo verlassen"), gerendert vom `AppShell` |
+
+`src/lib/demo/config.ts` ist die einzige Quelle für `DEMO_COOKIE`, `isDemoConfigured()` und `isDemoRequest()`. Letzteres importiert `next/headers` **dynamisch in einem try/catch** — dieselben Query-Funktionen laufen auch in `scripts/*` und im Cron ohne Request-Kontext und fallen dort still auf die echte DB zurück.
+
+**Failsafe:** Ohne `TURSO_DEMO_DATABASE_URL` (auf Vercel) ist der Modus komplett aus — Button unsichtbar, Cookie wirkungslos, Proxy schützt wie gehabt. Lokal ist er immer an (`data/demo.db`).
+
+### Was im Demo gesperrt ist
+
+Alles ist bedienbar (Sätze loggen, Gewicht eintragen, Plan-Sessions per Drag verschieben, KI-Chat) — die Demo-DB wird täglich neu gebaut. Ausnahmen (`src/lib/demo/guard.ts`, geprüft via `isDemo()`):
+
+- **`syncNow`** (`app/weight/actions.ts`) — braucht echte Garmin-/FDDB-/Sheets-Zugangsdaten. Der Button wird zusätzlich gar nicht erst gerendert (`components/site/SyncNowSlot.tsx` ersetzt `SyncNowButton` auf allen 4 Seiten).
+- **`generatePlanSessions` / `wipePlanSessions`** (`app/endurance/recommendations/actions.ts`) — läuft minutenlang und verbrennt KI-Tokens. Der Demo-Plan ist fertig geseedet.
+
+### Die Mock-Daten
+
+| Datei | Rolle |
+|---|---|
+| `src/lib/demo/dataset.ts` | **Reiner Generator.** `buildDemoDataset(todayIso)` → alle Zeilen, kein DB-Zugriff. Deterministisch (fester mulberry32-Seed), aber komplett relativ zu „heute" |
+| `src/lib/demo/seed.ts` | `seedDemoDatabase()` (löscht + schreibt, FK-sichere Reihenfolge, 100er-Chunks), `demoDataAnchor()`, `ensureDemoDataFresh()` |
+| `scripts/seed-demo.ts` | CLI: Migration + Seed. `npm run db:seed:demo` |
+
+**Persona:** 31 J., 1,80 m, ~79 kg, Ruhepuls ~50, VO₂max 51, Marathon-Prognose ~3:38 h. Bewusst Durchschnitt, nicht Leistungssport. ~2 470 Zeilen über 18 Tabellen: 210 Tage Gewicht (3 Phasen: Erhalt → Aufbau → Diät, aktuell Cut), 120 Tage Nutrition/Activity/Garmin-Metrics, 182 Tage Läufe (Di/Do/Sa/So mit `lapsJson`), 24 Wochen Gym (Mo Push / Mi Pull / Fr Beine), ein aktiver 16-Wochen-Marathonplan (Woche 7 läuft) und eine vorgenerierte KI-Tagesübersicht.
+
+**Warum das Datum mitwandert:** Die App rechnet überall mit „diese Woche" / „nächste Session" / „letzte 7 Tage". Ein fixes Datum ließe das Dashboard nach wenigen Tagen leer wirken. Anker ist der `date` des jüngsten `dashboard_overviews`-Eintrags; stimmt er nicht mehr mit heute überein, baut `ensureDemoDataFresh()` alles neu. Ausgelöst wird das vom Cron (`/api/cron/sync`, best effort) und beim Betreten der Demo (garantiert). Ein Prozess-lokaler `inFlight`-Lock verhindert Doppel-Seeds.
+
+**Beim Ändern des Generators beachten** — die Auswertungs-Logik hat harte Mindestanforderungen, die der Datensatz gezielt erfüllt:
+
+- `zone-estimation.ts` braucht ≥ 10 Steady-Lap-Punkte aus ≥ 3 Läufen, HF-Spanne ≥ 15 bpm und r² ≥ 0,3. Das Pace-Modell (`paceForHr`) koppelt Pace linear an die HF — daher r² ≈ 0,95.
+- **Regenerationsläufe liegen bewusst bei HF 127** (< 80 % der LTHR 168). Ohne echte Zone-1-Splits bleibt `paceSlow` in Z1 offen → `paceZones` wird komplett `null` → NextSessionCard und PlanBoard zeigen keine Paces mehr.
+- Der Volumen-Avatar färbt ab 10 (dunkel) bzw. 4 (hell) gewichteten Sätzen/Woche. Die drei Einheiten decken 16 von 18 Muskelgruppen ab; Unterarme bleiben absichtlich darunter.
+- Die **laufende Woche wird nie ausgedünnt** (`i > 8`-Guard bei Läufen und Gym), sonst zeigen die „This Week"-Cards Lücken.
+- Der Garmin-Tagesverbrauch (~2 780 kcal Ø) muss zur Gewichtskurve passen — sonst widerspricht er der TDEE-Schätzung, die `/weight` aus Intake + Gewichts-Trend selbst zurückrechnet.
+
+### Einrichtung auf Vercel
+
+```bash
+turso db create healthos-demo
+turso db show healthos-demo --url        # → TURSO_DEMO_DATABASE_URL
+turso db tokens create healthos-demo     # → TURSO_DEMO_AUTH_TOKEN
+# beide in Vercel → Settings → Environment Variables eintragen, dann:
+set -a && source .env.local && set +a && USE_TURSO=1 npm run db:seed:demo
+```

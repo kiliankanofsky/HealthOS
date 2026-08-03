@@ -20,7 +20,12 @@ import {
   weightSources,
   type WeightSource,
 } from "@/lib/db/schema";
-import { runAllSyncs, type SyncSummary } from "@/lib/integrations/sync-all";
+import { DEMO_BLOCKED_MESSAGE, isDemo } from "@/lib/demo/guard";
+import {
+  runAllSyncs,
+  type SyncResult,
+  type SyncSummary,
+} from "@/lib/integrations/sync-all";
 
 const DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -262,6 +267,28 @@ export async function removePhase(id: number): Promise<{ ok: boolean }> {
 // Ruft denselben Code wie der tägliche Cron, gibt die Summary zurück und
 // invalidiert den Seiten-Cache, damit frische Daten gerendert werden.
 export async function syncNow(): Promise<SyncSummary> {
+  // Der Sync benutzt echte Garmin-/FDDB-/Sheets-Zugangsdaten — im
+  // öffentlichen Demo-Modus tabu (der Button wird dort ohnehin nicht
+  // gerendert, siehe components/site/SyncNowSlot.tsx).
+  if (await isDemo()) {
+    const blocked: SyncResult = { ok: false, error: DEMO_BLOCKED_MESSAGE };
+    return {
+      ok: false,
+      ranAt: new Date().toISOString(),
+      changes: [],
+      results: {
+        sheets: blocked,
+        garminStrength: blocked,
+        garminCalories: blocked,
+        garminRuns: blocked,
+        garminMetrics: blocked,
+        planMatch: blocked,
+        nutrition: blocked,
+        nextSessionNote: blocked,
+      },
+    };
+  }
+
   const summary = await runAllSyncs();
   revalidatePath("/weight");
   revalidatePath("/hypertrophy");
