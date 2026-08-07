@@ -22,6 +22,7 @@ import {
   updatePlanSessionDate,
   updateTrainingPlan,
 } from "@/lib/db/queries";
+import { consumeDemoAiBudget } from "@/lib/demo/ai-budget";
 import { DEMO_BLOCKED_AI_MESSAGE, isDemo } from "@/lib/demo/guard";
 import {
   type TrainingPlanBlock,
@@ -708,6 +709,8 @@ export async function sendPlanChatMessage(
   if (!Array.isArray(history) || history.length === 0) {
     return { ok: false, error: "Keine Nachricht." };
   }
+  const budget = await consumeDemoAiBudget();
+  if (!budget.ok) return { ok: false, error: budget.error };
   try {
     const { reply, changed } = await runPlanChat(
       planId,

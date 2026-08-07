@@ -2,10 +2,12 @@
 
 > **Sinn dieser Datei:** Schneller Einstieg in das Projekt ohne den gesamten Code zu lesen. Hier stehen Architektur, Datei-Index, Funktions-Übersicht und Deployment-Constraints.
 > Bei größeren Umbauten diese Datei bitte aktualisieren.
+>
+> **Einordnung:** `README.md`, `CONTRIBUTING.md` und `SECURITY.md` sind der englische Einstieg für Fremde. Diese Datei ist die deutsche Tiefen-Referenz — für dich, für Contributors mit größerem Vorhaben und für Coding-Agents (siehe `AGENTS.md`).
 
 ## 1. Was ist HealthOS
 
-Privates Self-Tracking-Tool für einen einzelnen Nutzer (kiliankanofsky). Drei Module:
+Self-Tracking-Tool für **genau einen** Nutzer — die Health-Daten sind bewusst nicht pro Nutzer getrennt (siehe Auth weiter unten). Drei Module:
 
 - **Weight** (Phase 1, live): Gewichtsverlauf aus Google Sheets, Trend, Phasen (cut/bulk/maintenance). Tag-Metadaten (Cheat-Day/Meal, Alkohol, kcal-Ziel) leben seit Migration 0012 in einer eigenen `daily_tags`-Tabelle.
 - **Hypertrophy** (Phase 2, live): Krafttrainings-Logger mit Templates (Upper-A / Lower / Upper-B), Sätze pro Übung, Garmin-Sync für Trainingsdaten, Per-Übung-Progress-Chart
@@ -64,8 +66,10 @@ In Vercel → Settings → Environment Variables gesetzt für Production+Preview
 | `GARMIN_USERNAME` | Garmin Connect Login |
 | `GARMIN_PASSWORD` | Garmin Connect Login |
 | `FDDB_COOKIE` | Cookie für FDDB-Scraping |
+| `ANTHROPIC_API_KEY` | Claude — Tagesübersicht, Chats, Plan-Generierung. Fehlt er, melden nur diese Funktionen einen Fehler |
+| `OPENROUTER_API_KEY` | Optional: freies DeepSeek-Modell als Alternative zu Claude |
 | `BETTER_AUTH_SECRET` | Signier-Secret für Sessions/Cookies (`openssl rand -base64 32`) |
-| `BETTER_AUTH_URL` | Basis-URL der App (Production: `https://health-os-nine.vercel.app`, lokal: `http://localhost:3000`). **Auf Vercel-Previews wird sie ignoriert** — `src/lib/auth.ts` nimmt dort `VERCEL_URL`/`VERCEL_BRANCH_URL` als baseURL/trustedOrigins, sonst scheitert der Login am Origin-Check (Preview-Domain ≠ Produktions-URL). |
+| `BETTER_AUTH_URL` | Basis-URL der App (Production: die eigene Deployment-URL, lokal: `http://localhost:3000`). **Auf Vercel-Previews wird sie ignoriert** — `src/lib/auth.ts` nimmt dort `VERCEL_URL`/`VERCEL_BRANCH_URL` als baseURL/trustedOrigins, sonst scheitert der Login am Origin-Check (Preview-Domain ≠ Produktions-URL). |
 
 Lokal liegen die gleichen Werte in `.env.local` (gitignored). `.env.example` ist die Vorlage ohne Secrets.
 
@@ -89,7 +93,7 @@ Heißt: lokales `npm run dev` läuft gegen die lokale SQLite-Datei. Wenn man lok
 | Pfad | Typ | Zweck |
 |---|---|---|
 | `layout.tsx` | RSC | Root-Layout, Fonts, globaler `AppShell` |
-| `page.tsx` | RSC | **Start-Dashboard** (seit 2026-06-12): Meta-Kalender (Läufe + Gym + geplante Plan-Sessions), Running-/Gym-Wochen-Totals, Daily Overview (KI-Texte + ganzheitlicher Chat), Endurance- (Nächste Session + MetricsDashboard), Hypertrophy- (letzte Session + Rotation) und Weight-Sektion. `maxDuration=60` für die KI-Actions. Das alte Hero-Grid (`home/HeroGrid`) ist nicht mehr eingebunden. |
+| `page.tsx` | RSC | **Start-Dashboard** (seit 2026-06-12): Meta-Kalender (Läufe + Gym + geplante Plan-Sessions), Running-/Gym-Wochen-Totals, Daily Overview (KI-Texte + ganzheitlicher Chat), Endurance- (Nächste Session + MetricsDashboard), Hypertrophy- (letzte Session + Rotation) und Weight-Sektion. `maxDuration=60` für die KI-Actions. |
 | `actions.ts` | Server Action | Dashboard-Actions: `generateOverviewAction(force?)` (KI-Tagesübersicht generieren, Self-Heal/Refresh-Button) + `sendDashboardChatMessage(history)` (ganzheitlicher Chat, read-only) |
 | `weight/page.tsx` | RSC | Weight-Dashboard: Chart, Stats, Phasen, Day-Detail, Buttons (Sync / Tags) |
 | `weight/entries/page.tsx` | RSC | Tabelle aller Weight-Einträge |
@@ -121,7 +125,6 @@ Nach Modul gruppiert. **RSC** = Server Component, **CC** = Client Component (`"u
 - `site/` — `AppShell` (async RSC-Wrapper; rendert im Demo-Modus zusätzlich den `DemoBanner`), `SiteHeader` (mit `SettingsMenu`: Burger-Popover, Konto-Link + Hell/Dunkel-Toggle), `SiteFooter`, `ThemeProvider` (next-themes), `DemoBanner` (CC, Hinweisleiste + „Demo verlassen"), `SyncNowButton` (CC) und `SyncNowSlot` (RSC-Hülle, blendet den Sync-Button im Demo-Modus aus — von allen 4 Seiten benutzt)
 - `dashboard/` — Start-Dashboard: `MetaCalendar` (CC, Monats-Grid; Läufe orange → `/endurance/[date]`, Gym in Template-Farbe → `/hypertrophy/[slug]/[date]?scope=all`, geplante Plan-Sessions hellgrau → `/endurance/recommendations`), `TotalsCard` (RSC, "This Week"-Card mit 3 Kennzahlen + 7-Tage-Balken + Tagesliste — Running- und Gym-Variante), `DailyOverviewCard` (CC, drei KI-Texte; Self-Heal generiert beim Mount nach, RefreshCw-Button erzwingt Neu-Generierung), `DashboardChat` (CC, ganzheitlicher read-only Chat, Markdown), `NextSessionCard` (RSC, read-only Variante der PlanBoard-Card mit Link statt Edit), `GymCards` (RSC, letzte Session + nächstes Workout laut Rotation), `WeightCards` (RSC, 3 Stat-Cards mit phasengerechter Delta-Färbung)
 - `account/` — `AuthCard` (CC, Login/Registrierung mit deutschen Fehlertexten), `LogoutButton` (CC), `DemoEntryCard` (CC, Einstieg in den Demo-Modus — siehe §8)
-- `home/` — `HeroGrid`, `PromoBar`, `PulseSection` (RSC, lädt Live-Stats), `SectionHero`, `Topbar`
 - `weight/` — `WeightChart`/`Chart Section` (Recharts, CC), `WeightStats`, `WeightTable`, `WeightWeekMatrix`, `WeightDayList`, `WeightDayDetailDialog` (CC, nimmt jetzt `tag`-Prop), `WeightDetailView`, `WeightEntryForm` (CC), `PhaseEditDialog` (CC), `TagEditor` (CC, Tag-Übersicht + Edit-Dialog)
 - `hypertrophy/` — `Calendar`, `SessionLogger` (CC), `NewSessionDialog` (CC), `DeleteSessionButton` (CC), `OpenOrCreateSessionButton` (CC), `ExerciseProgressChart` (CC), `WorkoutCards` (RSC), `WorkoutOverviewChart`, `SiblingNavButtons`/`SiblingSwipe`
 - `hypertrophy/avatar/` — `MuscleAvatar` (SVG-Bodymap), `OverviewAvatarPanel` (CC, Volumen-Tracker: Avatar färbt Muskelgruppen nach Volumen. Darunter **immer** die Balken-Aggregation (kein Text/Balken-Toggle mehr), standardmäßig **eingeklappt**: die Card ist `h-full flex-col`, die Aggregation per `mt-auto` unten angedockt — eingeklappt schneidet sie direkt unter dem „Aggregation"-Header ab, sodass die Card-Höhe via Grid-Stretch dem Kalender daneben entspricht. Klick auf den Header (0fr↔1fr-Höhen-Animation) klappt die Balkenliste auf, erst dann wächst die Card. Avatar+Hover+Mobile-Vorne/Hinten-Toggle unverändert), `WorkoutAvatarPanel`, `MuscleExerciseList`, `anatomy-paths.ts` (SVG-Pfade)
@@ -158,6 +161,7 @@ Nach Modul gruppiert. **RSC** = Server Component, **CC** = Client Component (`"u
 - `training_plans` — Endurance-Phase-4 Top-Level (Race-Datum, Ziel-Pace, Peak-km/Woche, Sessions/Woche, totalWeeks, planStartDate, paceZonesJson, **referencePdfText** als extrahierter Volltext, Status draft/active/completed/archived).
 - `training_plan_weeks` — eine Zeile pro Plan-Woche mit weekNumber, startDate/endDate, phase (base/build/peak/taper/race), targetVolumeKm. UNIQUE(planId, weekNumber).
 - `training_plan_sessions` — eine Zeile pro Plan-Slot. Self-FK `alternativeOfId` macht eine Zeile zur Alternative ("Option 2") einer Primär-Session. `aiLocked` = KI-Sperre. `runSessionId` (FK → run_sessions, ON DELETE SET NULL) verlinkt zum tatsächlich absolvierten Lauf. UNIQUE(planId, date, dayOrder, alternativeOfId) erlaubt Double-Days und unabhängige Alternativen.
+- `demo_ai_calls` — Zähler pro UTC-Stunde (`YYYY-MM-DDTHH`) für KI-Aufrufe im Demo-Modus. Wird nur über `getDemoDb()` geschrieben; in der echten DB bleibt die Tabelle leer. Vom Demo-Reseed **nicht** geleert, damit der Deckel einen Reseed überlebt (Migration 0020).
 - `dashboard_overviews` — tägliche KI-Overview der Startseite (UNIQUE auf `date`): je ein kurzer Bewertungs-Text pro Modul (endurance/hypertrophy/weight) + Modell-ID. Geschrieben vom Cron bzw. Self-Heal der Startseite (Migration 0017).
 - `training_plan_blocks` — strukturierte Intervalle pro Session. `repetitions` × `segmentsJson` (TS-Typ `TrainingPlanBlockSegment[]` mit kind work/recovery/warmup/cooldown, durationSec/distanceMeters, zone/zoneMin/zoneMax, paceMinSec/paceMaxSec, hrMin/hrMax). UNIQUE(sessionId, blockOrder).
 
@@ -184,6 +188,7 @@ Nach Modul gruppiert. **RSC** = Server Component, **CC** = Client Component (`"u
 | `utils.ts` | `cn()` (tailwind-merge) |
 | `demo/config.ts` | Demo-Modus: `DEMO_COOKIE`, `isDemoConfigured()`, `isDemoRequest()` — einzige Quelle der Wahrheit für den Schalter (§8) |
 | `demo/guard.ts` | Demo-Modus: `isDemo()` + Blockier-Texte für die gesperrten Server Actions |
+| `demo/ai-budget.ts` | Demo-Modus: `consumeDemoAiBudget()` — atomarer Stunden-Zähler (`INSERT … ON CONFLICT DO UPDATE … RETURNING`) gegen `demo_ai_calls`. Außerhalb des Demo-Modus ein No-op. Bei Zähler-Fehler wird **abgelehnt**, nicht durchgewunken |
 | `demo/dataset.ts` | Demo-Modus: `buildDemoDataset(todayIso)` — reiner, deterministischer Generator aller Mock-Zeilen |
 | `demo/seed.ts` | Demo-Modus: `seedDemoDatabase()`, `demoDataAnchor()`, `ensureDemoDataFresh()` |
 | `utils/csv.ts` | CSV-Parser für Sheets-Import |
@@ -213,9 +218,11 @@ Nach Modul gruppiert. **RSC** = Server Component, **CC** = Client Component (`"u
 | `npm run db:migrate` | `src/lib/db/migrate.ts` | Drizzle-Migrationen ausführen |
 | `npm run db:generate` | (drizzle-kit) | Neue Migration aus Schema-Diff erzeugen |
 | `npm run db:studio` | (drizzle-kit) | Web-UI zum DB-Browsen |
-| `npm run db:seed` | `scripts/seed.ts` | Initial-Daten Weight/Phasen |
+| `npm run setup` | `scripts/setup.ts` | **Ein-Befehl-Setup für frische Clones**: legt `.env.local` mit generiertem `BETTER_AUTH_SECRET` an, migriert, seedet Stammdaten + Demo-DB. Idempotent |
 | `npm run db:seed:hypertrophy` | `scripts/seed-hypertrophy.ts` | Übungen + Templates seeden |
 | `npm run db:seed:demo` | `scripts/seed-demo.ts` | **Demo-DB neu aufbauen** (Migration + Mock-Daten). Lokal → `data/demo.db`; mit `USE_TURSO=1` → `TURSO_DEMO_DATABASE_URL` |
+| `npm run typecheck` | (tsc) | `tsc --noEmit` — ersetzt **nicht** `npm run build` (siehe §7) |
+| `node scripts/screenshots.mjs` | `scripts/screenshots.mjs` | README-Screenshots aus dem **Demo-Modus** (setzt das Demo-Cookie, kein Login). Braucht `npm i -D playwright && npx playwright install chromium` — bewusst keine feste Dependency |
 | `npm run db:sync:sheets` | `scripts/sync-sheets.ts` | Manueller Weight-Sync aus Google Sheets |
 | `npm run db:sync:garmin` | `scripts/sync-garmin-strength.ts` | Manueller Garmin-Strength-Sync |
 | `npm run db:sync:garmin-calories` | `scripts/sync-garmin-calories.ts` | Manueller Garmin-Calories-Sync |
@@ -230,7 +237,7 @@ Nach Modul gruppiert. **RSC** = Server Component, **CC** = Client Component (`"u
 
 ### 4.7 Migrationen (`drizzle/`)
 
-Sequenz `0000` → `0019`. **Nicht editieren** — Drizzle hält im `meta/_journal.json` einen Hash; geänderte Migrationen führen zu Fehlern. Neue Schema-Änderungen → `npm run db:generate` erzeugt das nächste File.
+Sequenz `0000` → `0020`. **Nicht editieren** — Drizzle hält im `meta/_journal.json` einen Hash; geänderte Migrationen führen zu Fehlern. Neue Schema-Änderungen → `npm run db:generate` erzeugt das nächste File.
 
 | Migration | Inhalt |
 |---|---|
@@ -250,6 +257,7 @@ Sequenz `0000` → `0019`. **Nicht editieren** — Drizzle hält im `meta/_journ
 | `0016` | Auth (Better Auth): `user` + `session` + `account` + `verification`. Drizzle-Definitionen in `src/lib/db/auth-schema.ts` (via `npx @better-auth/cli generate` erzeugt, aus `schema.ts` re-exportiert). |
 | `0017` | Start-Dashboard: `dashboard_overviews` (tägliche KI-Overview, UNIQUE auf `date`). |
 | `0018` | `workout_templates.kind` ist kein fixer Enum mehr (beliebige Einheiten erlaubt). |
+| `0020` | `demo_ai_calls` (bucket TEXT PK, count INTEGER) — Stunden-Budget für KI-Aufrufe im öffentlichen Demo-Modus. Lebt faktisch nur in der Demo-DB. |
 | `0019` | `workout_template_exercises.default_sets` (nullable) — vorgeschlagene Satz-Anzahl pro Übungs-Slot; der Session-Logger befüllt so viele leere Set-Zeilen vor (Default-Anzeige = 3). Setzbar im „Neue Trainingseinheit"-Dialog + „Übungen verwalten". |
 
 ### 4.8 Konfig-Files (Root)
@@ -365,9 +373,7 @@ Alle Funktionen sind `async` und liefern `Promise<T>`. Wenn etwas fehlt, gehört
 ### Setup nach `git clone`
 ```bash
 npm install
-cp .env.example .env.local  # Werte ergänzen
-npm run db:migrate          # erstellt data/health.db lokal
-npm run db:seed             # optional: Initialdaten
+npm run setup               # .env.local + Migrationen + Stammdaten + Demo-DB
 npm run dev                 # http://localhost:3000
 ```
 
@@ -380,11 +386,13 @@ npm run dev                 # http://localhost:3000
 
 ### Tests vor Push
 ```bash
-node_modules/.bin/tsc --noEmit    # tsc clean? (reicht NICHT alleine — siehe Gotcha §7)
-npm run build                      # **Pflicht** — Vercels Build ist strenger als tsc --noEmit
-npm run lint                       # ESLint
-npm run dev                        # smoke-test
+npm run typecheck   # tsc --noEmit (reicht NICHT alleine — siehe Gotcha §7)
+npm run build       # **Pflicht** — Vercels Build ist strenger als tsc --noEmit
+npm run lint        # ESLint (8 bekannte React-Compiler-Fehler, siehe unten)
+npm run dev         # smoke-test
 ```
+
+> **Lint-Stand:** `npm run lint` meldet 8 bekannte Fehler in Chart-/Dialog-Komponenten (React-Compiler- und `setState`-in-Effect-Findings), die älter sind als die CI. Der CI-Schritt läuft deshalb mit `continue-on-error` — neue Verstöße bleiben sichtbar, alte blockieren nicht. Beim Anfassen einer dieser Dateien gern mit aufräumen.
 
 > **Wichtig:** `tsc --noEmit` allein reicht nicht. Vercels `next build` prüft mit strikterer Konfig und erwischt Type-Probleme in Files, die `tsc` lokal überspringt (z.B. Scripts in `scripts/`). Erfahrung: Commit 6800aa0 — lokal clean, Vercel-Build failed.
 
@@ -442,6 +450,8 @@ Alles ist bedienbar (Sätze loggen, Gewicht eintragen, Plan-Sessions per Drag ve
 
 - **`syncNow`** (`app/weight/actions.ts`) — braucht echte Garmin-/FDDB-/Sheets-Zugangsdaten. Der Button wird zusätzlich gar nicht erst gerendert (`components/site/SyncNowSlot.tsx` ersetzt `SyncNowButton` auf allen 4 Seiten).
 - **`generatePlanSessions` / `wipePlanSessions`** (`app/endurance/recommendations/actions.ts`) — läuft minutenlang und verbrennt KI-Tokens. Der Demo-Plan ist fertig geseedet.
+
+**Gedrosselt statt gesperrt** (`src/lib/demo/ai-budget.ts`, seit dem Public-Release): `generateOverviewAction`, `sendDashboardChatMessage` und `sendPlanChatMessage` bleiben im Demo bedienbar, teilen sich aber ein gemeinsames Stundenkontingent (`DEMO_AI_CALLS_PER_HOUR`, Default 40) über **alle** Demo-Besucher. Grund: die Tokens laufen auf den API-Key des Betreibers, und die Demo ist anonym erreichbar. Der Self-Heal-Pfad der Tagesübersicht zählt nur, wenn wirklich generiert wird — ein vorhandener Tages-Eintrag kostet nichts.
 
 ### Die Mock-Daten
 

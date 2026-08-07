@@ -13,6 +13,20 @@ const eslintConfig = defineConfig([
     "build/**",
     "next-env.d.ts",
   ]),
+  {
+    rules: {
+      // Underscore-Präfix ist die Absichtserklärung "bewusst ungenutzt" —
+      // etwa bei Adapter-Stubs, die die Signatur des Interfaces erfüllen.
+      "@typescript-eslint/no-unused-vars": [
+        "warn",
+        {
+          argsIgnorePattern: "^_",
+          varsIgnorePattern: "^_",
+          caughtErrorsIgnorePattern: "^_",
+        },
+      ],
+    },
+  },
 ]);
 
 export default eslintConfig;

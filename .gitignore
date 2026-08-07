@@ -41,8 +41,17 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 
-# local sqlite database
+# local databases — never commit health data, in any form or location
 /data
+/exports
+/uploads
+*.db
+*.db-journal
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+*.csv
 
 # claude code local settings
 .claude/
@@ -50,4 +59,8 @@ next-env.d.ts
 # scratch files
 b.txt
 test-in-repo.txt
+
+# ad-hoc screenshots of the real instance.
+# The committed ones live in docs/screenshots/ and come from the demo mode
+# (scripts/screenshots.mjs) — those cannot contain real data by construction.
 .screenshots/

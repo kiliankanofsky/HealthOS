@@ -83,18 +83,6 @@ export function WeightChart({
       .filter((p): p is { id: number; kind: WeightPhase["kind"]; x1: string; x2: string } => p !== null);
   }, [phases, data]);
 
-  if (data.length === 0) {
-    return (
-      <div className="flex h-80 items-center justify-center text-sm text-muted-foreground">
-        Keine Daten vorhanden.
-      </div>
-    );
-  }
-
-  const weights = data.map((d) => d.weight);
-  const min = Math.floor(Math.min(...weights) - 0.5);
-  const max = Math.ceil(Math.max(...weights) + 0.5);
-
   // Pending-Phase-Klick: ReferenceArea setzt die Phase, der LineChart-Handler
   // entscheidet danach anhand der Cursor-Nähe zur Linie, ob doch der Tages-
   // Dialog gewinnt. So zählt die ReferenceArea zuerst, hat aber kein Veto.
@@ -114,6 +102,20 @@ export function WeightChart({
     for (const d of data) m.set(d.date, d.weight);
     return m;
   }, [data]);
+
+  // Erst NACH allen Hooks aussteigen — ein früher Return oberhalb würde die
+  // Hook-Reihenfolge zwischen leerem und gefülltem Zeitfenster verändern.
+  if (data.length === 0) {
+    return (
+      <div className="flex h-80 items-center justify-center text-sm text-muted-foreground">
+        Keine Daten vorhanden.
+      </div>
+    );
+  }
+
+  const weights = data.map((d) => d.weight);
+  const min = Math.floor(Math.min(...weights) - 0.5);
+  const max = Math.ceil(Math.max(...weights) + 0.5);
 
   return (
     <div ref={wrapperRef} className="h-80 w-full">

@@ -1,0 +1,39 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      # No real credentials on purpose: a fresh clone must build without any.
+      # The app falls back to a local SQLite file. The auth secret is a
+      # throwaway that only exists to keep Better Auth from logging its
+      # default-secret warning during the build; nothing is signed with it.
+      - name: Build
+        run: npm run build
+        env:
+          BETTER_AUTH_SECRET: ci-build-only-not-a-real-secret
+
+      # Informational for now — 8 known React Compiler findings in chart and
+      # dialog components predate this workflow. Tracked as an issue; the step
+      # is here so new violations stay visible.
+      - name: Lint
+        run: npm run lint
+        continue-on-error: true

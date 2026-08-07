@@ -49,7 +49,7 @@ export function TagEditor({ tags }: Props) {
 
       {sorted.length === 0 ? (
         <div className="rounded-2xl bg-muted/40 px-6 py-12 text-center text-sm text-muted-foreground">
-          Noch keine Tags. Klick „Tag hinzufügen", um einen Tag zu markieren.
+          Noch keine Tags. Klick „Tag hinzufügen&ldquo;, um einen Tag zu markieren.
         </div>
       ) : (
         <ul className="divide-y divide-border overflow-hidden rounded-2xl ring-1 ring-black/5">

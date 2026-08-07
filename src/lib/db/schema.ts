@@ -845,6 +845,22 @@ export type DashboardOverview = typeof dashboardOverviews.$inferSelect;
 export type NewDashboardOverview = typeof dashboardOverviews.$inferInsert;
 
 // =============================================================
+// Demo-Modus — Stunden-Budget für KI-Aufrufe.
+// Der öffentliche Demo-Modus darf Claude benutzen, aber nicht unbegrenzt:
+// die Tokens gehen auf den API-Key des Betreibers. Ein Zähler pro
+// UTC-Stunde ("YYYY-MM-DDTHH") deckelt alle Demo-Besucher gemeinsam.
+// Lebt nur in der Demo-DB (geschrieben über getDemoDb()), in der echten
+// Datenbank bleibt die Tabelle leer.
+// =============================================================
+
+export const demoAiCalls = sqliteTable("demo_ai_calls", {
+  bucket: text("bucket").primaryKey(), // YYYY-MM-DDTHH (UTC)
+  count: integer("count").notNull().default(0),
+});
+
+export type DemoAiCalls = typeof demoAiCalls.$inferSelect;
+
+// =============================================================
 // Auth (Better Auth) — user/session/account/verification.
 // Generiert via `npx @better-auth/cli generate`, lebt in auth-schema.ts.
 // =============================================================

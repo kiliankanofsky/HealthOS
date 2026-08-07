@@ -15,6 +15,8 @@ import {
   ensureDailyOverview,
   generateDailyOverview,
 } from "@/lib/dashboard/overview";
+import { getDashboardOverviewForDate } from "@/lib/db/queries";
+import { consumeDemoAiBudget } from "@/lib/demo/ai-budget";
 import { todayBerlinISO } from "@/lib/utils/date";
 
 export type OverviewActionState = { ok: boolean; error?: string };
@@ -26,6 +28,17 @@ export async function generateOverviewAction(
 ): Promise<OverviewActionState> {
   try {
     const today = todayBerlinISO();
+
+    // Self-Heal ohne fehlenden Eintrag ist ein No-op — erst wenn wirklich
+    // generiert wird, kostet das Tokens und zählt aufs Demo-Kontingent.
+    const existing = await getDashboardOverviewForDate(today);
+    if (existing && !force) {
+      return { ok: true };
+    }
+
+    const budget = await consumeDemoAiBudget();
+    if (!budget.ok) return { ok: false, error: budget.error };
+
     if (force) {
       await generateDailyOverview(today);
     } else {
@@ -51,6 +64,8 @@ export async function sendDashboardChatMessage(
   if (!Array.isArray(history) || history.length === 0) {
     return { ok: false, error: "Keine Nachricht." };
   }
+  const budget = await consumeDemoAiBudget();
+  if (!budget.ok) return { ok: false, error: budget.error };
   try {
     const { reply } = await runDashboardChat(history, todayBerlinISO(), model);
     return { ok: true, reply };

@@ -15,7 +15,6 @@ import {
   Bar,
   BarChart,
   CartesianGrid,
-  Cell,
   Line,
   LineChart,
   ReferenceArea,

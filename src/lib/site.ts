@@ -1,7 +1,7 @@
 // =============================================================
 // Single Source of Truth für Texte und Konfiguration der App.
 // HIER ÄNDERST DU MANUELL: App-Name, Modul-Beschreibungen, Status,
-// Promo-Banner, Hero-Bilder, Footer.
+// Promo-Banner, Footer.
 //
 // Pages und Komponenten ziehen ihre Texte aus diesem Modul.
 // =============================================================
@@ -32,11 +32,9 @@ export type ModuleConfig = {
   href: Route;
   // Kurzer Untertitel (Hero, Nav-Hover).
   hint: string;
-  // Längere Beschreibung (Pulse-Card, Coming-Soon).
+  // Längere Beschreibung (Coming-Soon).
   description: string;
-  // Bild in /public/heroes — falls keins da, fällt der Hero auf den Verlauf zurück.
-  image?: string;
-  // Verlauf-Farben für Tinted-Cards / Hero-Overlays.
+  // Verlauf-Farben für Tinted-Cards.
   gradientFrom: string;
   gradientTo: string;
   // Live ⇒ klickbar in Heroes; Coming Soon ⇒ leicht ausgegraut.
@@ -51,7 +49,6 @@ export const modules: ModuleConfig[] = [
     hint: "Trend, Schwankung, Ziel",
     description:
       "Tägliche Gewichts­messungen mit Glättung, Phasen­erkennung und Cheat-/Alkohol-Tags.",
-    image: "/heroes/weight.jpg",
     gradientFrom: "#1d1d1f",
     gradientTo: "#f59e0b",
     available: true,
@@ -63,7 +60,6 @@ export const modules: ModuleConfig[] = [
     hint: "Kraft, Volumen, Splits",
     description:
       "Logbuch für Upper A, Lower und Upper B mit e1RM-Charts und Garmin-Sync.",
-    image: "/heroes/hypertrophy.jpg",
     gradientFrom: "#3b0f0f",
     gradientTo: "#dc2626",
     available: true,
@@ -75,16 +71,11 @@ export const modules: ModuleConfig[] = [
     hint: "Herzfrequenz, LT2, VO₂",
     description:
       "Lauf-Volumen, Kalender und Garmin-Performance (RHR, HRV, Sleep, Race-Predictions).",
-    image: "/heroes/endurance.jpg",
     gradientFrom: "#0b3d2e",
     gradientTo: "#16a34a",
     available: true,
   },
 ];
-
-export const modulesBySlug = new Map<ModuleSlug, ModuleConfig>(
-  modules.map((m) => [m.slug, m]),
-);
 
 // =============================================================
 // Footer-Konfiguration.

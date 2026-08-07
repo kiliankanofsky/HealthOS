@@ -1,161 +1,182 @@
 # HealthOS
 
-Modulares Health & Performance Dashboard. Drei Sektionen — **Endurance**, **Hypertrophy**, **Weight**. Phase 1: das Gewichts-Modul ist live, die anderen sind Platzhalter.
+Self-hosted training and body-weight dashboard that correlates data across running, lifting and nutrition.
 
-## Tech Stack
+[![CI](https://github.com/kiliankanofsky/HealthOS/actions/workflows/ci.yml/badge.svg)](https://github.com/kiliankanofsky/HealthOS/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-black.svg)](LICENSE)
+[![Next.js 16](https://img.shields.io/badge/Next.js-16-black.svg)](https://nextjs.org)
 
-- **Next.js 16** (App Router) + TypeScript (strict)
-- **TailwindCSS v4** + shadcn/ui
-- **Drizzle ORM** + **better-sqlite3** (lokale DB unter `data/health.db`)
-- **Recharts** für Diagramme
-- **SF Pro** (System) als Default-Font, Apple HIG inspirierte Tokens
+![Dashboard](docs/screenshots/dashboard-desktop.png)
 
-## Setup
+<details>
+<summary>More screenshots — endurance, hypertrophy, weight, mobile</summary>
+
+![Endurance](docs/screenshots/endurance-desktop.png)
+![Hypertrophy](docs/screenshots/hypertrophy-desktop.png)
+![Weight](docs/screenshots/weight-desktop.png)
+
+<p>
+  <img src="docs/screenshots/dashboard-mobile.png" width="240" alt="Dashboard on mobile">
+  <img src="docs/screenshots/endurance-mobile.png" width="240" alt="Endurance on mobile">
+  <img src="docs/screenshots/weight-mobile.png" width="240" alt="Weight on mobile">
+</p>
+
+</details>
+
+> Every screenshot in this repository is taken from the built-in demo mode and
+> shows generated sample data, never real measurements.
+
+## Why
+
+My body weight lived in a Google Sheet, my runs and sleep in Garmin Connect, my
+lifting in a notes app, and my food log on a German nutrition site. Each of
+them answered questions about itself and nothing else. None of them could tell
+me whether a stalled cut was actually a stalled cut or three days of glycogen,
+or whether the easy runs I logged were actually easy.
+
+HealthOS is the answer to that: one database, one timeline, and analysis that
+crosses the boundaries between the silos. It is built for a single person — me
+— and every architectural decision follows from that.
+
+## Features
+
+- **Weight** — daily measurements with LOESS-smoothed trend, cut/bulk/maintenance
+  phases, and day tags (cheat day, cheat meal, alcohol) that feed back into the
+  calorie analysis.
+- **Nutrition** — daily intake and macros, correlated against the weight trend.
+  Calorie recommendations are derived per phase from the observed rate of change
+  against the target rate, using the 7,700 kcal-per-kilogram rule. Cheat days
+  override the tracked intake instead of quietly polluting the average.
+- **Maintenance TDEE** — estimated from actual energy balance (mean intake minus
+  weight-change rate × 7,700) over 7/14/28-day windows, cross-checked against
+  Garmin's expenditure and consolidated by median.
+- **Hypertrophy** — session logger over three rotating templates, per-exercise
+  e1RM progression charts, an anatomical body map that colours muscle groups by
+  weighted set volume, and Garmin strength-activity import.
+- **Endurance** — run volume, calendar, and per-run detail (pace, heart rate,
+  elevation, training effect). Daily Garmin snapshot: resting heart rate, HRV
+  with its baseline corridor, sleep stages, VO₂ max, lactate threshold, race
+  predictions.
+- **Training zones** — a hybrid five-zone model built on an LT1/LT2 frame rather
+  than a percentage of max heart rate. Z1–Z2 are heart-rate governed, Z3–Z5 are
+  pace governed, and the paces come from your own runs: a weighted percentile of
+  observed splits, a heart-rate-to-pace regression, or the Garmin marathon
+  prediction, depending on which evidence the zone actually has.
+- **Training plans** — a 16-week race plan with drag-and-drop sessions,
+  structured interval blocks, and generation by Claude against a reference plan
+  you upload as PDF or image.
+- **Daily overview and chat** — a short model-written assessment per module, plus
+  a read-only chat over the full cross-module context.
+
+## Quickstart
+
+Requires Node 20.9+.
 
 ```bash
+git clone https://github.com/kiliankanofsky/HealthOS.git
+cd HealthOS
 npm install
-cp .env.example .env.local
-# SHEETS_CSV_URL und SHEETS_START_YEAR in .env.local eintragen
-
-npm run db:migrate          # SQLite anlegen, Migrations anwenden
-npm run db:sync:sheets      # Daten aus Google Sheets ziehen
-npm run dev                 # http://localhost:3000
+npm run setup
+npm run dev
 ```
 
-Wenn du noch kein Sheet hast und mit Mock-Daten starten willst:
+Open <http://localhost:3000> and click **"Demo mit Beispieldaten starten"**.
+You get the complete app running on generated sample data — no accounts, no API
+keys, no Google Sheet.
 
-```bash
-npm run db:seed             # ~60 Tage realistische Mock-Daten
+`npm run setup` creates `.env.local` with a generated auth secret, applies the
+migrations, seeds exercise and template master data, and builds the demo
+database.
+
+To use it for real, register the single allowed account on the same page and
+add credentials for the integrations you want in `.env.local`.
+
+> The interface is in German. That is not an oversight — it is a tool I use
+> daily, and it was never translated.
+
+## Architecture
+
+```mermaid
+flowchart TD
+    GS["Google Sheets<br/>CSV export"] --> AD
+    GC["Garmin Connect<br/>unofficial endpoints"] --> AD
+    FD["fddb.info<br/>HTML scraping"] --> AD
+    CRON["Daily cron<br/>/api/cron/sync"] -.-> AD
+    AD["Adapters<br/>src/lib/integrations"] --> REAL[("Your database<br/>SQLite or Turso")]
+    REAL --> GETDB{"getDb()<br/>per request"}
+    DEMO[("Demo database<br/>generated sample data")] --> GETDB
+    GETDB --> Q["queries.ts<br/>single data-access layer"]
+    Q --> RSC["React Server Components"]
+    RSC --> UI["Dashboard · Weight · Hypertrophy · Endurance"]
+    UI -- "Server Actions" --> Q
+    Q --> AI["Claude<br/>overview · chat · plan generation"]
 ```
 
-## Routen
+Five things worth knowing:
 
-- `/` — Open-style Homescreen mit drei Sektionen
-- `/weight` — Gewichts-Modul (Chart, Stats, Eingabeform, Tabelle)
-- `/endurance`, `/hypertrophy` — Platzhalter ("Bald verfügbar")
+1. **Adapters normalise, the database decides.** Every external source writes
+   into the same schema; the UI never talks to an API. Sources are idempotent
+   and re-runnable.
+2. **One data-access layer.** Everything goes through `src/lib/db/queries.ts`.
+   Pages and components never build queries.
+3. **The demo mode swaps the connection, not the data.** `getDb()` returns a
+   different database entirely when the demo cookie is present. Real data is
+   unreachable rather than filtered.
+4. **Server Components by default.** Client components exist only for charts,
+   forms and drag-and-drop.
+5. **Serverless-shaped.** No persistent filesystem, no background workers, no
+   in-memory state between requests — it deploys to Vercel unchanged.
 
-## Verfügbare Scripts
+`CONTEXT.md` is the detailed reference: file index, function inventory, data
+model, and known quirks. It is written in German.
 
-| Script | Zweck |
-| --- | --- |
-| `npm run dev` | Dev-Server (Turbopack) |
-| `npm run build` | Production-Build |
-| `npm run start` | Production-Server |
-| `npm run lint` | ESLint |
-| `npm run db:generate` | Neue Drizzle-Migration aus Schema generieren |
-| `npm run db:migrate` | Pending-Migrations anwenden |
-| `npm run db:seed` | DB leeren und mit 60 Tagen Mock-Daten füllen |
-| `npm run db:sync:sheets` | Gewichts-Daten aus Google Sheet upserten |
-| `npm run db:studio` | Drizzle Studio (lokales DB-UI) |
+## Data sources
 
-## Google Sheets — Daten-Sync
+All three are optional; each is a separate adapter you can ignore or replace.
 
-**Anforderung:** Sheet ist mit "anyone with the link can view" geteilt (oder Publish-to-Web).
-
-**Erwartetes Sheet-Layout** (Spalten):
-
-| KW | Woche Phase | … | KCal | Mo | Di | Mi | Do | Fr | Sa | So | … |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| 46 |  |  | 3300 |  |  |  | 59 | 59,6 | 59,6 |  |  |
-
-- Eine Zeile pro ISO-Kalenderwoche.
-- `KW` = Spalte 1.
-- Tagesgewichte in Spalten 5–11 (Mo bis So), deutsches Komma-Dezimalformat (`60,2`).
-- Leere Zellen = keine Messung.
-
-**Jahresermittlung:** Da das Sheet keine Jahres-Spalte hat, trackt der Adapter das Jahr durch KW-Resets — sobald die KW von Zeile zu Zeile zurückspringt (z. B. 52 → 1), wird das Jahr inkrementiert. Das **Startjahr** der ersten Zeile setzt du in `SHEETS_START_YEAR` (z. B. `2023`, falls die erste Zeile KW 46 von 2023 enthält).
-
-**ENV-Vars** (`.env.local`):
-
-```
-SHEETS_CSV_URL=https://docs.google.com/spreadsheets/d/<ID>/export?format=csv
-SHEETS_START_YEAR=2023
-```
-
-## Projektstruktur
-
-```
-src/
-  app/
-    page.tsx                       Open-style Homescreen
-    layout.tsx
-    weight/
-      page.tsx                     Gewichts-Modul
-      actions.ts                   Server Actions (Add / Delete)
-    endurance/page.tsx             Platzhalter
-    hypertrophy/page.tsx           Platzhalter
-  components/
-    home/
-      SectionHero.tsx              Drei Section-Tiles im Open-Look (Client)
-      Topbar.tsx                   Live-Uhrzeit-Header (Client)
-    weight/
-      WeightChart.tsx              Recharts (Client)
-      WeightStats.tsx              Stat-Cards (Server)
-      WeightEntryForm.tsx          Eingabeform (Client)
-      WeightTable.tsx              Letzte Einträge (Server)
-    ui/                            shadcn/ui Komponenten
-    ComingSoon.tsx
-  lib/
-    db/
-      schema.ts                    Drizzle-Tabellen
-      index.ts                     DB-Client
-      queries.ts                   CRUD
-      migrate.ts                   Migrations-Runner
-    integrations/
-      types.ts                     Adapter-Interface
-      sheets.ts                    Google-Sheets-Adapter (CSV)
-      garmin.ts                    Stub
-      fddb.ts                      Stub
-    utils/
-      weight-stats.ts
-      date.ts                      Lokales ISO-Date (kein UTC-Shift)
-      iso-week.ts                  ISO-Wochen-Helper
-      csv.ts                       Mini-CSV-Parser
-drizzle/                           Generierte SQL-Migrations
-scripts/
-  seed.ts                          Mock-Daten-Generator
-  sync-sheets.ts                   Sheets → DB
-data/
-  health.db                        Lokale SQLite-Datei (gitignored)
-public/heroes/                     Hero-Bilder für Homescreen-Sektionen
-```
-
-## Datenmodell
-
-Tabelle `weight_entries`:
-
-| Spalte | Typ | Notizen |
+| Source | Method | Caveat |
 | --- | --- | --- |
-| `id` | INTEGER PK AUTOINCREMENT | |
-| `date` | TEXT (YYYY-MM-DD) | UNIQUE — ein Eintrag pro Tag |
-| `weight_kg` | REAL NOT NULL | |
-| `source` | TEXT | `manual` \| `sheets` \| `garmin` |
-| `notes` | TEXT NULL | |
-| `created_at` | TEXT DEFAULT now() | |
+| Google Sheets | CSV export URL, one row per ISO week | Sheet must be link-shared. The year is derived from calendar-week resets, so `SHEETS_START_YEAR` anchors the first row |
+| Garmin Connect | `@gooin/garmin-connect` plus several undocumented endpoints | **Unofficial.** Garmin can change or block these at any time. Accounts with MFA enabled do not work |
+| fddb.info | HTML scraping with a session cookie | **Fragile by nature.** The cookie expires regularly and the markup can change without notice |
 
-## Hero-Bilder ersetzen
+Neither Garmin nor fddb.info offers a public API for this data. Use your own
+account, respect the terms of service of both, and do not point this at anyone
+else's data.
 
-Lege drei Dateien in `public/heroes/` ab — der Code referenziert sie unter exakt diesen Namen:
+## Roadmap
 
-```
-public/heroes/endurance.jpg
-public/heroes/hypertrophy.jpg
-public/heroes/weight.jpg
-```
+Honest state of things:
 
-Fehlt ein Bild, fällt die jeweilige Section auf einen CSS-Verlauf zurück.
+- **Plan generation times out on Vercel.** Generating 16 weeks takes three to
+  four minutes across four model calls; the platform limit is 60 seconds per
+  action. It works locally. Production needs client-orchestrated chunking.
+- **Turso migrations are manual.** Schema changes require running
+  `USE_TURSO=1 npm run db:migrate` by hand before deploying.
+- **Eight known lint errors** in chart and dialog components — React Compiler and
+  `setState`-in-effect findings. CI reports them without failing.
+- **Training zones need validation** against a proper lactate test rather than
+  Garmin's threshold estimate.
+- **No tests.** The analysis code in `src/lib/endurance/zone-estimation.ts` and
+  `src/lib/utils/nutrition-recommendation.ts` is pure and deserves a suite.
+- **Single user by design.** Multi-user support would require row-level
+  ownership on every health table.
 
-## Architektur-Prinzipien
+## Disclaimer
 
-- **Adapter-Pattern für externe Quellen.** `src/lib/integrations/` definiert ein gemeinsames Interface (`WeightSourceAdapter`). Sheets ist live, Garmin und FDDB sind Stubs.
-- **DB als Single Source of Truth.** Adapter normalisieren ins DB-Schema und upserten. UI liest nur aus der DB.
-- **DB-Agnostik.** Migration zu Postgres (z. B. Supabase) ist primär eine Config-Änderung in `drizzle.config.ts` und der DB-Init in `src/lib/db/index.ts`.
-- **Server Components by default.** Nur Chart, Form, Topbar und Section-Heroes sind Client Components (Interaktivität / Recharts).
-- **Server Actions** für Form-Submissions (Add, Delete) — kein API-Layer nötig.
+This is not medical advice, and it is not a medical device. It is a personal
+project that computes numbers from data you give it. Calorie targets, training
+zones and plans generated here are estimates from consumer-grade sensors and
+simplified physiological models — treat them accordingly, and talk to an actual
+professional before making decisions that matter.
 
-## Nächste Schritte
+No warranty of any kind. See [LICENSE](LICENSE).
 
-- Hero-Bilder einsetzen (Querformat 16:9 oder breiter).
-- Endurance-Adapter (Garmin Connect, OAuth).
-- Hypertrophy-Logger (eigene UI + DB-Tabelle).
-- Migration zu Postgres / Supabase, sobald Cloud-Deploy ansteht.
+## Stack
+
+Next.js 16 (App Router) · React 19 · TypeScript · Tailwind CSS v4 · shadcn/ui ·
+Drizzle ORM · libSQL (SQLite / Turso) · Recharts · Better Auth · Anthropic SDK
+
+## License
+
+[MIT](LICENSE) © Kilian Kanofsky

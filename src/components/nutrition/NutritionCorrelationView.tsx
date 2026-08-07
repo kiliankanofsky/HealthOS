@@ -50,7 +50,6 @@ const DAYS_BY_RANGE: Record<Range, number | null> = {
 const NUTRITION_GREEN = "#10b981";
 const NUTRITION_GREEN_GHOST = "rgba(16, 185, 129, 0.45)";
 const GARMIN_ORANGE = "#f97316";
-const ACTIVE_ORANGE = "#fb923c";
 const MAINTENANCE_AMBER = "#d97706";
 const WEIGHT_BLUE = "#007AFF";
 const DEFICIT_FILL = "rgba(16, 185, 129, 0.18)"; // dezent grünlich
