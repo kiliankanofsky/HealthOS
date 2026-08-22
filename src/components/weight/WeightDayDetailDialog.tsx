@@ -23,9 +23,12 @@ type Props = {
   onClose: () => void;
 };
 
+// "sheets" ist historisch: der Import lief bis 29.06.2026 und ist ausgebaut.
+// Der Wert bleibt wählbar, damit die importierten Alt-Einträge ihre Herkunft
+// behalten und beim Bearbeiten nicht stillschweigend zu "manual" werden.
 const SOURCE_LABELS: Record<(typeof weightSources)[number], string> = {
   manual: "Manuell",
-  sheets: "Google Sheets",
+  sheets: "Google Sheets (Import, historisch)",
   garmin: "Garmin",
 };
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { ChevronLeft, ChevronRight, Spline, Tag } from "lucide-react";
+import { CalendarOff, ChevronLeft, ChevronRight, Spline, Tag } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { SegmentedControl } from "@/components/ui/segmented-control";
@@ -8,13 +8,17 @@ import type {
   DailyActivity,
   DailyTag,
   NutritionEntry,
+  NutritionExclusion,
   WeightEntry,
 } from "@/lib/db/schema";
+import { eachDayIso } from "@/lib/utils/date";
+import { buildExclusionLookup } from "@/lib/utils/nutrition-exclusions";
 import { loessSmooth, recommendedSpan } from "@/lib/utils/loess";
 import { cn } from "@/lib/utils";
 
 import { NutritionChart, type NutritionChartPoint } from "./NutritionChart";
 import { NutritionDayDetailDialog } from "./NutritionDayDetailDialog";
+import { NutritionExclusionDialog } from "./NutritionExclusionDialog";
 
 type Range = "1w" | "4w" | "8w" | "3m" | "max";
 
@@ -39,6 +43,9 @@ type Props = {
   weightEntries: WeightEntry[];
   tags: DailyTag[];
   activity: DailyActivity[];
+  // Manuell gepflegte Zeiträume mit sporadischem fddb-Tracking — deren
+  // Tagesbilanz ist wertlos und wird im Chart gestrichelt überbrückt.
+  exclusions: NutritionExclusion[];
 };
 
 export function NutritionChartSection({
@@ -46,12 +53,14 @@ export function NutritionChartSection({
   weightEntries,
   tags,
   activity,
+  exclusions,
 }: Props) {
   const [range, setRange] = useState<Range>("4w");
   const [windowOffset, setWindowOffset] = useState(0);
   const [showSmoothing, setShowSmoothing] = useState(true);
   const [showTags, setShowTags] = useState(true);
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
+  const [exclusionDialogOpen, setExclusionDialogOpen] = useState(false);
 
   // Lookups
   const weightByDate = useMemo(() => {
@@ -78,10 +87,16 @@ export function NutritionChartSection({
     return m;
   }, [entries]);
 
+  // Gleiche Quelle wie die Empfehlungs-Engine — Chart und Rechnung dürfen sich
+  // nicht darin unterscheiden, welcher Tag als ausgeschlossen gilt.
+  const isExcluded = useMemo(() => buildExclusionLookup(exclusions), [exclusions]);
+
   // Chart-Daten: Kalorien-Wert je nach Tag-Logik anpassen.
   // - Cheat Meal + kcalTarget: Ziel statt fddb-Wert (Meal getauscht aber im Ziel).
   // - Cheat Day: Wert auf null (Linie wird unterbrochen), Punkt wird im Chart
   //   gesondert oberhalb der Linie als Indikator gerendert.
+  // - Ausgeschlossener Zeitraum: ebenfalls null — der Rohwert bleibt für den
+  //   Tooltip erhalten, taugt als Tagesbilanz aber nicht.
   // Wir reichern jeden Datums-Schlüssel mit Tags an, auch wenn kein Nutrition-
   // Eintrag existiert — Cheat-Day soll auch dann sichtbar sein.
   const data = useMemo<NutritionChartPoint[]>(() => {
@@ -92,6 +107,21 @@ export function NutritionChartSection({
     for (const t of tags) {
       if (t.cheatDay || t.cheatMeal || t.alcohol) allDates.add(t.date);
     }
+
+    // Ausgeschlossene Zeiträume lückenlos auf die Achse legen — sonst hinge das
+    // graue Band nur an den zufällig vorhandenen Einträgen und der Zeitraum
+    // sähe kürzer aus, als er ist. Die Achsen-Grenzen bleiben unverändert.
+    if (allDates.size > 0 && exclusions.length > 0) {
+      const existing = Array.from(allDates).sort();
+      const firstIso = existing[0];
+      const lastIso = existing[existing.length - 1];
+      for (const ex of exclusions) {
+        const from = ex.startDate < firstIso ? firstIso : ex.startDate;
+        const to = !ex.endDate || ex.endDate > lastIso ? lastIso : ex.endDate;
+        for (const d of eachDayIso(from, to)) allDates.add(d);
+      }
+    }
+
     const sorted = Array.from(allDates).sort();
     return sorted.map((date) => {
       const e = nutritionByDate.get(date);
@@ -101,8 +131,10 @@ export function NutritionChartSection({
       const alcohol = t?.alcohol ?? false;
       const rawKcal = e?.caloriesKcal ?? null;
       const target = t?.kcalTarget ?? null;
+      const excluded = isExcluded(date);
       let value: number | null;
-      if (cheatDay) {
+      if (excluded || cheatDay) {
+        // Ausgeschlossen oder Cheat Day → kein belastbarer Tageswert.
         value = null;
       } else if (cheatMeal && target != null) {
         value = target;
@@ -112,6 +144,7 @@ export function NutritionChartSection({
       return {
         date,
         caloriesKcal: value,
+        excluded,
         rawCaloriesKcal: rawKcal,
         kcalTarget: target,
         cheatDay,
@@ -119,7 +152,7 @@ export function NutritionChartSection({
         alcohol,
       };
     });
-  }, [entries, tags, nutritionByDate, tagByDate]);
+  }, [entries, tags, exclusions, isExcluded, nutritionByDate, tagByDate]);
 
   useEffect(() => {
     setWindowOffset(0);
@@ -249,6 +282,15 @@ export function NutritionChartSection({
             >
               <Tag className="size-3.5" />
             </ToggleButton>
+            <button
+              type="button"
+              onClick={() => setExclusionDialogOpen(true)}
+              aria-label="Ausgeschlossene Zeiträume"
+              title="Ausgeschlossene Zeiträume (sporadisches Tracking)"
+              className="ml-1 inline-flex size-7 items-center justify-center rounded-full text-muted-foreground/70 transition-colors hover:bg-muted hover:text-foreground"
+            >
+              <CalendarOff className="size-3.5" />
+            </button>
           </div>
         </div>
       </div>
@@ -285,6 +327,12 @@ export function NutritionChartSection({
           </div>
         )}
       </div>
+
+      <NutritionExclusionDialog
+        open={exclusionDialogOpen}
+        exclusions={exclusions}
+        onClose={() => setExclusionDialogOpen(false)}
+      />
 
       <NutritionDayDetailDialog
         open={selectedDate !== null}

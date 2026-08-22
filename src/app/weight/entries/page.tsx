@@ -3,6 +3,7 @@ import { AppShell } from "@/components/site/AppShell";
 import { WeightDetailView } from "@/components/weight/WeightDetailView";
 import {
   getAllDailyTags,
+  getAllNutritionExclusions,
   getAllWeightEntries,
   getNutritionEntries,
 } from "@/lib/db/queries";
@@ -13,6 +14,7 @@ export default async function WeightEntriesPage() {
   const entries = await getAllWeightEntries();
   const tags = await getAllDailyTags();
   const nutrition = await getNutritionEntries();
+  const exclusions = await getAllNutritionExclusions();
   const matrixYear = new Date().getFullYear();
 
   return (
@@ -39,6 +41,7 @@ export default async function WeightEntriesPage() {
           entries={entries}
           tags={tags}
           nutrition={nutrition}
+          exclusions={exclusions}
           matrixYear={matrixYear}
         />
       </main>

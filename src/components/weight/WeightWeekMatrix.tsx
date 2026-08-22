@@ -2,8 +2,14 @@
 
 import { Cookie, Wine } from "lucide-react";
 
-import type { DailyTag, NutritionEntry, WeightEntry } from "@/lib/db/schema";
+import type {
+  DailyTag,
+  NutritionEntry,
+  NutritionExclusion,
+  WeightEntry,
+} from "@/lib/db/schema";
 import { isoWeekMonday, isoWeeksInYear } from "@/lib/utils/iso-week";
+import { buildExclusionLookup } from "@/lib/utils/nutrition-exclusions";
 import { effectiveCaloriesForDay } from "@/lib/utils/nutrition-recommendation";
 import { cn } from "@/lib/utils";
 
@@ -11,6 +17,8 @@ type Props = {
   entries: WeightEntry[];
   tags: DailyTag[];
   nutrition: NutritionEntry[];
+  /** Ausgeschlossene Zeiträume — deren Tage zählen nicht in den Wochen-Ø. */
+  exclusions: NutritionExclusion[];
   year: number;
   onOpenDay: (date: string) => void;
 };
@@ -45,6 +53,7 @@ export function WeightWeekMatrix({
   entries,
   tags,
   nutrition,
+  exclusions,
   year,
   onOpenDay,
 }: Props) {
@@ -53,6 +62,8 @@ export function WeightWeekMatrix({
 
   const nutritionByDate = new Map<string, NutritionEntry>();
   for (const n of nutrition) nutritionByDate.set(n.date, n);
+
+  const isExcluded = buildExclusionLookup(exclusions);
 
   // Index alle Einträge nach Woche und Wochentag.
   const byKey = new Map<string, CellValue>();
@@ -114,8 +125,9 @@ export function WeightWeekMatrix({
                   : null;
 
               // Effektive (Cheat-bereinigte) Kalorien je Tag → Wochenschnitt.
-              // Cheat-Day/Cheat-Meal überschreiben den fddb-Wert (gleiche Engine
-              // wie /weight & der KI-Kontext). Tage ohne Wert zählen nicht mit.
+              // Cheat-Day/Cheat-Meal überschreiben den fddb-Wert, ausgeschlossene
+              // Zeiträume liefern gar keinen (gleiche Engine wie /weight & der
+              // KI-Kontext). Tage ohne Wert zählen nicht mit.
               const kcalValues: number[] = [];
               let weekHasCheat = false;
               for (let d = 0; d < 7; d++) {
@@ -126,6 +138,7 @@ export function WeightWeekMatrix({
                   nutritionByDate.get(dateStr) ?? null,
                   tagByDate.get(dateStr) ?? null,
                   dateStr,
+                  isExcluded(dateStr),
                 );
                 if (eff.caloriesKcal != null) kcalValues.push(eff.caloriesKcal);
                 if (eff.cheatDay || eff.cheatMeal) weekHasCheat = true;

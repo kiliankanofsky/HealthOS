@@ -13,6 +13,7 @@ import {
   exercises,
   garminDailyMetrics,
   nutritionEntries,
+  nutritionExclusions,
   runSessions,
   sessionExerciseOverrides,
   trainingPlanBlocks,
@@ -104,6 +105,9 @@ export async function seedDemoDatabase(
   await db.delete(runSessions);
   await db.delete(dailyActivity);
   await db.delete(nutritionEntries);
+  // Demo-Besucher dürfen Ausschluss-Zeiträume anlegen — beim Reseed fliegen sie
+  // wie alles andere raus. Der Demo-Datensatz selbst legt keine an.
+  await db.delete(nutritionExclusions);
   await db.delete(dailyTags);
   await db.delete(weightPhases);
   await db.delete(weightEntries);

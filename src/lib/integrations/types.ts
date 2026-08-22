@@ -1,26 +1,11 @@
-import type { NewNutritionEntry, NewWeightEntry } from "@/lib/db/schema";
+import type { NewNutritionEntry } from "@/lib/db/schema";
 
-// Gemeinsame Schnittstelle für externe Datenquellen.
-// Adapter implementieren fetchWeightEntries() und liefern Daten im DB-kompatiblen Format.
-// Phase 1: Stubs. Spätere Integrationen (Sheets, Garmin, FDDB) implementieren dieses Interface.
-export interface WeightSourceAdapter {
-  readonly name: string;
-
-  // Holt rohe Einträge aus der externen Quelle, normalisiert sie ins DB-Schema.
-  fetchWeightEntries(options?: {
-    since?: string; // ISO-Date YYYY-MM-DD
-  }): Promise<NewWeightEntry[]>;
-}
-
-// Helfer: Adapter, der schreibend in die DB synchronisiert (Pattern für später).
-// Wird in Phase 1 nicht implementiert, aber zeigt, wie Adapter eingehängt werden.
-export interface SyncableAdapter extends WeightSourceAdapter {
-  sync(options?: { since?: string }): Promise<{ inserted: number; updated: number }>;
-}
-
-// Eigenes Interface für Ernährungs-Quellen (kcal/Makros pro Tag).
-// Bewusst getrennt von WeightSourceAdapter — die Datenform unterscheidet sich,
-// und ein späterer Wechsel (fddb → YAZIO/Apple Health) bleibt ein 1-Datei-Eingriff.
+// Schnittstelle für Ernährungs-Quellen (kcal/Makros pro Tag).
+//
+// Für Gewicht gibt es bewusst kein Gegenstück mehr: der Google-Sheets-Import
+// lief bis 29.06.2026 und ist ausgebaut, Gewichtseinträge entstehen seitdem
+// ausschließlich in der UI. Ein späterer Quellen-Wechsel hier (fddb →
+// YAZIO/Apple Health) bleibt ein 1-Datei-Eingriff.
 export interface NutritionSourceAdapter {
   readonly name: string;
 

@@ -13,11 +13,15 @@ import {
 import { useMemo, useRef } from "react";
 
 import type { WeightPhase } from "@/lib/db/schema";
+import { buildGapBridge } from "@/lib/utils/chart-gaps";
 import type { SmoothPoint } from "@/lib/utils/loess";
 
 export type ChartPoint = {
   date: string;
-  weight: number;
+  // null = kein Eintrag an diesem Tag. Die x-Achse läuft trotzdem über ihn
+  // (lückenlose Tages-Achse), die Linie bricht ab und wird gestrichelt
+  // überbrückt.
+  weight: number | null;
   cheatDay?: boolean;
   alcohol?: boolean;
   cheatMeal?: boolean;
@@ -34,6 +38,7 @@ type Props = {
 };
 
 const SYSTEM_BLUE = "#007AFF";
+const SYSTEM_BLUE_GHOST = "rgba(0, 122, 255, 0.45)"; // gestrichelte Brücke über Lücken
 const SMOOTH_COLOR = "rgba(140, 140, 140, 0.55)"; // dezenter grauer Trend
 const TAG_COLOR = "#E11D48"; // rose-600
 
@@ -55,11 +60,22 @@ export function WeightChart({
   onOpenPhase,
 }: Props) {
   // Merge: jedem Datenpunkt ggf. den geglätteten Wert zuordnen, damit beide
-  // Linien dieselbe x-Achse teilen (categorical "date").
+  // Linien dieselbe x-Achse teilen (categorical "date"). Dazu je eine
+  // Ghost-Reihe, die die Lücken (Tage ohne Wiegung) gestrichelt überbrückt.
   const merged = useMemo(() => {
-    if (!smoothed) return data.map((d) => ({ ...d, smoothed: undefined }));
-    const map = new Map(smoothed.map((s) => [s.date, s.smoothed]));
-    return data.map((d) => ({ ...d, smoothed: map.get(d.date) }));
+    const smoothMap = smoothed
+      ? new Map(smoothed.map((s) => [s.date, s.smoothed]))
+      : null;
+    const weightGhost = buildGapBridge(data.map((d) => d.weight));
+    const smoothedGhost = smoothMap
+      ? buildGapBridge(data.map((d) => smoothMap.get(d.date) ?? null))
+      : null;
+    return data.map((d, i) => ({
+      ...d,
+      smoothed: smoothMap?.get(d.date),
+      weightGhost: weightGhost[i],
+      smoothedGhost: smoothedGhost?.[i],
+    }));
   }, [data, smoothed]);
 
   // Phasen auf den sichtbaren Bereich klippen: ReferenceArea braucht konkrete
@@ -99,7 +115,7 @@ export function WeightChart({
   // angeklickten Tag selbst zu berechnen.
   const weightByDate = useMemo(() => {
     const m = new Map<string, number>();
-    for (const d of data) m.set(d.date, d.weight);
+    for (const d of data) if (d.weight !== null) m.set(d.date, d.weight);
     return m;
   }, [data]);
 
@@ -113,7 +129,16 @@ export function WeightChart({
     );
   }
 
-  const weights = data.map((d) => d.weight);
+  const weights = data
+    .map((d) => d.weight)
+    .filter((w): w is number => w !== null);
+  if (weights.length === 0) {
+    return (
+      <div className="flex h-80 items-center justify-center text-sm text-muted-foreground">
+        Keine Wiegungen in diesem Zeitraum.
+      </div>
+    );
+  }
   const min = Math.floor(Math.min(...weights) - 0.5);
   const max = Math.ceil(Math.max(...weights) + 0.5);
 
@@ -222,6 +247,9 @@ export function WeightChart({
             }}
             labelFormatter={(label) => formatLabelDate(String(label))}
             formatter={(value, name) => {
+              // Die Ghost-Reihen sind reine Überbrückung, keine Messung —
+              // im Tooltip haben sie nichts verloren.
+              if (name === "weightGhost" || name === "smoothedGhost") return null;
               const v = Number(value);
               const label = name === "smoothed" ? "Trend" : "Gewicht";
               return [Number.isFinite(v) ? `${v.toFixed(1)} kg` : "–", label];
@@ -229,23 +257,59 @@ export function WeightChart({
           />
 
           {smoothed && (
-            <Line
-              type="monotone"
-              dataKey="smoothed"
-              stroke={SMOOTH_COLOR}
-              strokeWidth={1.75}
-              strokeDasharray="0"
-              dot={false}
-              activeDot={false}
-              isAnimationActive={false}
-            />
+            <>
+              {/* Gestrichelte Brücke der Trend-Linie über Tage ohne Wiegung. */}
+              <Line
+                type="monotone"
+                dataKey="smoothedGhost"
+                stroke={SMOOTH_COLOR}
+                strokeOpacity={0.6}
+                strokeWidth={1.5}
+                strokeDasharray="4 4"
+                dot={false}
+                activeDot={false}
+                isAnimationActive={false}
+                connectNulls={false}
+                legendType="none"
+              />
+              <Line
+                type="monotone"
+                dataKey="smoothed"
+                stroke={SMOOTH_COLOR}
+                strokeWidth={1.75}
+                strokeDasharray="0"
+                dot={false}
+                activeDot={false}
+                isAnimationActive={false}
+                connectNulls={false}
+              />
+            </>
           )}
+
+          {/* Gestrichelte Brücke über Tage ohne Wiegung. */}
+          <Line
+            type="monotone"
+            dataKey="weightGhost"
+            stroke={SYSTEM_BLUE_GHOST}
+            strokeWidth={dense ? 1.4 : 2}
+            strokeDasharray="4 4"
+            dot={false}
+            activeDot={false}
+            isAnimationActive={false}
+            connectNulls={false}
+            legendType="none"
+          />
 
           <Line
             type="monotone"
             dataKey="weight"
             stroke={SYSTEM_BLUE}
             strokeWidth={dense ? 1.4 : 2}
+            connectNulls={false}
+            // Ohne das zeichnet sich nur die Mess-Linie ein, während Trend und
+            // die gestrichelten Brücken sofort dastehen — beim Umschalten des
+            // Zeitfensters sieht der Chart dadurch kaputt aus.
+            isAnimationActive={false}
             dot={(props: DotRenderProps) => {
               const { cx, cy, payload, index } = props;
               const isTag =
@@ -253,7 +317,7 @@ export function WeightChart({
                 (payload?.cheatDay === true ||
                   payload?.alcohol === true ||
                   payload?.cheatMeal === true);
-              if (!isTag) {
+              if (!isTag || typeof cx !== "number" || typeof cy !== "number") {
                 return <g key={`d-${index}`} />;
               }
               return (
@@ -280,7 +344,7 @@ type DotRenderProps = {
   cx?: number;
   cy?: number;
   index?: number;
-  payload?: ChartPoint & { smoothed?: number };
+  payload?: ChartPoint & { smoothed?: number; weightGhost?: number };
 };
 
 function formatTickDate(iso: string): string {

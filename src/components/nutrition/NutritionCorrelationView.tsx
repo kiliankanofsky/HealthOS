@@ -24,10 +24,12 @@ import type {
   DailyActivity,
   DailyTag,
   NutritionEntry,
+  NutritionExclusion,
   WeightEntry,
 } from "@/lib/db/schema";
 import { cn } from "@/lib/utils";
 import { toLocalISODate } from "@/lib/utils/date";
+import { buildExclusionLookup } from "@/lib/utils/nutrition-exclusions";
 
 type Range = "1w" | "4w" | "8w" | "3m" | "max";
 
@@ -80,6 +82,12 @@ type Props = {
   weight: WeightEntry[];
   tags: DailyTag[];
   activity: DailyActivity[];
+  /**
+   * Manuell ausgeschlossene Zeiträume (sporadisches fddb-Tracking). Ihre Tage
+   * liefern keinen Intake — weder für die Linie noch für die Kacheln oder die
+   * Maintenance-Schätzung. Gleiche Behandlung wie ein Cheat-Day ohne Tracking.
+   */
+  exclusions: NutritionExclusion[];
 };
 
 type LayerKey = "intake" | "expenditure" | "maintenance" | "weight" | "tags";
@@ -95,6 +103,7 @@ type MergedPoint = {
   cheatDay: boolean;
   cheatMeal: boolean;
   alcohol: boolean;
+  excluded: boolean;
 };
 
 export function NutritionCorrelationView({
@@ -102,6 +111,7 @@ export function NutritionCorrelationView({
   weight,
   tags,
   activity,
+  exclusions,
 }: Props) {
   const [range, setRange] = useState<Range>("8w");
   const [windowOffset, setWindowOffset] = useState(0);
@@ -136,6 +146,7 @@ export function NutritionCorrelationView({
     const wByDate = new Map(weight.map((w) => [w.date, w]));
     const aByDate = new Map(activity.map((a) => [a.date, a]));
     const tByDate = new Map(tags.map((t) => [t.date, t]));
+    const isExcluded = buildExclusionLookup(exclusions);
 
     const base = sorted.map((date) => {
       const w = wByDate.get(date);
@@ -145,8 +156,11 @@ export function NutritionCorrelationView({
       const cheatDay = t?.cheatDay ?? false;
       const cheatMeal = t?.cheatMeal ?? false;
       const target = t?.kcalTarget ?? null;
+      const excluded = isExcluded(date);
       let kcalIn: number | null;
-      if (cheatDay) {
+      if (excluded || cheatDay) {
+        // Ausgeschlossen oder Cheat-Day → kein belastbarer Tageswert. Der
+        // Verbrauch (Garmin) bleibt gültig, nur die Aufnahme fällt weg.
         kcalIn = null;
       } else if (cheatMeal && target != null) {
         kcalIn = target;
@@ -163,12 +177,13 @@ export function NutritionCorrelationView({
         cheatDay,
         cheatMeal,
         alcohol: t?.alcohol ?? false,
+        excluded,
       };
     });
 
     const smoothed = trailingSMA(base.map((p) => p.kcalOut));
     return base.map((p, i) => ({ ...p, kcalOutSmoothed: smoothed[i] }));
-  }, [nutrition, weight, tags, activity]);
+  }, [nutrition, weight, tags, activity, exclusions]);
 
   useEffect(() => {
     setWindowOffset(0);
@@ -197,7 +212,8 @@ export function NutritionCorrelationView({
     });
   }, [merged, days, windowOffset]);
 
-  // Ghost-Werte für die Aufgenommen-Linie an Cheat-Day-Blöcken.
+  // Ghost-Werte für die Aufgenommen-Linie an Lücken-Blöcken (Cheat-Day ODER
+  // ausgeschlossener Zeitraum — beide liefern keinen Tageswert).
   //
   // Damit zwei benachbarte Cheat-Blöcke, die nur EINEN echten Datenpunkt
   // teilen, nicht als durchgehende gestrichelte Linie erscheinen (was 3
@@ -211,13 +227,15 @@ export function NutritionCorrelationView({
     const ghostB = new Array<number | undefined>(filtered.length).fill(undefined);
     const between = new Array<boolean>(filtered.length).fill(false);
 
+    const isBlocked = (p: MergedPoint) => p.cheatDay || p.excluded;
+
     type Block = { start: number; end: number };
     const blocks: Block[] = [];
     let i = 0;
     while (i < filtered.length) {
-      if (filtered[i].cheatDay) {
+      if (isBlocked(filtered[i])) {
         const start = i;
-        while (i < filtered.length && filtered[i].cheatDay) i++;
+        while (i < filtered.length && isBlocked(filtered[i])) i++;
         blocks.push({ start, end: i - 1 });
       } else {
         i++;
@@ -230,14 +248,14 @@ export function NutritionCorrelationView({
       let prev = start - 1;
       while (
         prev >= 0 &&
-        (filtered[prev].cheatDay || filtered[prev].kcalIn === null)
+        (isBlocked(filtered[prev]) || filtered[prev].kcalIn === null)
       ) {
         prev--;
       }
       let next = end + 1;
       while (
         next < filtered.length &&
-        (filtered[next].cheatDay || filtered[next].kcalIn === null)
+        (isBlocked(filtered[next]) || filtered[next].kcalIn === null)
       ) {
         next++;
       }
@@ -259,14 +277,14 @@ export function NutritionCorrelationView({
       }
     }
 
-    // Markiere echte Datenpunkte, deren direkter Nachbar ein Cheat-Day ist.
+    // Markiere echte Datenpunkte, deren direkter Nachbar ein Lücken-Tag ist.
     // Die werden in der normalen Linie als sichtbarer Dot dargestellt.
     for (let k = 0; k < filtered.length; k++) {
-      if (filtered[k].cheatDay || filtered[k].kcalIn === null) continue;
-      const prevIsCheat = k > 0 && filtered[k - 1].cheatDay;
-      const nextIsCheat =
-        k < filtered.length - 1 && filtered[k + 1].cheatDay;
-      if (prevIsCheat || nextIsCheat) between[k] = true;
+      if (isBlocked(filtered[k]) || filtered[k].kcalIn === null) continue;
+      const prevIsBlocked = k > 0 && isBlocked(filtered[k - 1]);
+      const nextIsBlocked =
+        k < filtered.length - 1 && isBlocked(filtered[k + 1]);
+      if (prevIsBlocked || nextIsBlocked) between[k] = true;
     }
 
     return { kcalInGhostA: ghostA, kcalInGhostB: ghostB, isRealBetweenCheats: between };
@@ -300,6 +318,7 @@ export function NutritionCorrelationView({
         cheatDay: p.cheatDay,
         cheatMeal: p.cheatMeal,
         alcohol: p.alcohol,
+        excluded: p.excluded,
       };
     });
   }, [filtered, kcalInGhostA, kcalInGhostB, isRealBetweenCheats]);
@@ -374,6 +393,10 @@ export function NutritionCorrelationView({
           : null,
       maintenance,
       maintenanceDays,
+      // Wie breit ist die Intake-Basis wirklich? Ohne diese Zahl liest sich ein
+      // Ø über 4 verbliebene Tage wie ein Ø über das ganze Fenster.
+      intakeDayCount: inVals.length,
+      excludedDayCount: filtered.filter((p) => p.excluded).length,
     };
   }, [filtered]);
 
@@ -418,6 +441,13 @@ export function NutritionCorrelationView({
     if (first === last) return formatShort(first);
     return `${formatShort(first)} – ${formatShort(last)}`;
   }, [filtered]);
+
+  // Nur zeigen, wenn Ausschlüsse die Basis tatsächlich verschmälern — sonst
+  // wäre es eine Zahl ohne Aussage unter jeder Kachel.
+  const intakeBasisLabel =
+    stats.excludedDayCount > 0
+      ? `${stats.intakeDayCount} Tage · ${stats.excludedDayCount} ausgeschl.`
+      : undefined;
 
   const canShiftOlder = days !== null && windowOffset < maxOffset;
   const canShiftNewer = days !== null && windowOffset > 0;
@@ -481,6 +511,7 @@ export function NutritionCorrelationView({
           label="Ø Aufgenommen"
           value={stats.avgIn !== null ? `${stats.avgIn.toLocaleString("de-DE")} kcal` : "—"}
           accent="text-emerald-700"
+          sub={intakeBasisLabel}
         />
         <StatTile
           label="Ø Verbraucht"
@@ -521,6 +552,7 @@ export function NutritionCorrelationView({
               : "—"
           }
           accent="text-amber-600"
+          sub={intakeBasisLabel}
         />
         <StatTile
           label="Δ Gewicht"
@@ -826,6 +858,7 @@ type TooltipPayloadItem = {
     cheatDay?: boolean;
     cheatMeal?: boolean;
     alcohol?: boolean;
+    excluded?: boolean;
   };
 };
 
@@ -902,6 +935,12 @@ function EnergyTooltip({
             value={`${p.weight.toFixed(1).replace(".", ",")} kg`}
           />
         </div>
+      )}
+
+      {p.excluded && (
+        <p className="mt-1.5 text-[10px] uppercase tracking-wider text-muted-foreground">
+          Zeitraum ausgeschlossen · Aufnahme zählt nicht
+        </p>
       )}
 
       {(p.cheatDay || p.cheatMeal || p.alcohol) && (
@@ -1027,10 +1066,12 @@ function StatTile({
   label,
   value,
   accent,
+  sub,
 }: {
   label: string;
   value: string;
   accent: string;
+  sub?: string;
 }) {
   return (
     <div className="rounded-xl bg-muted/40 p-3">
@@ -1040,6 +1081,9 @@ function StatTile({
       <p className={`mt-1 font-heading text-lg font-semibold tabular-nums tracking-tight ${accent}`}>
         {value}
       </p>
+      {sub && (
+        <p className="mt-0.5 text-[11px] text-muted-foreground tabular-nums">{sub}</p>
+      )}
     </div>
   );
 }

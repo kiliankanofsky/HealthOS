@@ -5,7 +5,12 @@ import { SegmentedControl } from "@/components/ui/segmented-control";
 import { WeightDayDetailDialog } from "./WeightDayDetailDialog";
 import { WeightDayList } from "./WeightDayList";
 import { WeightWeekMatrix } from "./WeightWeekMatrix";
-import type { DailyTag, NutritionEntry, WeightEntry } from "@/lib/db/schema";
+import type {
+  DailyTag,
+  NutritionEntry,
+  NutritionExclusion,
+  WeightEntry,
+} from "@/lib/db/schema";
 
 type View = "day" | "week";
 
@@ -13,10 +18,17 @@ type Props = {
   entries: WeightEntry[];
   tags: DailyTag[];
   nutrition: NutritionEntry[];
+  exclusions: NutritionExclusion[];
   matrixYear: number;
 };
 
-export function WeightDetailView({ entries, tags, nutrition, matrixYear }: Props) {
+export function WeightDetailView({
+  entries,
+  tags,
+  nutrition,
+  exclusions,
+  matrixYear,
+}: Props) {
   const [view, setView] = useState<View>("week");
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
 
@@ -62,6 +74,7 @@ export function WeightDetailView({ entries, tags, nutrition, matrixYear }: Props
           entries={entries}
           tags={tags}
           nutrition={nutrition}
+          exclusions={exclusions}
           year={matrixYear}
           onOpenDay={setSelectedDate}
         />

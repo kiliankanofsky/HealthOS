@@ -9,6 +9,7 @@ import {
   type WeightEntry,
   type WeightPhase,
 } from "@/lib/db/schema";
+import { eachDayIso } from "@/lib/utils/date";
 import { loessSmooth, recommendedSpan } from "@/lib/utils/loess";
 import { cn } from "@/lib/utils";
 
@@ -61,26 +62,32 @@ export function WeightChartSection({ entries, phases, tags }: Props) {
     return m;
   }, [tags]);
 
-  const data = useMemo<ChartPoint[]>(
-    () =>
-      entries.map((e) => {
-        const t = tagsByDate.get(e.date);
-        return {
-          date: e.date,
-          weight: e.weightKg,
-          cheatDay: t?.cheatDay ?? false,
-          alcohol: t?.alcohol ?? false,
-          cheatMeal: t?.cheatMeal ?? false,
-        };
-      }),
-    [entries, tagsByDate],
-  );
-
   const entryByDate = useMemo(() => {
     const m = new Map<string, WeightEntry>();
     for (const e of entries) m.set(e.date, e);
     return m;
   }, [entries]);
+
+  // Lückenlose Tages-Achse vom ersten bis zum letzten Eintrag: Tage ohne
+  // Wiegung kommen als Punkt mit `weight: null` mit. Sonst würde der Chart eine
+  // dreiwöchige Lücke genauso breit zeichnen wie einen einzelnen Tag — der
+  // Verlauf sähe dichter aus, als er ist. Die Linie bricht an diesen Stellen ab
+  // und wird gestrichelt überbrückt (siehe WeightChart).
+  const data = useMemo<ChartPoint[]>(() => {
+    if (entries.length === 0) return [];
+    const firstIso = entries[0].date;
+    const lastIso = entries[entries.length - 1].date;
+    return eachDayIso(firstIso, lastIso).map((date) => {
+      const t = tagsByDate.get(date);
+      return {
+        date,
+        weight: entryByDate.get(date)?.weightKg ?? null,
+        cheatDay: t?.cheatDay ?? false,
+        alcohol: t?.alcohol ?? false,
+        cheatMeal: t?.cheatMeal ?? false,
+      };
+    });
+  }, [entries, entryByDate, tagsByDate]);
 
   // Range-Wechsel → Offset auf 0 zurück, damit man immer am aktuellen Ende startet.
   useEffect(() => {
@@ -113,10 +120,16 @@ export function WeightChartSection({ entries, phases, tags }: Props) {
   }, [data, days, windowOffset]);
 
   const smoothed = useMemo(() => {
-    if (!showSmoothing || filtered.length < 3) return null;
-    const span = recommendedSpan(filtered.length);
+    if (!showSmoothing) return null;
+    // Nur echte Wiegungen glätten — die Null-Tage der lückenlosen Achse sind
+    // keine Messungen und dürfen den Trend nicht nach unten ziehen.
+    const measured = filtered.filter(
+      (p): p is ChartPoint & { weight: number } => p.weight !== null,
+    );
+    if (measured.length < 3) return null;
+    const span = recommendedSpan(measured.length);
     return loessSmooth(
-      filtered.map((p) => ({ date: p.date, weight: p.weight })),
+      measured.map((p) => ({ date: p.date, weight: p.weight })),
       span,
     );
   }, [filtered, showSmoothing]);

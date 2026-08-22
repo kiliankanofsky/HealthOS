@@ -60,7 +60,6 @@ export function SyncNowButton({ label = "Sync" }: { label?: string } = {}) {
 function SyncStatusPill({ summary }: { summary: SyncSummary }) {
   const { results } = summary;
   const entries: { label: string; result: SyncResult }[] = [
-    { label: "Sheets", result: results.sheets },
     { label: "Strength", result: results.garminStrength },
     { label: "Kalorien", result: results.garminCalories },
     { label: "Läufe", result: results.garminRuns },

@@ -1,5 +1,6 @@
 import {
   Activity,
+  CalendarOff,
   Flame,
   MoveDownRight,
   MoveRight,
@@ -56,6 +57,11 @@ export function NutritionRecommendationCard({ rec, maintenance }: Props) {
 
   return (
     <div className="space-y-5">
+      <ExclusionNotice
+        excludedDays={rec.excludedDaysInWindow}
+        windowDays={rec.windowDays}
+        blocking={rec.avgIntakeKcal == null}
+      />
       <CheatDayNotice rec={rec} />
 
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
@@ -77,7 +83,11 @@ export function NutritionRecommendationCard({ rec, maintenance }: Props) {
         <Stat
           label="Ø Intake"
           value={rec.avgIntakeKcal != null ? `${rec.avgIntakeKcal} kcal` : "—"}
-          sub={`${rec.intakeDayCount} Tage (14d-Fenster)`}
+          sub={
+            rec.excludedDaysInWindow > 0
+              ? `${rec.intakeDayCount} Tage · ${rec.excludedDaysInWindow} ausgeschl.`
+              : `${rec.intakeDayCount} Tage (${rec.windowDays}d-Fenster)`
+          }
         />
       </div>
 
@@ -100,11 +110,7 @@ export function NutritionRecommendationCard({ rec, maintenance }: Props) {
         </div>
       ) : (
         <p className="rounded-2xl bg-muted/40 px-5 py-6 text-sm text-muted-foreground">
-          Noch zu wenig Daten für eine konkrete Anpassung —{" "}
-          {rec.observedWeeklyDeltaKg == null
-            ? "es braucht mindestens je 2 Wiegungen in dieser und der vorigen Woche innerhalb der Phase"
-            : "es braucht mindestens 4 fddb-Tage in den letzten 14 Tagen"}
-          .
+          Noch zu wenig Daten für eine konkrete Anpassung — {missingDataReason(rec)}.
         </p>
       )}
 
@@ -134,6 +140,11 @@ function MaintenanceCard({
   const hasNumber = est.recommendedMaintenanceKcal != null;
   return (
     <div className="space-y-5">
+      <ExclusionNotice
+        excludedDays={est.excludedDaysInWindow}
+        windowDays={28}
+        blocking={est.recommendedMaintenanceKcal == null}
+      />
       <MaintenanceCheatNotice est={est} />
 
       {hasNumber ? (
@@ -164,7 +175,10 @@ function MaintenanceCard({
       ) : (
         <p className="rounded-2xl bg-muted/40 px-5 py-6 text-sm text-muted-foreground">
           Noch zu wenig Daten für eine Erhaltungs-Schätzung — es braucht in
-          mindestens einem Fenster je ≥ 3 Wiegungen und ≥ 3 getrackte Tage.
+          mindestens einem Fenster je ≥ 3 Wiegungen und ≥ 3 verwertbare
+          Tracking-Tage.
+          {est.excludedDaysInWindow > 0 &&
+            ` Aktuell liegen ${est.excludedDaysInWindow} der letzten 28 Tage in einem ausgeschlossenen Zeitraum.`}
         </p>
       )}
 
@@ -180,7 +194,11 @@ function MaintenanceCard({
                 icon={<Flame className="size-3.5" />}
                 label="Ø Intake"
                 value={w.avgIntakeKcal != null ? `${w.avgIntakeKcal} kcal` : "—"}
-                sub={`${w.intakeDayCount} Tage`}
+                sub={
+                  w.excludedDayCount > 0
+                    ? `${w.intakeDayCount} Tage · ${w.excludedDayCount} ausg.`
+                    : `${w.intakeDayCount} Tage`
+                }
               />
               <Line
                 icon={<Scale className="size-3.5" />}
@@ -250,6 +268,49 @@ function Line({
       </dd>
     </div>
   );
+}
+
+// Ausgeschlossene Zeiträume sind eine bewusste Einstellung, keine Störung —
+// deshalb neutral gehalten. Erst wenn sie die Rechnung tatsächlich blockieren,
+// wird der Hinweis deutlicher: sonst steht da nur ein "—" ohne Erklärung.
+function ExclusionNotice({
+  excludedDays,
+  windowDays,
+  blocking,
+}: {
+  excludedDays: number;
+  windowDays: number;
+  blocking: boolean;
+}) {
+  if (excludedDays === 0) return null;
+  return (
+    <div className="flex gap-2.5 rounded-2xl bg-muted/50 px-4 py-3 text-sm ring-1 ring-border">
+      <CalendarOff className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+      <p className="text-muted-foreground">
+        <span className="font-medium text-foreground">
+          {excludedDays} von {windowDays} Tagen
+        </span>{" "}
+        im Berechnungsfenster liegen in einem ausgeschlossenen Zeitraum. Ihre
+        fddb-Werte bleiben erhalten, zählen hier aber nicht als Aufnahme
+        {blocking
+          ? " — dadurch bleiben zu wenige verwertbare Tage für eine Zahl übrig."
+          : "."}
+      </p>
+    </div>
+  );
+}
+
+// Warum steht hier keine Zahl? Der Grund unterscheidet sich je nachdem, welche
+// Seite der Rechnung fehlt — Wiegungen oder verwertbare Tracking-Tage.
+function missingDataReason(rec: NutritionRecommendation): string {
+  if (rec.observedWeeklyDeltaKg == null) {
+    return "es braucht mindestens je 2 Wiegungen in dieser und der vorigen Woche innerhalb der Phase";
+  }
+  const usableDays = rec.windowDays - rec.excludedDaysInWindow;
+  if (rec.excludedDaysInWindow > 0 && usableDays < 4) {
+    return `von den letzten ${rec.windowDays} Tagen sind ${rec.excludedDaysInWindow} ausgeschlossen, es bleiben nur ${usableDays} mögliche Tracking-Tage (nötig sind 4)`;
+  }
+  return `es braucht mindestens 4 getrackte Tage in den letzten ${rec.windowDays} Tagen`;
 }
 
 function MaintenanceCheatNotice({ est }: { est: MaintenanceEstimate }) {

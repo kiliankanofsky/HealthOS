@@ -15,6 +15,7 @@ import {
   createPlanSession,
   deletePlanSession,
   getAllDailyTags,
+  getAllNutritionExclusions,
   getAllPhases,
   getAllWeightEntries,
   getDailyMetricsBetween,
@@ -608,16 +609,24 @@ export async function runPlanChat(
   if (!plan) return { reply: "Kein Plan gefunden.", changed: false };
 
   const sessions = await getSessionsForPlan(planId);
-  const [metrics, runsRaw, weightEntries, phases, nutrition, dailyTags] =
-    await Promise.all([
-      getDailyMetricsBetween(isoDaysAgo(todayIso, 14), todayIso),
-      // 180 Tage, damit die 42-Tage-CTL gut "aufgewärmt" ist.
-      getRunSessionsBetween(isoDaysAgo(todayIso, 180), todayIso),
-      getAllWeightEntries(),
-      getAllPhases(),
-      getNutritionEntries({ from: isoDaysAgo(todayIso, 13), to: todayIso }),
-      getAllDailyTags(),
-    ]);
+  const [
+    metrics,
+    runsRaw,
+    weightEntries,
+    phases,
+    nutrition,
+    dailyTags,
+    exclusions,
+  ] = await Promise.all([
+    getDailyMetricsBetween(isoDaysAgo(todayIso, 14), todayIso),
+    // 180 Tage, damit die 42-Tage-CTL gut "aufgewärmt" ist.
+    getRunSessionsBetween(isoDaysAgo(todayIso, 180), todayIso),
+    getAllWeightEntries(),
+    getAllPhases(),
+    getNutritionEntries({ from: isoDaysAgo(todayIso, 13), to: todayIso }),
+    getAllDailyTags(),
+    getAllNutritionExclusions(),
+  ]);
   const runs = [...runsRaw].sort((a, b) => a.date.localeCompare(b.date));
   const fitness = computeFitness(
     runs.map((r) => ({ date: r.date, trainingLoad: r.trainingLoad })),
@@ -635,6 +644,7 @@ export async function runPlanChat(
     phases,
     nutrition,
     tags: tagsInWindow,
+    exclusions,
     todayIso,
   });
   const weightText = weightPhaseText({

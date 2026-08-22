@@ -23,13 +23,16 @@ import {
   type NewTrainingPlanBlock,
   type NewTrainingPlanSession,
   type NewTrainingPlanWeek,
+  type NewNutritionExclusion,
   type NewWeightEntry,
   type NewWeightPhase,
   type NewWorkoutSession,
   type NewWorkoutSet,
   type NutritionEntry,
+  type NutritionExclusion,
   type NutritionSource,
   nutritionEntries,
+  nutritionExclusions,
   type RunSession,
   runSessions,
   sessionExerciseOverrides,
@@ -255,16 +258,6 @@ export async function deletePhase(id: number): Promise<void> {
 export async function clearAllPhases(): Promise<void> {
   const db = await getDb();
   await db.delete(weightPhases).run();
-}
-
-// Löscht nur Phasen einer bestimmten Quelle (z. B. "sheets"). Der Sheets-Sync
-// nutzt das, um seine abgeleiteten Phasen zu ersetzen, OHNE manuell gepflegte
-// Phasen (source="manual", etwa eine Maintenance-Phase) mitzulöschen.
-export async function clearPhasesBySource(
-  source: WeightPhase["source"],
-): Promise<void> {
-  const db = await getDb();
-  await db.delete(weightPhases).where(eq(weightPhases.source, source)).run();
 }
 
 // ============================================================
@@ -1111,6 +1104,46 @@ export async function upsertNutritionEntry(
     })
     .returning();
   return row;
+}
+
+// ---- Ausgeschlossene Zeiträume (sporadisches fddb-Tracking) ----
+//
+// Rein manuell gepflegt (Dialog auf /weight). Der Kalorien-Chart blendet die
+// Tagesbilanz dieser Zeiträume aus und überbrückt sie gestrichelt.
+
+export async function getAllNutritionExclusions(): Promise<NutritionExclusion[]> {
+  const db = await getDb();
+  return db
+    .select()
+    .from(nutritionExclusions)
+    .orderBy(asc(nutritionExclusions.startDate))
+    .all();
+}
+
+export async function createNutritionExclusion(
+  input: NewNutritionExclusion,
+): Promise<NutritionExclusion> {
+  const db = await getDb();
+  const [row] = await db.insert(nutritionExclusions).values(input).returning();
+  return row;
+}
+
+export async function updateNutritionExclusion(
+  id: number,
+  patch: Partial<Pick<NutritionExclusion, "startDate" | "endDate" | "label">>,
+): Promise<NutritionExclusion | undefined> {
+  const db = await getDb();
+  const [row] = await db
+    .update(nutritionExclusions)
+    .set(patch)
+    .where(eq(nutritionExclusions.id, id))
+    .returning();
+  return row;
+}
+
+export async function deleteNutritionExclusion(id: number): Promise<void> {
+  const db = await getDb();
+  await db.delete(nutritionExclusions).where(eq(nutritionExclusions.id, id)).run();
 }
 
 // ============================================================

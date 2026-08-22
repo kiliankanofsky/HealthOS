@@ -13,7 +13,7 @@
     "db:seed:hypertrophy": "tsx scripts/seed-hypertrophy.ts",
     "db:seed:demo": "tsx scripts/seed-demo.ts",
     "db:studio": "drizzle-kit studio",
-    "db:sync:sheets": "tsx scripts/sync-sheets.ts",
+    "db:query": "tsx scripts/query.ts",
     "garmin:login-check": "tsx scripts/garmin-login-check.ts",
     "garmin:strength-list": "tsx scripts/garmin-strength-list.ts",
     "db:sync:garmin": "tsx scripts/sync-garmin-strength.ts",

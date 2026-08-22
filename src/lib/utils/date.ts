@@ -32,3 +32,21 @@ export function germanDateWithWeekday(iso: string): string {
     year: "numeric",
   });
 }
+
+/** Alle ISO-Tage von `fromIso` bis `toIso` (beide inklusive), aufsteigend. */
+export function eachDayIso(fromIso: string, toIso: string): string[] {
+  const out: string[] = [];
+  if (fromIso > toIso) return out;
+  const cursor = new Date(`${fromIso}T00:00:00`);
+  const end = new Date(`${toIso}T00:00:00`);
+  // Guard gegen ungültige Eingaben — eine Endlosschleife im Render wäre teuer.
+  if (Number.isNaN(cursor.getTime()) || Number.isNaN(end.getTime())) return out;
+  while (cursor.getTime() <= end.getTime()) {
+    const y = cursor.getFullYear();
+    const m = String(cursor.getMonth() + 1).padStart(2, "0");
+    const d = String(cursor.getDate()).padStart(2, "0");
+    out.push(`${y}-${m}-${d}`);
+    cursor.setDate(cursor.getDate() + 1);
+  }
+  return out;
+}

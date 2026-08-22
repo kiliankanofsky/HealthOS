@@ -4,6 +4,7 @@ import {
   CartesianGrid,
   Line,
   LineChart,
+  ReferenceArea,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -11,13 +12,19 @@ import {
 } from "recharts";
 import { useMemo, useRef } from "react";
 
+import { buildGapBridge } from "@/lib/utils/chart-gaps";
 import type { SmoothPoint } from "@/lib/utils/loess";
 
 export type NutritionChartPoint = {
   date: string;
-  // Wert für die Linie. null = Cheat Day (Linie unterbrochen, Punkt landet
-  // oberhalb der Linie als Indikator).
+  // Wert für die Linie. null = Cheat Day (Punkt landet oberhalb der Linie als
+  // Indikator) oder ausgeschlossener Zeitraum. In beiden Fällen bricht die
+  // Linie ab und wird gestrichelt überbrückt.
   caloriesKcal: number | null;
+  // Tag liegt in einem manuell ausgeschlossenen Zeitraum (sporadisches
+  // fddb-Tracking) — die Tagesbilanz ist wertlos, der Rohwert bleibt im
+  // Tooltip aber sichtbar.
+  excluded?: boolean;
   // Roh-Wert von fddb, unabhängig von Cheat-Meal-Logik (nur Anzeige im Tooltip).
   rawCaloriesKcal: number | null;
   kcalTarget: number | null;
@@ -38,6 +45,9 @@ const NUTRITION_GREEN = "#10b981"; // emerald-500
 const NUTRITION_GREEN_GHOST = "rgba(16, 185, 129, 0.45)"; // dezenter für Cheat-Day-Brücke
 const SMOOTH_COLOR = "rgba(140, 140, 140, 0.55)";
 const TAG_COLOR = "#E11D48"; // rose-600
+// Neutrales Band über ausgeschlossenen Zeiträumen — erklärt die gestrichelte
+// Linie, ohne mit den Phasen-Farben des Gewichts-Charts zu konkurrieren.
+const EXCLUDED_FILL = "rgba(120, 120, 128, 0.10)";
 
 export function NutritionChart({
   data,
@@ -73,41 +83,42 @@ export function NutritionChart({
     [smoothed],
   );
 
-  // Ghost-Linien für Cheat-Day-Gaps: nur an Cheat-Day-Positionen + dem
-  // unmittelbaren prev/next Anker-Punkt einen Wert, sonst undefined. So zeichnet
-  // Recharts (mit connectNulls=false) nur ein einziges Segment exakt über die
-  // Lücke — die gestrichelte Linie ist klar auf den fehlenden Bereich begrenzt.
+  // Ghost-Linien: gestrichelte Brücken über jede Lücke der Reihe — Cheat Days,
+  // ausgeschlossene Zeiträume und Tage ohne fddb-Wert. Gesetzt sind nur die
+  // Lücken selbst plus die angrenzenden Anker, damit Recharts (mit
+  // connectNulls=false) exakt über der Lücke zeichnet und nicht daneben.
   const ghostLines = useMemo(() => {
-    const calories = new Array<number | undefined>(data.length).fill(undefined);
-    const trend = new Array<number | undefined>(data.length).fill(undefined);
-    for (let i = 0; i < data.length; i++) {
-      if (!data[i].cheatDay) continue;
-      // raw calorie bridge
-      fillBridge(
-        i,
-        calories,
-        (j) =>
-          data[j].cheatDay || data[j].caloriesKcal === null
-            ? null
-            : data[j].caloriesKcal,
-        data.length,
-      );
-      // smoothed bridge — nur wenn überhaupt eine geglättete Linie gerendert wird
-      if (smoothMap) {
-        fillBridge(
-          i,
-          trend,
-          (j) => {
-            if (data[j].cheatDay) return null;
-            const v = smoothMap.get(data[j].date);
-            return v === undefined ? null : v;
-          },
-          data.length,
-        );
-      }
-    }
+    const calories = buildGapBridge(data.map((d) => d.caloriesKcal));
+    const trend = smoothMap
+      ? buildGapBridge(
+          data.map((d) =>
+            d.caloriesKcal === null ? null : smoothMap.get(d.date) ?? null,
+          ),
+        )
+      : new Array<number | undefined>(data.length).fill(undefined);
     return { calories, trend };
   }, [data, smoothMap]);
+
+  // Zusammenhängende Läufe ausgeschlossener Tage → ein Band je Zeitraum.
+  // Wird aus den sichtbaren Punkten abgeleitet, ist damit automatisch auf das
+  // Zeitfenster geklippt.
+  const excludedBands = useMemo(() => {
+    const bands: { x1: string; x2: string }[] = [];
+    let start: string | null = null;
+    let prev: string | null = null;
+    for (const d of data) {
+      if (d.excluded) {
+        if (start === null) start = d.date;
+        prev = d.date;
+      } else if (start !== null && prev !== null) {
+        bands.push({ x1: start, x2: prev });
+        start = null;
+        prev = null;
+      }
+    }
+    if (start !== null && prev !== null) bands.push({ x1: start, x2: prev });
+    return bands;
+  }, [data]);
 
   const merged = useMemo(() => {
     return data.map((d, i) => ({
@@ -161,6 +172,21 @@ export function NutritionChart({
             tickFormatter={(v: number) => v.toLocaleString("de-DE")}
           />
 
+          {/* Ausgeschlossene Zeiträume als dezentes Band hinterlegen — sonst
+              bliebe unklar, warum die Linie dort gestrichelt ist. */}
+          {excludedBands.map((b) => (
+            <ReferenceArea
+              key={`ex-${b.x1}`}
+              x1={b.x1}
+              x2={b.x2}
+              y1={min}
+              y2={max}
+              fill={EXCLUDED_FILL}
+              stroke="none"
+              ifOverflow="visible"
+            />
+          ))}
+
           <Tooltip
             cursor={{ stroke: NUTRITION_GREEN, strokeOpacity: 0.2, strokeWidth: 1 }}
             contentStyle={{
@@ -179,14 +205,27 @@ export function NutritionChart({
                   "Trend",
                 ];
               }
-              if (name === "caloriesGhost" || name === "smoothedGhost") return null;
+              if (name === "smoothedGhost") return null;
+              const payload = (
+                item as { payload?: NutritionChartPoint } | undefined
+              )?.payload;
+              if (name === "caloriesGhost") {
+                // Die Brücke selbst ist keine Messung. An ausgeschlossenen
+                // Tagen ist sie aber der einzige Eintrag im Tooltip — dort
+                // zeigen wir stattdessen den (bewusst ignorierten) Rohwert.
+                if (!payload?.excluded) return null;
+                const raw = payload.rawCaloriesKcal;
+                return [
+                  raw != null
+                    ? `${raw.toLocaleString("de-DE")} kcal — ausgeschlossen`
+                    : "nicht getrackt",
+                  "Aufgenommen",
+                ];
+              }
               if (name === "cheatDayMarker") {
                 return ["Cheat Day", "Tag"];
               }
               // Rohwert + Hinweise bei Cheat-Meal anzeigen.
-              const payload = (
-                item as { payload?: NutritionChartPoint } | undefined
-              )?.payload;
               if (payload?.cheatMeal && payload.kcalTarget != null) {
                 return [
                   `${payload.kcalTarget.toLocaleString("de-DE")} kcal (Ziel · Cheat Meal)`,
@@ -249,6 +288,9 @@ export function NutritionChart({
             stroke={NUTRITION_GREEN}
             strokeWidth={dense ? 1.4 : 2}
             connectNulls={false}
+            // Wie im Gewichts-Chart: Brücken und Trend rendern sofort, die
+            // Mess-Linie soll nicht als Einzige hinterherlaufen.
+            isAnimationActive={false}
             dot={(props: DotRenderProps) => {
               const { cx, cy, payload, index } = props;
               const onLineTag =
@@ -326,35 +368,3 @@ function formatLabelDate(iso: string): string {
   const [y, m, d] = iso.split("-");
   return `${d}.${m}.${y}`;
 }
-
-// Setzt Ghost-Werte für eine einzelne Cheat-Day-Position `i`: linear
-// interpolierter Wert an `i`, identische Anker-Werte bei prev und next, alle
-// übrigen Slots bleiben undefined. So entsteht beim Rendern (connectNulls=false)
-// ein einziges Liniensegment, das exakt über dem Gap liegt — ohne dass die
-// gestrichelte Linie irgendwo neben der Lücke durchscheint.
-function fillBridge(
-  i: number,
-  out: (number | undefined)[],
-  valueAt: (j: number) => number | null,
-  length: number,
-): void {
-  let prev = i - 1;
-  while (prev >= 0 && valueAt(prev) === null) prev--;
-  let next = i + 1;
-  while (next < length && valueAt(next) === null) next++;
-  const prevV = prev >= 0 ? valueAt(prev) : null;
-  const nextV = next < length ? valueAt(next) : null;
-  if (prevV !== null && nextV !== null) {
-    const t = (i - prev) / (next - prev);
-    out[i] = prevV + (nextV - prevV) * t;
-    out[prev] = prevV;
-    out[next] = nextV;
-  } else if (prevV !== null) {
-    out[i] = prevV;
-    out[prev] = prevV;
-  } else if (nextV !== null) {
-    out[i] = nextV;
-    out[next] = nextV;
-  }
-}
-

@@ -8,6 +8,12 @@
 // (1 kg Körperfett ≈ 7700 kcal) in eine tägliche Kalorien-Anpassung
 // übersetzt und auf den Ø-Intake der letzten 14 Tage (fddb) angewendet.
 //
+// Manuell ausgeschlossene Zeiträume (`nutrition_exclusions`, siehe
+// utils/nutrition-exclusions.ts) fallen dabei komplett heraus — ihre fddb-Werte
+// bleiben in der DB, zählen hier aber weder für den Ø-Intake noch für die
+// TDEE-Bilanz. Die Gewichts-Seite der Rechnung bleibt unberührt: gewogen wird
+// auch im Urlaub, nur das Essens-Tracking taugt dort nichts.
+//
 // Genutzt von der Card auf /weight und als deterministischer Daten-Punkt
 // im KI-Dashboard-Kontext.
 // ============================================================
@@ -20,14 +26,26 @@ import type {
   WeightPhase,
 } from "@/lib/db/schema";
 
+import { eachDayIso } from "./date";
+import {
+  buildExclusionLookup,
+  type NutritionExclusionRange,
+} from "./nutrition-exclusions";
 import { computeWeightStats, diff, phaseForDate } from "./weight-stats";
 
 // ============================================================
-// Cheat-Tag-Override
+// Ausschluss- und Cheat-Tag-Override
 //
-// Wenn für einen Tag ein Cheat-Day- oder Cheat-Meal-Tag gesetzt ist, ist das
-// fddb-Tracking nicht repräsentativ — der User trackt an diesen Tagen bewusst
-// nicht alles. Stattdessen gilt:
+// Vorrang hat der **Ausschluss**: Liegt der Tag in einem manuell gepflegten
+// `nutrition_exclusions`-Zeitraum (sporadisches fddb-Tracking, z.B. Urlaub),
+// gibt es keinen verwertbaren Tageswert — der fddb-Wert bleibt zwar erhalten
+// (nichts wird extern gelöscht), fließt aber in KEINE Mittelung ein. Auch ein
+// Cheat-Tag ändert daran nichts: in einem Loch ist auch der Cheat-Aufschlag
+// geraten.
+//
+// Sonst gilt: Wenn für einen Tag ein Cheat-Day- oder Cheat-Meal-Tag gesetzt ist,
+// ist das fddb-Tracking nicht repräsentativ — der User trackt an diesen Tagen
+// bewusst nicht alles. Stattdessen gilt:
 //
 //   1. kcalTarget aus daily_tags ist gesetzt → dieser Wert IST die Wahrheit
 //      (z.B. "Cheat-Meal: 2000 kcal" überschreibt fddb 1000 kcal).
@@ -50,6 +68,7 @@ export type EffectiveDay = {
   /** Wie kam der Wert zustande? */
   kind:
     | "fddb"
+    | "excluded"
     | "cheat-meal-target"
     | "cheat-meal-fallback"
     | "cheat-day-target"
@@ -59,21 +78,41 @@ export type EffectiveDay = {
   fddbKcal: number | null;
   cheatDay: boolean;
   cheatMeal: boolean;
+  /** Tag liegt in einem manuell ausgeschlossenen Zeitraum. */
+  excluded: boolean;
 };
 
 export function effectiveCaloriesForDay(
   entry: { caloriesKcal: number } | null,
   tag: Pick<DailyTag, "cheatDay" | "cheatMeal" | "kcalTarget"> | null,
   date: string,
+  /**
+   * Liegt der Tag in einem ausgeschlossenen Zeitraum? Bewusst ein Pflicht-
+   * Argument: ein vergessenes `false` würde die Ausschlüsse still aushebeln.
+   */
+  excluded: boolean,
 ): EffectiveDay {
   const fddb = entry != null && entry.caloriesKcal > 0 ? entry.caloriesKcal : null;
   const cheatDay = tag?.cheatDay === true;
   const cheatMeal = tag?.cheatMeal === true;
   const target = tag?.kcalTarget != null && tag.kcalTarget > 0 ? tag.kcalTarget : null;
 
+  // Ausschluss schlägt alles: kein Wert, aber der Rohwert bleibt sichtbar.
+  if (excluded) {
+    return {
+      date,
+      caloriesKcal: null,
+      kind: "excluded",
+      fddbKcal: fddb,
+      cheatDay,
+      cheatMeal,
+      excluded: true,
+    };
+  }
+
   if (cheatDay) {
     if (target != null) {
-      return { date, caloriesKcal: target, kind: "cheat-day-target", fddbKcal: fddb, cheatDay, cheatMeal };
+      return { date, caloriesKcal: target, kind: "cheat-day-target", fddbKcal: fddb, cheatDay, cheatMeal, excluded: false };
     }
     if (fddb != null) {
       return {
@@ -83,14 +122,15 @@ export function effectiveCaloriesForDay(
         fddbKcal: fddb,
         cheatDay,
         cheatMeal,
+        excluded: false,
       };
     }
-    return { date, caloriesKcal: null, kind: "cheat-day-unknown", fddbKcal: null, cheatDay, cheatMeal };
+    return { date, caloriesKcal: null, kind: "cheat-day-unknown", fddbKcal: null, cheatDay, cheatMeal, excluded: false };
   }
 
   if (cheatMeal) {
     if (target != null) {
-      return { date, caloriesKcal: target, kind: "cheat-meal-target", fddbKcal: fddb, cheatDay, cheatMeal };
+      return { date, caloriesKcal: target, kind: "cheat-meal-target", fddbKcal: fddb, cheatDay, cheatMeal, excluded: false };
     }
     if (fddb != null) {
       return {
@@ -100,11 +140,12 @@ export function effectiveCaloriesForDay(
         fddbKcal: fddb,
         cheatDay,
         cheatMeal,
+        excluded: false,
       };
     }
   }
 
-  return { date, caloriesKcal: fddb, kind: "fddb", fddbKcal: fddb, cheatDay, cheatMeal };
+  return { date, caloriesKcal: fddb, kind: "fddb", fddbKcal: fddb, cheatDay, cheatMeal, excluded: false };
 }
 
 /**
@@ -115,19 +156,39 @@ export function effectiveCaloriesForDay(
 export function buildEffectiveDays(
   nutrition: NutritionEntry[],
   tags: DailyTag[],
+  exclusions: readonly NutritionExclusionRange[],
 ): EffectiveDay[] {
   const byDateNutrition = new Map<string, NutritionEntry>();
   for (const n of nutrition) byDateNutrition.set(n.date, n);
   const byDateTag = new Map<string, DailyTag>();
   for (const t of tags) byDateTag.set(t.date, t);
+  const isExcluded = buildExclusionLookup(exclusions);
 
   const dates = new Set<string>([...byDateNutrition.keys(), ...byDateTag.keys()]);
   const out: EffectiveDay[] = [];
   for (const d of dates) {
-    out.push(effectiveCaloriesForDay(byDateNutrition.get(d) ?? null, byDateTag.get(d) ?? null, d));
+    out.push(
+      effectiveCaloriesForDay(
+        byDateNutrition.get(d) ?? null,
+        byDateTag.get(d) ?? null,
+        d,
+        isExcluded(d),
+      ),
+    );
   }
   out.sort((a, b) => a.date.localeCompare(b.date));
   return out;
+}
+
+/** Wie viele Kalendertage des Fensters liegen in einem Ausschluss-Zeitraum? */
+function countExcludedDays(
+  exclusions: readonly NutritionExclusionRange[],
+  fromIso: string,
+  toIso: string,
+): number {
+  if (exclusions.length === 0) return 0;
+  const isExcluded = buildExclusionLookup(exclusions);
+  return eachDayIso(fromIso, toIso).filter(isExcluded).length;
 }
 
 const KCAL_PER_KG = 7700;
@@ -166,6 +227,10 @@ export type NutritionRecommendation = {
   cheatMealsInWindow: number;
   /** Cheat-Days ohne Tracking — aus der Intake-Mittelung herausgenommen. */
   cheatDayUnknownCount: number;
+  /** Kalendertage des 14-Tage-Fensters, die in einem Ausschluss-Zeitraum liegen. */
+  excludedDaysInWindow: number;
+  /** Länge des Fensters in Tagen — Bezugsgröße für excludedDaysInWindow. */
+  windowDays: number;
 };
 
 export function buildNutritionRecommendation(input: {
@@ -174,9 +239,11 @@ export function buildNutritionRecommendation(input: {
   nutrition: NutritionEntry[];
   /** Daily-Tags mindestens für das Empfehlungsfenster (14 Tage). */
   tags: DailyTag[];
+  /** Manuell ausgeschlossene Zeiträume — deren Tage zählen nicht als Intake. */
+  exclusions: readonly NutritionExclusionRange[];
   todayIso: string;
 }): NutritionRecommendation {
-  const { weightEntries, phases, nutrition, tags, todayIso } = input;
+  const { weightEntries, phases, nutrition, tags, exclusions, todayIso } = input;
   const phase = phaseForDate(phases, todayIso);
 
   // Vergleichsbasis: nur Wiegungen innerhalb der laufenden Phase, damit die
@@ -201,7 +268,7 @@ export function buildNutritionRecommendation(input: {
   // damit Cheat-Phasen die "wahre" Aufnahme spiegeln, nicht den getrackten
   // Teil-Wert.
   const fromIso = isoDaysAgo(todayIso, 13);
-  const effectiveInWindow = buildEffectiveDays(nutrition, tags).filter(
+  const effectiveInWindow = buildEffectiveDays(nutrition, tags, exclusions).filter(
     (d) => d.date >= fromIso && d.date <= todayIso,
   );
   const days = effectiveInWindow.filter((d) => d.caloriesKcal != null);
@@ -215,6 +282,9 @@ export function buildNutritionRecommendation(input: {
   const cheatDayUnknownCount = effectiveInWindow.filter(
     (d) => d.kind === "cheat-day-unknown",
   ).length;
+  // Über die Kalendertage gezählt, nicht über die Einträge: an ausgeschlossenen
+  // Tagen kann der fddb-Eintrag ganz fehlen, ausgeschlossen sind sie trotzdem.
+  const excludedDaysInWindow = countExcludedDays(exclusions, fromIso, todayIso);
   const avgIntakeKcal =
     days.length >= 4
       ? Math.round(
@@ -255,6 +325,8 @@ export function buildNutritionRecommendation(input: {
     cheatDaysInWindow,
     cheatMealsInWindow,
     cheatDayUnknownCount,
+    excludedDaysInWindow,
+    windowDays: 14,
   };
 }
 
@@ -302,6 +374,8 @@ export type MaintenanceWindow = {
   /** Garmins gemessener Ø-Tagesverbrauch im Fenster, kcal/Tag. */
   garminTdeeKcal: number | null;
   garminDayCount: number;
+  /** Kalendertage des Fensters, die in einem Ausschluss-Zeitraum liegen. */
+  excludedDayCount: number;
 };
 
 export type MaintenanceEstimate = {
@@ -313,6 +387,8 @@ export type MaintenanceEstimate = {
   /** Cheat-Tags im 28-Tage-Fenster — verzerren Rate und Intake. */
   cheatDaysInWindow: number;
   cheatMealsInWindow: number;
+  /** Ausgeschlossene Kalendertage im längsten (28d) Fenster. */
+  excludedDaysInWindow: number;
 };
 
 // Least-squares-Steigung (kg/Tag) über (Tag-Offset, Gewicht). Null wenn < 2 Punkte.
@@ -353,11 +429,13 @@ export function buildMaintenanceEstimate(input: {
   weightEntries: WeightEntry[]; // chronologisch aufsteigend
   nutrition: NutritionEntry[];
   tags: DailyTag[];
+  /** Manuell ausgeschlossene Zeiträume — deren Tage zählen nicht als Intake. */
+  exclusions: readonly NutritionExclusionRange[];
   activity: DailyActivity[];
   todayIso: string;
 }): MaintenanceEstimate {
-  const { weightEntries, nutrition, tags, activity, todayIso } = input;
-  const effectiveAll = buildEffectiveDays(nutrition, tags);
+  const { weightEntries, nutrition, tags, exclusions, activity, todayIso } = input;
+  const effectiveAll = buildEffectiveDays(nutrition, tags, exclusions);
 
   const windows: MaintenanceWindow[] = MAINTENANCE_WINDOWS.map((days) => {
     const fromIso = isoDaysAgo(todayIso, days - 1);
@@ -411,6 +489,7 @@ export function buildMaintenanceEstimate(input: {
       balanceTdeeKcal,
       garminTdeeKcal,
       garminDayCount: actDays.length,
+      excludedDayCount: countExcludedDays(exclusions, fromIso, todayIso),
     };
   });
 
@@ -435,5 +514,6 @@ export function buildMaintenanceEstimate(input: {
     garminMaintenanceKcal: garM != null ? Math.round(garM / 10) * 10 : null,
     cheatDaysInWindow: effective28.filter((d) => d.cheatDay).length,
     cheatMealsInWindow: effective28.filter((d) => d.cheatMeal && !d.cheatDay).length,
+    excludedDaysInWindow: countExcludedDays(exclusions, fromIso28, todayIso),
   };
 }

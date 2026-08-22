@@ -2,12 +2,15 @@
 
 import { revalidatePath } from "next/cache";
 import {
+  createNutritionExclusion,
   deleteDailyTag,
+  deleteNutritionExclusion,
   deletePhase,
   deleteWeightEntry,
   deleteWeightEntryByDate,
   getAllPhases,
   getWeightEntryByDate,
+  updateNutritionExclusion,
   updatePhase,
   updateWeightMetadata,
   upsertDailyTag,
@@ -267,9 +270,9 @@ export async function removePhase(id: number): Promise<{ ok: boolean }> {
 // Ruft denselben Code wie der tägliche Cron, gibt die Summary zurück und
 // invalidiert den Seiten-Cache, damit frische Daten gerendert werden.
 export async function syncNow(): Promise<SyncSummary> {
-  // Der Sync benutzt echte Garmin-/FDDB-/Sheets-Zugangsdaten — im
-  // öffentlichen Demo-Modus tabu (der Button wird dort ohnehin nicht
-  // gerendert, siehe components/site/SyncNowSlot.tsx).
+  // Der Sync benutzt echte Garmin-/FDDB-Zugangsdaten — im öffentlichen
+  // Demo-Modus tabu (der Button wird dort ohnehin nicht gerendert, siehe
+  // components/site/SyncNowSlot.tsx).
   if (await isDemo()) {
     const blocked: SyncResult = { ok: false, error: DEMO_BLOCKED_MESSAGE };
     return {
@@ -277,7 +280,6 @@ export async function syncNow(): Promise<SyncSummary> {
       ranAt: new Date().toISOString(),
       changes: [],
       results: {
-        sheets: blocked,
         garminStrength: blocked,
         garminCalories: blocked,
         garminRuns: blocked,
@@ -293,6 +295,60 @@ export async function syncNow(): Promise<SyncSummary> {
   revalidatePath("/weight");
   revalidatePath("/hypertrophy");
   return summary;
+}
+
+// ---- Ausgeschlossene Nutrition-Zeiträume ----
+//
+// Zeiträume mit sporadischem fddb-Tracking (Urlaub o.ä.). Werden AUSSCHLIESSLICH
+// hier von Hand gepflegt — nichts leitet sie automatisch ab, weil ein
+// Tracking-Loch von außen nicht von einem echten Fastentag zu unterscheiden ist.
+
+export type NutritionExclusionInput = {
+  id?: number;
+  startDate: string;
+  endDate?: string | null;
+  label?: string | null;
+};
+
+export async function saveNutritionExclusion(
+  input: NutritionExclusionInput,
+): Promise<{ ok: boolean; error?: string }> {
+  if (!DATE_REGEX.test(input.startDate)) {
+    return { ok: false, error: "Startdatum ungültig." };
+  }
+  if (input.endDate && !DATE_REGEX.test(input.endDate)) {
+    return { ok: false, error: "Enddatum ungültig." };
+  }
+  if (input.endDate && input.endDate < input.startDate) {
+    return { ok: false, error: "Enddatum liegt vor dem Startdatum." };
+  }
+
+  const label =
+    input.label?.trim() && input.label.trim().length > 0 ? input.label.trim() : null;
+  const endDate = input.endDate ?? null;
+
+  if (input.id != null) {
+    const updated = await updateNutritionExclusion(input.id, {
+      startDate: input.startDate,
+      endDate,
+      label,
+    });
+    if (!updated) return { ok: false, error: "Zeitraum nicht gefunden." };
+  } else {
+    await createNutritionExclusion({ startDate: input.startDate, endDate, label });
+  }
+
+  revalidatePath("/weight");
+  return { ok: true };
+}
+
+export async function removeNutritionExclusion(
+  id: number,
+): Promise<{ ok: boolean }> {
+  if (!Number.isFinite(id)) return { ok: false };
+  await deleteNutritionExclusion(id);
+  revalidatePath("/weight");
+  return { ok: true };
 }
 
 // ---- Daily Tags (cheatDay / alcohol / cheatMeal / kcalTarget) ----

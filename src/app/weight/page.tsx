@@ -11,6 +11,7 @@ import { WeightEntryForm } from "@/components/weight/WeightEntryForm";
 import { WeightStatCards } from "@/components/weight/WeightStats";
 import {
   getAllDailyTags,
+  getAllNutritionExclusions,
   getAllPhases,
   getAllWeightEntries,
   getDailyActivityEntries,
@@ -36,12 +37,14 @@ export default async function WeightPage() {
   const stats = computeWeightStats(all);
   const nutrition = await getNutritionEntries({ source: "fddb" });
   const activity = await getDailyActivityEntries({ source: "garmin" });
+  const nutritionExclusions = await getAllNutritionExclusions();
   const todayIso = toLocalISODate();
   const recommendation = buildNutritionRecommendation({
     weightEntries: all,
     phases,
     nutrition,
     tags,
+    exclusions: nutritionExclusions,
     todayIso,
   });
   // TDEE-Bilanz-Schätzung — nur in der Maintenance-Phase gerendert, aber
@@ -50,6 +53,7 @@ export default async function WeightPage() {
     weightEntries: all,
     nutrition,
     tags,
+    exclusions: nutritionExclusions,
     activity,
     todayIso,
   });
@@ -143,6 +147,7 @@ export default async function WeightPage() {
           weightEntries={all}
           tags={tags}
           activity={activity}
+          exclusions={nutritionExclusions}
         />
       </Section>
 
@@ -155,6 +160,7 @@ export default async function WeightPage() {
           weight={all}
           tags={tags}
           activity={activity}
+          exclusions={nutritionExclusions}
         />
       </Section>
       </main>

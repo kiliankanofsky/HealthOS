@@ -10,6 +10,7 @@
 
 import {
   getAllDailyTags,
+  getAllNutritionExclusions,
   getAllPhases,
   getAllWeightEntries,
   getCurrentTrainingPlan,
@@ -85,6 +86,13 @@ function formatEffectiveDayLine(d: EffectiveDay, proteinG: number | null): strin
       break;
     case "cheat-day-unknown":
       return `  ${d.date}: kein Tracking — Cheat-Day, deutlich höhere Aufnahme angenommen`;
+    case "excluded":
+      return (
+        `  ${d.date}: AUSGESCHLOSSEN — Zeitraum mit unzuverlässigem Tracking` +
+        (d.fddbKcal != null
+          ? ` (fddb meldet ${d.fddbKcal} kcal, bewusst ignoriert — NICHT als Aufnahme werten)`
+          : "")
+      );
   }
   const ann = annotations.length > 0 ? ` [${annotations.join(", ")}]` : "";
   return `  ${d.date}: ${d.caloriesKcal ?? "—"} kcal${protein}${ann}`;
@@ -108,6 +116,7 @@ export async function buildHealthContext(todayIso: string): Promise<string> {
     plan,
     metrics,
     runsRaw,
+    exclusions,
   ] = await Promise.all([
     getAllWeightEntries(),
     getAllPhases(),
@@ -119,11 +128,14 @@ export async function buildHealthContext(todayIso: string): Promise<string> {
     getDailyMetricsBetween(isoDaysAgo(todayIso, 14), todayIso),
     // 180 Tage, damit die 42-Tage-CTL gut "aufgewärmt" ist (wie Plan-Chat).
     getRunSessionsBetween(isoDaysAgo(todayIso, 180), todayIso),
+    // Ausgeschlossene Zeiträume: die KI soll nicht über Kalorien-Schnitte reden,
+    // die aus sporadisch getrackten Tagen stammen.
+    getAllNutritionExclusions(),
   ]);
 
   const fromIso = isoDaysAgo(todayIso, 13);
   const tagsInWindow = allTags.filter((t) => t.date >= fromIso && t.date <= todayIso);
-  const effectiveDays = buildEffectiveDays(nutrition, tagsInWindow);
+  const effectiveDays = buildEffectiveDays(nutrition, tagsInWindow, exclusions);
 
   const runs = [...runsRaw].sort((a, b) => a.date.localeCompare(b.date));
   const fitness = computeFitness(
@@ -149,6 +161,7 @@ export async function buildHealthContext(todayIso: string): Promise<string> {
     phases,
     nutrition,
     tags: tagsInWindow,
+    exclusions,
     todayIso,
   });
   if (rec.phaseKind === "maintenance") {
@@ -159,6 +172,7 @@ export async function buildHealthContext(todayIso: string): Promise<string> {
       weightEntries,
       nutrition,
       tags: tagsInWindow,
+      exclusions,
       activity,
       todayIso,
     });
@@ -179,6 +193,14 @@ export async function buildHealthContext(todayIso: string): Promise<string> {
         (rec.adjustmentKcal != null && rec.recommendedIntakeKcal != null
           ? `Anpassung ${rec.adjustmentKcal > 0 ? "+" : ""}${rec.adjustmentKcal} kcal/Tag → empfohlenes Ziel ~${rec.recommendedIntakeKcal} kcal/Tag${rec.adjustmentCapped ? " (gedeckelt auf ±500)" : ""}`
           : `(zu wenig Daten für eine konkrete Anpassung)`),
+    );
+  }
+  // Ausgeschlossene Zeiträume explizit benennen: sonst würde die KI aus den
+  // fehlenden Tageszeilen "hat nichts gegessen" statt "nicht verwertbar" lesen.
+  if (rec.excludedDaysInWindow > 0) {
+    weightLines.push(
+      `⚠ ${rec.excludedDaysInWindow} der letzten ${rec.windowDays} Tage liegen in einem manuell ausgeschlossenen Zeitraum ` +
+        `(sporadisches fddb-Tracking, z.B. Urlaub). Deren Kalorien sind KEINE Aufnahme-Daten — nicht mitteln, nicht als Fasten deuten.`,
     );
   }
   // Explizite Cheat-Tag-Warnung für die KI (verlässlicher als das Zählen der

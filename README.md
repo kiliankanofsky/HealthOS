@@ -132,11 +132,11 @@ model, and known quirks. It is written in German.
 
 ## Data sources
 
-All three are optional; each is a separate adapter you can ignore or replace.
+Both are optional; each is a separate adapter you can ignore or replace.
+Body weight has no adapter — it is entered by hand on `/weight`.
 
 | Source | Method | Caveat |
 | --- | --- | --- |
-| Google Sheets | CSV export URL, one row per ISO week | Sheet must be link-shared. The year is derived from calendar-week resets, so `SHEETS_START_YEAR` anchors the first row |
 | Garmin Connect | `@gooin/garmin-connect` plus several undocumented endpoints | **Unofficial.** Garmin can change or block these at any time. Accounts with MFA enabled do not work |
 | fddb.info | HTML scraping with a session cookie | **Fragile by nature.** The cookie expires regularly and the markup can change without notice |
 

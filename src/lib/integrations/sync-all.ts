@@ -16,13 +16,16 @@ import { syncGarminDailyMetrics } from "@/lib/integrations/garmin-metrics";
 import { syncGarminRuns } from "@/lib/integrations/garmin-runs-import";
 import { getGarminClient } from "@/lib/integrations/garmin-strength";
 import { syncGarminStrength } from "@/lib/integrations/garmin-strength-import";
-import { sheetsAdapter } from "@/lib/integrations/sheets";
 import { refreshNextSessionNote } from "@/lib/endurance/ai-note";
 import { getLiveZoneContext } from "@/lib/endurance/live-zones";
 import { matchRunToSession } from "@/lib/endurance/run-match";
 
 // Shared sync runner — vom täglichen Cron (/api/cron/sync) UND vom UI-Button
 // (Server Action `syncNow`) verwendet, damit beide Wege identisch laufen.
+//
+// Gewicht ist hier bewusst NICHT dabei: der Google-Sheets-Import lief bis
+// 29.06.2026 und ist ausgebaut — Gewichtseinträge und Phasen pflegt der Nutzer
+// seitdem direkt in HealthOS (/weight).
 
 export type SyncResult =
   | { ok: true; [k: string]: unknown }
@@ -34,7 +37,6 @@ export type SyncSummary = {
   // Kurze, menschenlesbare Liste „was hat sich verändert" für die UI.
   changes: string[];
   results: {
-    sheets: SyncResult;
     garminStrength: SyncResult;
     garminCalories: SyncResult;
     garminRuns: SyncResult;
@@ -76,11 +78,6 @@ async function safe<T extends Record<string, unknown>>(
     const message = err instanceof Error ? err.message : String(err);
     return { ok: false, error: message };
   }
-}
-
-async function syncSheets(): Promise<Record<string, unknown>> {
-  const result = await sheetsAdapter.sync();
-  return { inserted: result.inserted };
 }
 
 async function syncStrength(): Promise<Record<string, unknown>> {
@@ -245,7 +242,6 @@ export async function matchRunsToPlanSessions(): Promise<Record<string, unknown>
 export async function runAllSyncs(): Promise<SyncSummary> {
   const ranAt = new Date().toISOString();
   const results = {
-    sheets: await safe(syncSheets),
     garminStrength: await safe(syncStrength),
     garminCalories: await safe(syncCalories),
     garminRuns: await safe(syncRuns),
@@ -273,9 +269,6 @@ const plural = (n: number, one: string, many: string) =>
 // Feld unter dem Sync-Button. Wenn nichts Nennenswertes passiert: ein Hinweis.
 function buildChanges(results: SyncSummary["results"]): string[] {
   const out: string[] = [];
-
-  const sheetsNew = num(results.sheets, "inserted");
-  if (sheetsNew > 0) out.push(`${plural(sheetsNew, "neues Gewicht", "neue Gewichte")} gefetcht`);
 
   const strengthNew = num(results.garminStrength, "imported");
   if (strengthNew > 0)

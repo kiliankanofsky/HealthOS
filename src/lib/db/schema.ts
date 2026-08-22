@@ -9,6 +9,9 @@ import {
 } from "drizzle-orm/sqlite-core";
 
 // Quelle eines Gewichtseintrags. Erweiterbar für künftige Integrationen.
+// `sheets` ist **historisch**: der Google-Sheets-Import lief bis 29.06.2026 und
+// ist ausgebaut. Der Wert bleibt im Enum, weil die importierten Alt-Einträge
+// ihn tragen — neue Einträge entstehen nur noch manuell.
 export const weightSources = ["manual", "sheets", "garmin"] as const;
 export type WeightSource = (typeof weightSources)[number];
 
@@ -59,7 +62,9 @@ export type NewWeightEntry = typeof weightEntries.$inferInsert;
 export const phaseKinds = ["bulk", "cut", "maintenance"] as const;
 export type PhaseKind = (typeof phaseKinds)[number];
 
-export const phaseSources = ["manual", "sheets"] as const;
+// Phasen werden seit dem Ausbau des Sheets-Imports (29.06.2026) ausschließlich
+// manuell gepflegt — die zuvor abgeleiteten Phasen wurden auf "manual" migriert.
+export const phaseSources = ["manual"] as const;
 export type PhaseSource = (typeof phaseSources)[number];
 
 export const weightPhases = sqliteTable("weight_phases", {
@@ -349,6 +354,32 @@ export const nutritionEntries = sqliteTable(
 
 export type NutritionEntry = typeof nutritionEntries.$inferSelect;
 export type NewNutritionEntry = typeof nutritionEntries.$inferInsert;
+
+// ============================================================
+// Nutrition-Ausschlüsse: Zeiträume, in denen fddb nur sporadisch benutzt
+// wurde (Urlaub o.ä.). Die Tage existieren zwar als nutrition_entries, sind
+// als Tagesbilanz aber wertlos — der Kalorien-Chart überbrückt sie deshalb
+// gestrichelt, statt eine falsche Linie zu zeichnen.
+//
+// Bewusst NICHT automatisch abgeleitet: nur der Nutzer weiß, ob ein
+// Tracking-Loch echt oder nur ein Fastentag war. Angelegt wird das
+// ausschließlich über den Dialog auf /weight („Kalorien-Verlauf").
+// ============================================================
+
+export const nutritionExclusions = sqliteTable("nutrition_exclusions", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  // ISO-Date YYYY-MM-DD, inklusive.
+  startDate: text("start_date").notNull(),
+  // Inklusiv. null = offenes Ende (gilt bis heute).
+  endDate: text("end_date"),
+  label: text("label"),
+  createdAt: text("created_at")
+    .notNull()
+    .default(sql`(CURRENT_TIMESTAMP)`),
+});
+
+export type NutritionExclusion = typeof nutritionExclusions.$inferSelect;
+export type NewNutritionExclusion = typeof nutritionExclusions.$inferInsert;
 
 // ============================================================
 // Daily Activity: Garmins „Total Calories burned" pro Tag — Summe aus BMR

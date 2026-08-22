@@ -9,7 +9,7 @@
 
 Self-Tracking-Tool für **genau einen** Nutzer — die Health-Daten sind bewusst nicht pro Nutzer getrennt (siehe Auth weiter unten). Drei Module:
 
-- **Weight** (Phase 1, live): Gewichtsverlauf aus Google Sheets, Trend, Phasen (cut/bulk/maintenance). Tag-Metadaten (Cheat-Day/Meal, Alkohol, kcal-Ziel) leben seit Migration 0012 in einer eigenen `daily_tags`-Tabelle.
+- **Weight** (Phase 1, live): Gewichtsverlauf, Trend, Phasen (cut/bulk/maintenance) — **seit 29.06.2026 vollständig manuell gepflegt**, der Google-Sheets-Import ist ausgebaut (siehe §7). Tag-Metadaten (Cheat-Day/Meal, Alkohol, kcal-Ziel) leben seit Migration 0012 in einer eigenen `daily_tags`-Tabelle.
 - **Hypertrophy** (Phase 2, live): Krafttrainings-Logger mit Templates (Upper-A / Lower / Upper-B), Sätze pro Übung, Garmin-Sync für Trainingsdaten, Per-Übung-Progress-Chart
 - **Endurance** (Phase 3, live seit 2026-05-25): Lauf-Daten aus Garmin (run_sessions), Daily-Metrics-Snapshots (RHR, HRV mit Baseline-Korridor, Sleep mit Stadien, VO₂ Max, Lactate Threshold, Race Predictions, Training Status). Klickbare Metric-Tiles mit Detail-Popovern + 8-Wochen-Trend-Charts.
 
@@ -33,7 +33,7 @@ Zusatz: **Nutrition** (FDDB-Sync, Tageskalorien + Makros), **Daily Activity** (G
 | Sprache | TypeScript, strict |
 | Charts | Recharts |
 | Auth | `better-auth` (E-Mail+Passwort, Drizzle-Adapter, Session-Cookie-Cache) + `next-themes` für Dark Mode |
-| Externe Integrationen | Google Sheets (CSV-Export), Garmin Connect (`@gooin/garmin-connect`), FDDB (HTML-Scraping mit Cookie) |
+| Externe Integrationen | Garmin Connect (`@gooin/garmin-connect`), FDDB (HTML-Scraping mit Cookie). Gewicht hat **keine** externe Quelle mehr |
 
 ## 3. Hosting / Deployment
 
@@ -61,8 +61,6 @@ In Vercel → Settings → Environment Variables gesetzt für Production+Preview
 | `TURSO_DEMO_DATABASE_URL` | Zweite, getrennte Turso-DB für den öffentlichen Demo-Modus. **Fehlt sie, ist der Demo-Modus komplett aus** (Button unsichtbar, Cookie wirkungslos) |
 | `TURSO_DEMO_AUTH_TOKEN` | Token der Demo-DB |
 | `CRON_SECRET` | Bearer-Token, das `/api/cron/sync` erwartet |
-| `SHEETS_CSV_URL` | Google-Sheets-CSV-Export-URL für Weight |
-| `SHEETS_START_YEAR` | Startjahr der ersten KW im Sheet |
 | `GARMIN_USERNAME` | Garmin Connect Login |
 | `GARMIN_PASSWORD` | Garmin Connect Login |
 | `FDDB_COOKIE` | Cookie für FDDB-Scraping |
@@ -84,7 +82,7 @@ Heißt: lokales `npm run dev` läuft gegen die lokale SQLite-Datei. Wenn man lok
 
 ### Cron-Job
 
-`vercel.json` definiert: `0 4 * * *` UTC (= 05:00/06:00 lokal je nach Sommer/Winter) → `GET /api/cron/sync`. Vercel sendet `Authorization: Bearer ${CRON_SECRET}`. Endpoint führt 6 Syncs hintereinander aus (sheets, garmin-strength, garmin-calories, garmin-runs, garmin-metrics, nutrition) und gibt ein Summary-JSON zurück. Danach best effort: KI-Tagesübersicht (`ensureDailyOverview`) und Demo-Daten-Auffrischung (`ensureDemoDataFresh`). **Beide Hobby-Cron-Slots sind belegt** — deshalb hängt der Demo-Reseed hier mit drin statt in einem eigenen Cron.
+`vercel.json` definiert: `0 4 * * *` UTC (= 05:00/06:00 lokal je nach Sommer/Winter) → `GET /api/cron/sync`. Vercel sendet `Authorization: Bearer ${CRON_SECRET}`. Endpoint führt 5 Syncs hintereinander aus (garmin-strength, garmin-calories, garmin-runs, garmin-metrics, nutrition) und gibt ein Summary-JSON zurück. Gewicht ist **nicht** dabei — es wird manuell gepflegt. Danach best effort: KI-Tagesübersicht (`ensureDailyOverview`) und Demo-Daten-Auffrischung (`ensureDemoDataFresh`). **Beide Hobby-Cron-Slots sind belegt** — deshalb hängt der Demo-Reseed hier mit drin statt in einem eigenen Cron.
 
 ## 4. Datei-Index
 
@@ -98,7 +96,7 @@ Heißt: lokales `npm run dev` läuft gegen die lokale SQLite-Datei. Wenn man lok
 | `weight/page.tsx` | RSC | Weight-Dashboard: Chart, Stats, Phasen, Day-Detail, Buttons (Sync / Tags) |
 | `weight/entries/page.tsx` | RSC | Tabelle aller Weight-Einträge |
 | `weight/tags/page.tsx` | RSC | Tag-Übersicht (Cheat-Day/Alkohol/Cheat-Meal) mit Editor — auch für Tage ohne Weight-Eintrag |
-| `weight/actions.ts` | Server Action | upsert/delete Weight + Phasen + Tags (saveDailyTag / removeDailyTag) |
+| `weight/actions.ts` | Server Action | upsert/delete Weight + Phasen + Tags (saveDailyTag / removeDailyTag) + Nutrition-Ausschlüsse (saveNutritionExclusion / removeNutritionExclusion) |
 | `hypertrophy/page.tsx` | RSC | Templates-Übersicht + Kalender + Workout-Cards |
 | `hypertrophy/[slug]/page.tsx` | RSC | Template-Detail (alle Sessions) |
 | `hypertrophy/[slug]/[date]/page.tsx` | RSC | Session-Detail mit Sets-Logger |
@@ -112,7 +110,7 @@ Heißt: lokales `npm run dev` läuft gegen die lokale SQLite-Datei. Wenn man lok
 | `endurance/recommendations/actions.ts` | Server Action | `createPlanFromSettings(prev, formData)` — validiert Form, extrahiert PDF-Text, archiviert vorhandenen aktiven Plan, schreibt training_plans + 16 Wochen-Slots, redirected zu /endurance/recommendations. |
 | `endurance/history/page.tsx` | RSC | Placeholder: historische Trainings-Liste |
 | `endurance/{longevity,performance}/{recommendations,history}/page.tsx` | RSC | Vier Sub-Placeholder (alt — verweist auf die unified Routes oben) |
-| `api/cron/sync/route.ts` | Route Handler | **GET** mit Bearer-Auth, führt 6 Syncs aus (sheets/strength/calories/runs/metrics/nutrition) und generiert danach **best effort** die KI-Tagesübersicht fürs Dashboard (`ensureDailyOverview`, idempotent; schlägt sie fehl, holt die Startseite sie per Self-Heal nach) |
+| `api/cron/sync/route.ts` | Route Handler | **GET** mit Bearer-Auth, führt 5 Syncs aus (strength/calories/runs/metrics/nutrition) und generiert danach **best effort** die KI-Tagesübersicht fürs Dashboard (`ensureDailyOverview`, idempotent; schlägt sie fehl, holt die Startseite sie per Self-Heal nach) |
 | `account/page.tsx` | RSC | Konto-Seite: ausgeloggt → AuthCard (Login; Registrierung nur solange kein User existiert), eingeloggt → Konto-Übersicht + Abmelden. Ziel des Proxy-Redirects. |
 | `api/auth/[...all]/route.ts` | Route Handler | Better-Auth-Endpunkte (sign-in/up/out, get-session, …) via `toNextJsHandler` |
 
@@ -130,7 +128,7 @@ Nach Modul gruppiert. **RSC** = Server Component, **CC** = Client Component (`"u
 - `hypertrophy/avatar/` — `MuscleAvatar` (SVG-Bodymap), `OverviewAvatarPanel` (CC, Volumen-Tracker: Avatar färbt Muskelgruppen nach Volumen. Darunter **immer** die Balken-Aggregation (kein Text/Balken-Toggle mehr), standardmäßig **eingeklappt**: die Card ist `h-full flex-col`, die Aggregation per `mt-auto` unten angedockt — eingeklappt schneidet sie direkt unter dem „Aggregation"-Header ab, sodass die Card-Höhe via Grid-Stretch dem Kalender daneben entspricht. Klick auf den Header (0fr↔1fr-Höhen-Animation) klappt die Balkenliste auf, erst dann wächst die Card. Avatar+Hover+Mobile-Vorne/Hinten-Toggle unverändert), `WorkoutAvatarPanel`, `MuscleExerciseList`, `anatomy-paths.ts` (SVG-Pfade)
 - `endurance/` — `KmGraphSection` (CC, Recharts AreaChart wöchentliches Volumen), `RunCalendar` (CC, Adaption des Hypertrophy-Kalenders mit Double-Day-Indikator), `MetricsDashboard` (CC, sieben klickbare Tiles mit Detail-Popovern: RHR, HRV, Sleep, Race-Predictions, Training Status, VO₂, Lactate Threshold. Sleep-Popover rechts: **Apple-Health-artige Nächte-Grafik** (`SleepTimelineChart`, SVG) — pro Nacht ein Balken von Einschlaf- bis Aufwachzeit, nach Stadien gefärbt; Alkohol/Cheat-Day-Tags als Marker an der Wirkungs-Nacht = Einschlaf-Tag/Folgetag. Nimmt `tags`-Prop (`SleepTagInput[]`). Ersetzt den alten 12-Wochen-Sleep-Score-Trend), `TrainingsSection` (RSC, zwei Cards für Empfohlen/Historisch), `TrainingZoneCalculator` (CC, EINE Übersicht — kompakte Card am Ende von `/endurance`. **Hybrides 5-Zonen-Modell** (LT1/LT2-Gerüst, LT2 = Garmin-LTHR): Z1 Recovery (≤80 % LTHR) + Z2 Endurance (81–89 %) **HF-gesteuert**; Z3 Marathon (90–94 %), Z4 Threshold (95–100 %), Z5 VO₂max (≥101 %) **Pace-gesteuert** — die primäre Steuer-Metrik ist je Zeile fett. Jede Zone zeigt HF-Band UND Pace-Band; Paces aus echten Daten (siehe `zone-estimation.ts`). Zwei Eingabefelder: LTHR (überschreibbar) + optionales **Ziel-Marathon-Pace** (mm:ss; leer = Garmin-Prognose). Detail-Popover je Zone: „Steuern nach" (HF/Pace), %LTHR, **≈ %HFmax-Brücke** (HFmax ≈ LTHR ÷ 0,88), Pace-Quelle, beobachtete Min, Marathon-/VO₂max-Anker. Alles in Popovern, nicht inline), `PlanSetupForm` (CC, Phase 4: Form mit Live-Pace-Berechnung, Pace-Zone-Auto-Ableitung mit Manual-Override, Datei-Upload PDF **oder Bild**), `PerformanceDashboard` (legacy, nicht mehr benutzt — bei Cleanup entfernen)
   - **Phase 4 Sprint 4/4.1** (`/endurance/recommendations` 4-Card-Layout): `PlanBoard` (CC, Orchestrator: Kalender + Nächste-Session-Card + Edit-Dialog-State), `PlanCalendar` (CC, @dnd-kit Drag-and-Drop + "+" zum Anlegen leerer Tage), `EditSessionDialog` (CC, editierbarer Titel-Hero + Hero-Stats Distanz/Zone/Dauer + Splits links + gräuliche Edit-Card rechts mit Intervall-Editor + Löschen), `SplitsChart` (Balken-Grafik, km bei Dauerläufen / Runden bei Intervallen, längster Balken = schnellste Pace), `NextRacePlanCard` (Countdown + Phasen-Timeline + `PlanChatStub`), `PlanOverviewCard` (Fortschritt + Wochen-Volumen)
-- `nutrition/` — `NutritionChart` + `ChartSection`, `NutritionCorrelationView` (Streudiagramm Weight×Kalorien), `NutritionDayDetailDialog` (alle drei nehmen jetzt `tags`-Prop), `NutritionRecommendationCard` (RSC, deterministische Kalorien-Empfehlung je Phase — Engine in `utils/nutrition-recommendation.ts`. **Maintenance** rendert eine eigene Card-Variante: TDEE aus Energiebilanz über 7/14/28 Tage (Ø-Intake − Gewichts-Rate×7700) + Garmin-Verbrauch-Abgleich, statt der „+/− kcal"-Optik. Cut/Bulk unverändert. Phasen-Farbe: cut=teal, bulk=violet, **maintenance=amber**)
+- `nutrition/` — `NutritionChart` + `ChartSection` (Chart-Header hat neben Glättung/Tag einen `CalendarOff`-Button → `NutritionExclusionDialog`), `NutritionExclusionDialog` (CC, Liste + Formular für ausgeschlossene Zeiträume — siehe §7 „Ausgeschlossene Zeiträume"), `NutritionCorrelationView` (Streudiagramm Weight×Kalorien), `NutritionDayDetailDialog` (alle drei nehmen jetzt `tags`-Prop), `NutritionRecommendationCard` (RSC, deterministische Kalorien-Empfehlung je Phase — Engine in `utils/nutrition-recommendation.ts`. **Maintenance** rendert eine eigene Card-Variante: TDEE aus Energiebilanz über 7/14/28 Tage (Ø-Intake − Gewichts-Rate×7700) + Garmin-Verbrauch-Abgleich, statt der „+/− kcal"-Optik. Cut/Bulk unverändert. Phasen-Farbe: cut=teal, bulk=violet, **maintenance=amber**)
 - `ui/` — shadcn-Primitives: `button`, `card`, `dialog`, `input`, `label`, `popover`, `segmented-control`, `table`
 - `ComingSoon.tsx` — Placeholder
 
@@ -154,6 +152,7 @@ Nach Modul gruppiert. **RSC** = Server Component, **CC** = Client Component (`"u
 - `workout_sets` — einzelne Sätze pro Session (sessionId, templateExerciseId, setNumber, weight, reps)
 - `session_exercise_overrides` — alternative Übung pro Slot pro Session (wenn Gerät besetzt war)
 - `nutrition_entries` — Tageskalorien + Makros aus FDDB
+- `nutrition_exclusions` — manuell gepflegte Zeiträume mit sporadischem fddb-Tracking (Urlaub o.ä.). Nur der Kalorien-Chart wertet sie aus: Tage darin zählen nicht als Messung und werden gestrichelt überbrückt.
 - `daily_activity` — Tagesgesamtkalorien aus Garmin (total/aktiv/BMR/Schritte)
 - `garmin_tokens` — OAuth1+OAuth2-Tokens (single-row, id=1) — **ersetzt File-Cache**
 - `run_sessions` — eine Zeile pro Lauf-Activity aus Garmin (Distanz, Dauer, Pace, HR, Höhenmeter, Training Effect, VO₂). Idempotent via garminActivityId.
@@ -169,16 +168,14 @@ Nach Modul gruppiert. **RSC** = Server Component, **CC** = Client Component (`"u
 
 | Datei | Zweck |
 |---|---|
-| `sheets.ts` | Google-Sheets-CSV-Parser → upsert WeightEntries (`sheetsAdapter.sync()`) |
 | `fddb.ts` | Scraping von fddb.info per Cookie → NutritionEntries (`fddbAdapter.fetchNutritionEntries`) |
-| `garmin.ts` | Stub für Garmin-Body-Composition (nicht implementiert) |
 | `garmin-strength.ts` | **`getGarminClient()`** — authentifizierter GarminConnect-Client, Tokens in DB |
 | `garmin-strength-import.ts` | `syncGarminStrength()` — Activities → WorkoutSessions+Sets, mit Alias-Mapping |
 | `garmin-calories.ts` | `fetchDailyCalories(client, {since,until})` → DailyActivity |
 | `garmin-runs-import.ts` | `syncGarminRuns({since,until,maxPages})` — paginierter Lauf-Import → run_sessions, idempotent via garminActivityId |
 | `garmin-metrics.ts` | `syncGarminDailyMetrics({dates})` — RHR/HRV/Sleep aus offiziellen Methoden + VO₂/Race/LT aus undokumentierten Endpoints (`metrics-service/maxmet/latest/{date}`, `metrics-service/racepredictions/latest/{displayName}`, `biometric-service/biometric/latestLactateThreshold`) |
-| `sync-all.ts` | `runAllSyncs()` — orchestriert alle 6 Syncs sequenziell mit safe()-Wrapper, vom Cron + UI-Sync-Button benutzt. Liefert zusätzlich `changes: string[]` (menschenlesbare „was hat sich verändert"-Liste, inkl. Laktatschwellen-Vorher/Nachher-Diff) → `SyncNowButton` zeigt sie als immer sichtbares Feld unter dem Button + komprimiertes „Sync successful"-Pill statt Einzel-Chips. |
-| `types.ts` | gemeinsame `SyncableAdapter`-Schnittstelle |
+| `sync-all.ts` | `runAllSyncs()` — orchestriert alle Syncs sequenziell mit safe()-Wrapper, vom Cron + UI-Sync-Button benutzt. Liefert zusätzlich `changes: string[]` (menschenlesbare „was hat sich verändert"-Liste, inkl. Laktatschwellen-Vorher/Nachher-Diff) → `SyncNowButton` zeigt sie als immer sichtbares Feld unter dem Button + komprimiertes „Sync successful"-Pill statt Einzel-Chips. |
+| `types.ts` | `NutritionSourceAdapter`-Schnittstelle (nur noch Ernährung — für Gewicht gibt es keine externe Quelle mehr) |
 
 ### 4.5 Utilities & Hypertrophy-Lib (`src/lib/`)
 
@@ -191,13 +188,14 @@ Nach Modul gruppiert. **RSC** = Server Component, **CC** = Client Component (`"u
 | `demo/ai-budget.ts` | Demo-Modus: `consumeDemoAiBudget()` — atomarer Stunden-Zähler (`INSERT … ON CONFLICT DO UPDATE … RETURNING`) gegen `demo_ai_calls`. Außerhalb des Demo-Modus ein No-op. Bei Zähler-Fehler wird **abgelehnt**, nicht durchgewunken |
 | `demo/dataset.ts` | Demo-Modus: `buildDemoDataset(todayIso)` — reiner, deterministischer Generator aller Mock-Zeilen |
 | `demo/seed.ts` | Demo-Modus: `seedDemoDatabase()`, `demoDataAnchor()`, `ensureDemoDataFresh()` |
-| `utils/csv.ts` | CSV-Parser für Sheets-Import |
-| `utils/date.ts` | ISO-Date-Helper |
-| `utils/iso-week.ts` | KW-Berechnung für Sheets-Spalten |
+| `utils/date.ts` | ISO-Date-Helper + `eachDayIso(from,to)` (lückenlose Tages-Liste) |
+| `utils/iso-week.ts` | KW-Berechnung für die Wochen-Matrix (`WeightWeekMatrix`) |
+| `utils/nutrition-exclusions.ts` | `isDateExcluded` / `buildExclusionLookup` — einzige Quelle dafür, welcher Tag in einem ausgeschlossenen Zeitraum liegt. Von Chart, Empfehlungs-Engine, Wochen-Matrix und Energiebilanz geteilt |
+| `utils/chart-gaps.ts` | `buildGapBridge(values)` — „Ghost"-Reihe für die gestrichelte Überbrückung von Lücken (Tage ohne Wiegung, Cheat Days, ausgeschlossene Zeiträume). Von beiden Verlaufs-Charts auf /weight benutzt (`eachDayIso` lebt in `utils/date.ts`) |
 | `utils/loess.ts` | LOESS-Glättung für Weight-/Nutrition-Trend + Σe1RM-Trend im WorkoutOverviewChart |
 | `utils/strength.ts` | e1RM-Formel, Volumen-Aggregation |
 | `utils/weight-stats.ts` | Trend, Schwankung, Δ7d/Δ30d + `phaseForDate(phases, iso)` (hierher gezogen, von dashboard/context re-exportiert) |
-| `utils/nutrition-recommendation.ts` | `buildNutritionRecommendation({...,tags})` — deterministische Kalorien-Anpassung je Phase. **Cheat-Tag-Override:** `effectiveCaloriesForDay()` + `buildEffectiveDays()` ersetzen den fddb-Wert sobald ein Cheat-Day/Cheat-Meal-Tag vorliegt: kcalTarget → direkter Override; sonst fddb ×1,5 (Cheat-Day) bzw. ×1,25 (Cheat-Meal); Cheat-Day ohne Tracking → ausgeschlossen + Annotation. Empfehlung selbst: Ziel-Rate (Cut −0,5 %/Wo, Bulk +0,25 %/Wo, Maintenance 0) vs. beobachtete Rate, 7700-kcal-Regel, gerundet auf 50, gedeckelt ±500. Wird auch im KI-Kontext (`dashboard/context.ts`) verwendet, damit Empfehlung und KI dieselbe „wahre" Intake-Reihe sehen. **`buildMaintenanceEstimate({...,activity})`** für die Maintenance-Card: TDEE = Ø-Intake − Gewichts-Rate(Regression)×7700 über 7/14/28-Tage-Fenster + Garmin-`daily_activity`-Abgleich, konsolidiert via Median. |
+| `utils/nutrition-recommendation.ts` | `buildNutritionRecommendation({...,tags,exclusions})` — deterministische Kalorien-Anpassung je Phase. **Cheat-Tag-Override:** `effectiveCaloriesForDay()` + `buildEffectiveDays()` ersetzen den fddb-Wert sobald ein Cheat-Day/Cheat-Meal-Tag vorliegt: kcalTarget → direkter Override; sonst fddb ×1,5 (Cheat-Day) bzw. ×1,25 (Cheat-Meal); Cheat-Day ohne Tracking → ausgeschlossen + Annotation. Empfehlung selbst: Ziel-Rate (Cut −0,5 %/Wo, Bulk +0,25 %/Wo, Maintenance 0) vs. beobachtete Rate, 7700-kcal-Regel, gerundet auf 50, gedeckelt ±500. **Ausschluss-Override:** Tage in einem `nutrition_exclusions`-Zeitraum liefern gar keinen Wert (`kind: "excluded"`) und fallen aus jeder Mittelung; `excludedDaysInWindow` (bzw. `excludedDayCount` je Maintenance-Fenster) macht das in der Card sichtbar. Wird auch im KI-Kontext (`dashboard/context.ts`) verwendet, damit Empfehlung und KI dieselbe „wahre" Intake-Reihe sehen. **`buildMaintenanceEstimate({...,activity})`** für die Maintenance-Card: TDEE = Ø-Intake − Gewichts-Rate(Regression)×7700 über 7/14/28-Tage-Fenster + Garmin-`daily_activity`-Abgleich, konsolidiert via Median. |
 | `hypertrophy/muscles.ts` | Muskelgruppen-Definitionen + Volumen-Schwellen (`VOLUME_PRIMARY_THRESHOLD`=10, `VOLUME_SECONDARY_THRESHOLD`=4, client-safe) |
 | `hypertrophy/workouts.ts` | Template-Konfiguration (Labels/Farben/Order). **Cycle-Semantik:** ein Cycle = volle Rotation Upper A → Lower → Upper B (global, `min(Sessions je Template)+1` in WorkoutCards); pro Template heißt es "n. Session" |
 | `hypertrophy/volume.ts` | `getMuscleVolumeBetween(from, to)` — gewichtete Sätze pro Muskelgruppe (primär 1,0 / sekundär 0,5) für den Avatar-Volumen-Tracker |
@@ -218,12 +216,12 @@ Nach Modul gruppiert. **RSC** = Server Component, **CC** = Client Component (`"u
 | `npm run db:migrate` | `src/lib/db/migrate.ts` | Drizzle-Migrationen ausführen |
 | `npm run db:generate` | (drizzle-kit) | Neue Migration aus Schema-Diff erzeugen |
 | `npm run db:studio` | (drizzle-kit) | Web-UI zum DB-Browsen |
+| `npm run db:query` | `scripts/query.ts` | **Ad-hoc-SQL** gegen `--db=local\|turso\|demo`. `--format=table\|json\|csv`, `--file=x.sql`, `--tables` (Zeilenzahlen), `--schema=<tabelle>`. Read-only per Default — schreibende Statements brauchen `--write`. Lädt selbst `.env.local`, anders als `db:migrate` |
 | `npm run setup` | `scripts/setup.ts` | **Ein-Befehl-Setup für frische Clones**: legt `.env.local` mit generiertem `BETTER_AUTH_SECRET` an, migriert, seedet Stammdaten + Demo-DB. Idempotent |
 | `npm run db:seed:hypertrophy` | `scripts/seed-hypertrophy.ts` | Übungen + Templates seeden |
 | `npm run db:seed:demo` | `scripts/seed-demo.ts` | **Demo-DB neu aufbauen** (Migration + Mock-Daten). Lokal → `data/demo.db`; mit `USE_TURSO=1` → `TURSO_DEMO_DATABASE_URL` |
 | `npm run typecheck` | (tsc) | `tsc --noEmit` — ersetzt **nicht** `npm run build` (siehe §7) |
 | `node scripts/screenshots.mjs` | `scripts/screenshots.mjs` | README-Screenshots aus dem **Demo-Modus** (setzt das Demo-Cookie, kein Login). Braucht `npm i -D playwright && npx playwright install chromium` — bewusst keine feste Dependency |
-| `npm run db:sync:sheets` | `scripts/sync-sheets.ts` | Manueller Weight-Sync aus Google Sheets |
 | `npm run db:sync:garmin` | `scripts/sync-garmin-strength.ts` | Manueller Garmin-Strength-Sync |
 | `npm run db:sync:garmin-calories` | `scripts/sync-garmin-calories.ts` | Manueller Garmin-Calories-Sync |
 | `npm run db:sync:nutrition` | `scripts/sync-nutrition.ts` | Manueller FDDB-Sync |
@@ -258,6 +256,7 @@ Sequenz `0000` → `0020`. **Nicht editieren** — Drizzle hält im `meta/_journ
 | `0017` | Start-Dashboard: `dashboard_overviews` (tägliche KI-Overview, UNIQUE auf `date`). |
 | `0018` | `workout_templates.kind` ist kein fixer Enum mehr (beliebige Einheiten erlaubt). |
 | `0020` | `demo_ai_calls` (bucket TEXT PK, count INTEGER) — Stunden-Budget für KI-Aufrufe im öffentlichen Demo-Modus. Lebt faktisch nur in der Demo-DB. |
+| `0021` | `nutrition_exclusions` + Daten-Migration `weight_phases.source: 'sheets' → 'manual'` (Sheets-Import ausgebaut) — **manuell erweitert** um das UPDATE, nicht regenerieren |
 | `0019` | `workout_template_exercises.default_sets` (nullable) — vorgeschlagene Satz-Anzahl pro Übungs-Slot; der Session-Logger befüllt so viele leere Set-Zeilen vor (Default-Anzeige = 3). Setzbar im „Neue Trainingseinheit"-Dialog + „Übungen verwalten". |
 
 ### 4.8 Konfig-Files (Root)
@@ -323,6 +322,7 @@ Alle Funktionen sind `async` und liefern `Promise<T>`. Wenn etwas fehlt, gehört
 - `getNutritionEntries({from?, to?, source?})`
 - `getNutritionForDate(date, source="fddb")`
 - `upsertNutritionEntry(entry)` — Konflikt auf (date, source)
+- `getAllNutritionExclusions()` / `createNutritionExclusion(input)` / `updateNutritionExclusion(id, patch)` / `deleteNutritionExclusion(id)` — ausgeschlossene Zeiträume, rein manuell
 
 **Daily Activity (Garmin Kalorien):**
 - `getDailyActivityEntries({from?, to?, source?})`
@@ -424,6 +424,10 @@ USE_TURSO=1 npm run dev
   - `metrics-service/metrics/racepredictions/latest/{displayName}` — **displayName** als Suffix
   - `biometric-service/biometric/latestLactateThreshold` — keine Pfad-Parameter, liefert Array mit Einträgen für `speed` und `hearRate` (Garmin-Tippfehler: tatsächlich ohne „t"). LT-Pace = `1000 / (speed × 10)` — die Skalierung mit ×10 ist empirisch korrigiert, weil Garmin's `speed`-Wert um eine Größenordnung zu klein kommt.
 - **Drizzle SQLite DROP COLUMN**: `npm run db:generate` produziert bei Spalten-Entfernung `ALTER TABLE … DROP COLUMN` ohne Datenmigration. Wenn die alten Daten erhalten bleiben sollen (wie bei Migration 0012 für Tags), die generierte `.sql`-Datei **manuell** um eine `INSERT INTO neu SELECT … FROM alt …`-Anweisung VOR dem DROP erweitern.
+- **Gewicht ist manuell (seit 29.06.2026)**: Der Google-Sheets-Import (`integrations/sheets.ts`, `scripts/sync-sheets.ts`, `utils/csv.ts`, `SHEETS_*`-Env-Vars) ist entfernt — `runAllSyncs()` hat keinen `sheets`-Schritt mehr. Gewichtseinträge und Phasen entstehen nur noch in der UI (`/weight`). Konsequenzen: `phaseSources` kennt nur noch `"manual"` (Migration 0021 hat die Alt-Zeilen umgeschrieben), `clearPhasesBySource()` ist weg, und `weightSources` behält `"sheets"` **nur** als historischen Wert für die 828 importierten Alt-Einträge.
+- **Lückenlose Tages-Achse im Weight-Chart**: `WeightChartSection` baut die Chart-Reihe seit dem Umstieg auf manuelle Pflege über **jeden** Kalendertag zwischen erstem und letztem Eintrag (`eachDayIso`), Tage ohne Wiegung haben `weight: null`. `ChartPoint.weight` ist deshalb `number | null` — wer die Reihe anfasst, muss Nulls filtern (LOESS, Min/Max, Klick-Ziel-Y). Gezeichnet wird die Lücke von einer zweiten, gestrichelten „Ghost"-Linie (`buildGapBridge`). Liegt eine Lücke am Rand des sichtbaren Fensters, gibt es bewusst **keine** Brücke — ohne zweiten Anker wäre sie erfunden.
+- **Ausgeschlossene Zeiträume (`nutrition_exclusions`)**: Gelten **überall dort, wo Kalorien ausgewertet werden** — Kalorien-Chart, Empfehlungs-Card, TDEE-/Maintenance-Schätzung, Energiebilanz-Kacheln, Wochen-Matrix und KI-Kontext. Ein Tag im Ausschluss liefert `caloriesKcal: null` (`kind: "excluded"`), der fddb-Rohwert bleibt in der DB und im Tooltip sichtbar. Die **Gewichts**-Seite jeder Rechnung bleibt unberührt: gewogen wird auch im Urlaub, nur das Essens-Tracking taugt dort nichts. Einstieg ist immer `effectiveCaloriesForDay(entry, tag, date, excluded)` bzw. `buildEffectiveDays(nutrition, tags, exclusions)` — `excluded`/`exclusions` sind **Pflicht-Argumente**, damit ein neuer Aufrufer die Ausschlüsse nicht still aushebelt. Angelegt werden die Zeiträume **ausschließlich von Hand** über den `CalendarOff`-Button im Chart-Header.
+- **Leere Empfehlungs-Card ist ein gültiger Zustand**: Deckt ein Ausschluss das 14- bzw. 28-Tage-Fenster ab, bleiben zu wenige verwertbare Tage und Card wie KI melden „zu wenig Daten" statt einer Zahl. Das ist gewollt — `NutritionRecommendationCard` erklärt über `ExclusionNotice` + `missingDataReason()`, warum dort ein „—" steht.
 - **Tag-Refactor (Migration 0012)**: Tag-Felder (cheatDay/alcohol/cheatMeal/kcalTarget) leben jetzt in `daily_tags`, NICHT mehr in `weight_entries`. Alle Komponenten, die Tags pro Datum brauchen, holen sich einen separaten `tags`-Prop (siehe WeightChartSection, NutritionChartSection, NutritionCorrelationView). Tag-Bearbeitung via Day-Detail-Dialog im Weight-Chart ODER Tag-Editor auf `/weight/tags`.
 
 ## 8. Öffentlicher Demo-Modus
@@ -448,7 +452,7 @@ Zweck: Das Repo/Deployment kann öffentlich sein, ohne echte Gesundheitsdaten pr
 
 Alles ist bedienbar (Sätze loggen, Gewicht eintragen, Plan-Sessions per Drag verschieben, KI-Chat) — die Demo-DB wird täglich neu gebaut. Ausnahmen (`src/lib/demo/guard.ts`, geprüft via `isDemo()`):
 
-- **`syncNow`** (`app/weight/actions.ts`) — braucht echte Garmin-/FDDB-/Sheets-Zugangsdaten. Der Button wird zusätzlich gar nicht erst gerendert (`components/site/SyncNowSlot.tsx` ersetzt `SyncNowButton` auf allen 4 Seiten).
+- **`syncNow`** (`app/weight/actions.ts`) — braucht echte Garmin-/FDDB-Zugangsdaten. Der Button wird zusätzlich gar nicht erst gerendert (`components/site/SyncNowSlot.tsx` ersetzt `SyncNowButton` auf allen 4 Seiten).
 - **`generatePlanSessions` / `wipePlanSessions`** (`app/endurance/recommendations/actions.ts`) — läuft minutenlang und verbrennt KI-Tokens. Der Demo-Plan ist fertig geseedet.
 
 **Gedrosselt statt gesperrt** (`src/lib/demo/ai-budget.ts`, seit dem Public-Release): `generateOverviewAction`, `sendDashboardChatMessage` und `sendPlanChatMessage` bleiben im Demo bedienbar, teilen sich aber ein gemeinsames Stundenkontingent (`DEMO_AI_CALLS_PER_HOUR`, Default 40) über **alle** Demo-Besucher. Grund: die Tokens laufen auf den API-Key des Betreibers, und die Demo ist anonym erreichbar. Der Self-Heal-Pfad der Tagesübersicht zählt nur, wenn wirklich generiert wird — ein vorhandener Tages-Eintrag kostet nichts.
