@@ -10,12 +10,13 @@ import {
   upsertSet,
 } from "@/lib/db/queries";
 import type { TemplateExerciseRow } from "@/lib/db/queries";
+import type { WorkoutTemplate } from "@/lib/db/schema";
 
 // ============================================================
 // Garmin-Strength-Import.
 // Holt strength_training-Aktivitäten, mappt Übungen über Aliases,
-// erkennt den Workout-Typ heuristisch (anhand Übungs-Composition)
-// und upserts Sessions + Sätze.
+// ordnet die Einheit zu (Aktivitätsname = Einheitsname, sonst
+// heuristisch anhand der Übungs-Composition) und upserts Sessions + Sätze.
 // ============================================================
 
 // Mindestmatch-Quote, damit ein Garmin-Workout einem Template zugeordnet wird.
@@ -94,6 +95,9 @@ export async function syncGarminStrength(
   for (const tpl of templates) {
     templateExercisesByTemplate.set(tpl.id, await getTemplateExercises(tpl.id));
   }
+  // Archivierte Einheiten bekommen keine neuen Sessions mehr — sie bleiben nur
+  // in der Map, damit der Backfill bestehender Sessions weiter funktioniert.
+  const candidates = templates.filter((t) => !t.archived);
 
   // Aktivitäten holen.
   const all = (await client.getActivities(0, fetchLimit)) as GarminActivity[];
@@ -165,13 +169,20 @@ export async function syncGarminStrength(
       continue;
     }
 
-    // Workout-Typ-Heuristik.
+    // Einheit zuordnen: erst über den Namen, sonst Workout-Typ-Heuristik.
     const sessionExerciseIds = new Set(setsByExerciseId.keys());
-    const match = pickBestTemplate(
-      sessionExerciseIds,
-      templates,
-      templateExercisesByTemplate,
-    );
+    const match =
+      matchTemplateByName(
+        act.activityName,
+        sessionExerciseIds,
+        candidates,
+        templateExercisesByTemplate,
+      ) ??
+      pickBestTemplate(
+        sessionExerciseIds,
+        candidates,
+        templateExercisesByTemplate,
+      );
     if (!match) {
       log.push({
         level: "warn",
@@ -183,7 +194,7 @@ export async function syncGarminStrength(
 
     log.push({
       level: "info",
-      message: `Activity ${act.activityId} (${dateIso}, "${act.activityName ?? ""}") → ${match.template.name} (${(match.ratio * 100).toFixed(0)}%, ${match.matchedCount}/${sessionExerciseIds.size} Übungen).`,
+      message: `Activity ${act.activityId} (${dateIso}, "${act.activityName ?? ""}") → ${match.template.name} (${match.byName ? "per Name, " : ""}${(match.ratio * 100).toFixed(0)}%, ${match.matchedCount}/${sessionExerciseIds.size} Übungen).`,
     });
 
     if (dryRun) {
@@ -388,26 +399,64 @@ async function backfillEmptySlots(
   return added;
 }
 
-function pickBestTemplate(
-  sessionExerciseIds: Set<number>,
-  templates: { id: number; name: string; kind: string }[],
-  templateExercises: Map<number, TemplateExerciseRow[]>,
-): {
-  template: { id: number; name: string; kind: string };
+type TemplateMatch = {
+  template: WorkoutTemplate;
   ratio: number;
   matchedCount: number;
-} | null {
-  let best: ReturnType<typeof pickBestTemplate> = null;
+  byName: boolean;
+};
+
+// Anteil der Session-Übungen, die in der Einheit vorkommen.
+function scoreTemplate(
+  sessionExerciseIds: Set<number>,
+  tpl: WorkoutTemplate,
+  templateExercises: Map<number, TemplateExerciseRow[]>,
+): { ratio: number; matchedCount: number } {
+  const tplExs = templateExercises.get(tpl.id) ?? [];
+  const tplExIds = new Set(tplExs.map((r) => r.exercise.id));
+  let matched = 0;
+  for (const id of sessionExerciseIds) {
+    if (tplExIds.has(id)) matched += 1;
+  }
+  return { ratio: matched / sessionExerciseIds.size, matchedCount: matched };
+}
+
+// Startet man auf der Uhr ein Garmin-Workout, heißt die Aktivität wie das
+// Workout (z.B. "Push"). Gibt es eine Einheit mit genau diesem Namen, ist die
+// Zuordnung eindeutig — auch bei abgebrochenem Training mit wenigen Übungen,
+// wo die Heuristik an MIN_MATCHED_EXERCISES scheitern würde. Mindestens eine
+// Übung muss aber passen, sonst entstünde eine leere Session.
+function matchTemplateByName(
+  activityName: string | null | undefined,
+  sessionExerciseIds: Set<number>,
+  templates: WorkoutTemplate[],
+  templateExercises: Map<number, TemplateExerciseRow[]>,
+): TemplateMatch | null {
+  const name = activityName?.trim().toLowerCase();
+  if (!name) return null;
+  const tpl = templates.find((t) => t.name.trim().toLowerCase() === name);
+  if (!tpl) return null;
+  const score = scoreTemplate(sessionExerciseIds, tpl, templateExercises);
+  if (score.matchedCount === 0) return null;
+  return { template: tpl, ...score, byName: true };
+}
+
+function pickBestTemplate(
+  sessionExerciseIds: Set<number>,
+  templates: WorkoutTemplate[],
+  templateExercises: Map<number, TemplateExerciseRow[]>,
+): TemplateMatch | null {
+  let best: TemplateMatch | null = null;
   for (const tpl of templates) {
-    const tplExs = templateExercises.get(tpl.id) ?? [];
-    const tplExIds = new Set(tplExs.map((r) => r.exercise.id));
-    let matched = 0;
-    for (const id of sessionExerciseIds) {
-      if (tplExIds.has(id)) matched += 1;
-    }
-    const ratio = matched / sessionExerciseIds.size;
-    if (best === null || ratio > best.ratio) {
-      best = { template: tpl, ratio, matchedCount: matched };
+    const score = scoreTemplate(sessionExerciseIds, tpl, templateExercises);
+    // Bei Gleichstand gewinnt die Einheit, die aktuell in Rotation ist —
+    // alte Einheiten teilen sich viele Übungen mit den neuen.
+    const better =
+      best === null ||
+      score.ratio > best.ratio ||
+      (score.ratio === best.ratio && tpl.inRotation && !best.template.inRotation);
+    if (better) {
+      best = { template: tpl, ...score, byName: false };
     }
   }
   if (best === null) return null;

@@ -170,7 +170,7 @@ Nach Modul gruppiert. **RSC** = Server Component, **CC** = Client Component (`"u
 |---|---|
 | `fddb.ts` | Scraping von fddb.info per Cookie → NutritionEntries (`fddbAdapter.fetchNutritionEntries`) |
 | `garmin-strength.ts` | **`getGarminClient()`** — authentifizierter GarminConnect-Client, Tokens in DB |
-| `garmin-strength-import.ts` | `syncGarminStrength()` — Activities → WorkoutSessions+Sets, mit Alias-Mapping |
+| `garmin-strength-import.ts` | `syncGarminStrength()` — Activities → WorkoutSessions+Sets, mit Alias-Mapping. **Zuordnung zur Einheit:** heißt die Aktivität wie eine Einheit (Garmin benennt sie nach dem gestarteten Workout, z.B. „Push"), gewinnt diese direkt; sonst Übungs-Heuristik (≥ 70 % der erkannten Übungen, mind. 4). Archivierte Einheiten sind ausgeschlossen, bei Gleichstand gewinnt die Einheit in Rotation |
 | `garmin-calories.ts` | `fetchDailyCalories(client, {since,until})` → DailyActivity |
 | `garmin-runs-import.ts` | `syncGarminRuns({since,until,maxPages})` — paginierter Lauf-Import → run_sessions, idempotent via garminActivityId |
 | `garmin-metrics.ts` | `syncGarminDailyMetrics({dates})` — RHR/HRV/Sleep aus offiziellen Methoden + VO₂/Race/LT aus undokumentierten Endpoints (`metrics-service/maxmet/latest/{date}`, `metrics-service/racepredictions/latest/{displayName}`, `biometric-service/biometric/latestLactateThreshold`) |
@@ -415,6 +415,7 @@ USE_TURSO=1 npm run dev
 - **Server Components** dürfen async sein und direkt `await query()` machen. **Client Components NICHT** — sie holen Daten via Server Actions oder Props.
 - **Recharts** wirft im Dev manchmal `width(-1) and height(-1)`-Warnings beim SSR — harmlos, layout greift im Client.
 - **`@gooin/garmin-connect`** verwendet OAuth-Tokens; bei MFA-aktiviertem Garmin-Account funktioniert die Library aktuell nicht. Tokens leben jetzt in `garmin_tokens`-Tabelle (siehe Migration 0009).
+- **Neue Übungen brauchen einen Garmin-Code**: Der Einheiten-Dialog legt Übungen ohne `aliases` an. Der Garmin-Import kennt eine Übung aber nur über `exercises.aliases` (bzw. zufällig über Slug/Name) — Sätze mit unbekanntem Code verwirft er still (nur im CLI-Log: „unbekannte Garmin-Codes ignoriert"). Code nachtragen: `npm run garmin:strength-list -- --date=… --diagnose` zeigt die Codes, dann `aliases` per `db:query --write` setzen. Bestehende Sessions füllt der nächste Sync über den Leer-Slot-Backfill selbst nach. Dasselbe gilt für `primary_muscles`/`secondary_muscles`: bleiben sie leer (`[]`), zählt die Übung nicht im Volumen-Avatar (`hypertrophy/volume.ts`).
 - **FDDB-Cookie** läuft regelmäßig ab; wenn der Cron-Job fehlschlägt mit „Unauthorized" → Cookie aus Browser neu kopieren und in `FDDB_COOKIE` (Vercel + lokal) updaten.
 - **Vercel Hobby-Plan**: Cron läuft max. 1x/Tag, Endpoint-Timeout max. 60s. 6 sequenzielle Syncs sollten in <50s durchlaufen; wenn nicht, in `maxDuration` ggf. erhöhen oder Syncs parallelisieren (`Promise.allSettled`).
 - **Vercel-Build > tsc**: Vercels `next build` ist strenger als `node_modules/.bin/tsc --noEmit`. Vor jedem Push immer **zusätzlich** `npm run build` lokal laufen lassen — sonst kann ein Type-Error in `scripts/` o.ä. erst beim Deploy auffallen (passiert in Commit 6800aa0).
